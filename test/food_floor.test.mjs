@@ -97,6 +97,34 @@ test('T-0069 跟进: 饿着在矿里 (无可见动物) → FOOD_FLOOR 先上浮 
     const p = foodFloorProposal({ ...base, depthBand: 'mid' });
     assert.ok(p, 'proposed underground');
     assert.equal(p.args[0].surfaceFirst, true);
-    assert.equal(foodFloorProposal({ ...base, depthBand: 'surface', botY: 70 }), null, 'on the surface with no animal → nothing (no roaming)');
+    const surf = foodFloorProposal({ ...base, depthBand: 'surface', botY: 70 });
+    assert.ok(surf && surf.args[0].scout && !surf.args[0].surfaceFirst, 'on the surface with no animal → bounded scout (监工加急#2), not surfaceFirst');
     assert.equal(foodFloorProposal({ ...base, food: 5, depthBand: 'mid' }), null, 'not starving (food 5) → no forced surfacing');
+});
+
+test('监工加急#2: 饿着在地面且 48 格内零动物 → FOOD_FLOOR 有界侦察 (≤96 格/≤90s), 不饿则不侦察', () => {
+    const base = { foodInstincts: false, overworld: true, phase: 'day', food: 0, actionable: 0, counts: LIVE, botY: 63, depthBand: 'surface', animal: null };
+    const p = foodFloorProposal(base);
+    assert.ok(p, '17:43Z live: hp1 food0, no animal in 48b → must propose something');
+    assert.equal(p.args[0].scout, true);
+    assert.ok(p.args[0].scoutRadius <= 96 && p.args[0].scoutMs <= 90000);
+    assert.equal(foodFloorProposal({ ...base, food: 5 }), null, 'not starving → no scouting (no roaming)');
+    assert.equal(foodFloorProposal({ ...base, phase: 'dusk' }), null, 'night chain owns dusk/night');
+    assert.equal(foodFloorProposal({ ...base, actionable: 1 }), null);
+});
+
+test('监工加急#2: 侦察航点全在 96 格内, 有线索先朝线索; 16 格内有敌对立即判定危险', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qm2-'));
+    fs.mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
+    const cwd = process.cwd(); process.chdir(home);
+    try {
+        const { scoutWaypoints, hostileWithin } = await import('../bots/_supervisor/skills/quickMeal.js');
+        const o = { x: 81, y: 64, z: 54 };
+        const pts = scoutWaypoints(o, 96, { x: 300, z: 54 });
+        assert.ok(pts.every(p => Math.hypot(p.x - o.x, p.z - o.z) <= 96 + 1e-6), 'bounded radius');
+        assert.ok(Math.abs(pts[0].x - (81 + 96)) < 1e-6, 'first leg heads toward the hint, clipped to 96');
+        const V = (x, y, z) => ({ x, y, z, distanceTo(q) { return Math.hypot(this.x - q.x, this.y - q.y, this.z - q.z); } });
+        assert.equal(hostileWithin({ entity: { position: V(0, 64, 0) }, entities: { 1: { name: 'zombie', position: V(10, 64, 0) } } }, 16), true);
+        assert.equal(hostileWithin({ entity: { position: V(0, 64, 0) }, entities: { 1: { name: 'cow', position: V(10, 64, 0) } } }, 16), false);
+    } finally { process.chdir(cwd); }
 });

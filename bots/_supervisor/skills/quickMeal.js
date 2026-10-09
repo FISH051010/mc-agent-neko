@@ -7,7 +7,51 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import mfp from 'mineflayer-pathfinder';
 import { HUNTABLE_RE } from '../../../src/agent/framework/food_floor.js';
+const { goals, Movements } = mfp;
+const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
+
+export function hostileWithin(bot, r) {
+    const me = bot.entity && bot.entity.position;
+    if (!me) return false;
+    return Object.values(bot.entities || {}).some(e => e && e.position && HOSTILE_RE.test(e.name || '') && e.position.distanceTo(me) < r);
+}
+
+/** 侦察航点: 有朝向线索(见过的动物)先朝它, 否则 8 方向螺旋外扩 (24→48→72→96)。纯函数, 供测试。 */
+export function scoutWaypoints(origin, radius, toward) {
+    const pts = [];
+    if (toward && Number.isFinite(toward.x)) {
+        const dx = toward.x - origin.x, dz = toward.z - origin.z, d = Math.hypot(dx, dz) || 1;
+        const reach = Math.min(radius, d);
+        pts.push({ x: origin.x + dx / d * reach, z: origin.z + dz / d * reach });
+    }
+    for (let r = 24; r <= radius; r += 24)
+        for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + r / 24; pts.push({ x: origin.x + Math.cos(a) * r, z: origin.z + Math.sin(a) * r }); }
+    return pts;
+}
+
+/** ★监工加急 #2 有界侦察: hp=1 任何伤害致死 → 安全寻路 (最多下落 2 格、不跑酷、不挖、水极贵), 16 格内有敌对立即收手。 */
+async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
+    const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
+    try {
+        const mv = new Movements(bot);
+        mv.maxDropDown = 2; mv.allowParkour = false; mv.canDig = false; mv.allow1by1towers = false; mv.liquidCost = 1000;
+        bot.pathfinder.setMovements(mv);
+    } catch (e) {}
+    for (const wp of scoutWaypoints(origin, scoutRadius, scoutToward)) {
+        if (Date.now() - t0 > scoutMs) break;
+        if (hostileWithin(bot, 16)) { prog('scout aborted: hostile within 16b (hp-critical)'); break; }
+        const found = pickHuntTarget(bot, radius, maxDy);
+        if (found) return found;
+        const legMs = Math.min(20000, scoutMs - (Date.now() - t0));
+        try {
+            await race(bot.pathfinder.goto(new goals.GoalNear(Math.round(wp.x), Math.round(origin.y), Math.round(wp.z), 3)), legMs);
+        } catch (e) {}
+        try { bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+    }
+    return pickHuntTarget(bot, radius, maxDy);
+}
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] quickMeal: ${s}\n`); } catch (e) {} };
@@ -41,7 +85,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
         if (bot.entity.position.y - y0 >= 8) opts = { ...opts, _surfaced: true };
     }
-    const t0 = Date.now();
+    let t0 = Date.now();
     const left = () => maxMs - (Date.now() - t0);
     const inv = () => { try { return world.getInventoryCounts(bot) || {}; } catch (e) { return {}; } };
     const rawHeld = () => RAW.reduce((s, n) => s + (inv()[n] || 0), 0);
@@ -51,7 +95,14 @@ export default async function quickMeal(bot, ctx, opts = {}) {
 
     // ① 短猎
     if (rawHeld() === 0) {
-        const target = pickHuntTarget(bot, radius, maxDy);
+        let target = pickHuntTarget(bot, radius, maxDy);
+        if (!target && opts.scout) {
+            prog(`starving, no animal ≤${radius}b — bounded scout ≤${opts.scoutRadius ?? 96}b/${Math.round((opts.scoutMs ?? 90000) / 1000)}s`);
+            target = await scoutForAnimal(bot, { radius, maxDy, scoutRadius: opts.scoutRadius ?? 96, scoutMs: opts.scoutMs ?? 90000, scoutToward: opts.scoutToward });
+            prog(target ? `scout found ${target.name}` : 'scout found nothing');
+            t0 = Date.now();   // 侦察有自己的 ≤scoutMs 上限; 猎杀/烤/吃重新计 maxMs
+            if (!target) return { failed: true, reason: 'scout-found-nothing' };
+        }
         if (!target) {
             prog(`no huntable animal within ${radius}b/dy${maxDy} — ${opts._surfaced ? 'surfaced (progress), no hunt' : 'honest fail (no roaming)'}`);
             return opts._surfaced ? { ok: true, surfaced: true } : { failed: true, reason: 'no-animal-in-radius' };
