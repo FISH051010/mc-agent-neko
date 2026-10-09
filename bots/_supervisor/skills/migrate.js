@@ -116,6 +116,14 @@ function marchBlockingThreat(entities, selfEntity, pos) {
 }
 // ★C250 HARD OCEAN-ABORT (#33 drowning root): cap CUMULATIVE water legs — turning can't escape an open ocean. PURE.
 function oceanCrossingAbort(waterLegs) { return waterLegs >= 7; }
+// ★COOLDOWN-ON-STALL (C222): full cooldown only when we really relocated (settled on a good site or moved >=150b); a
+// run that stalled (~27b) backdates lastMigrateAt so a retry is eligible again after 3min instead of 20. PURE.
+function migrateCooldownStamp({ reachedGood, movedReal, cooldownMin, now }) {
+    const cooldownMs = (cooldownMin ?? 20) * 60000;
+    const STALL_RETRY_MS = 3 * 60000;
+    const fullCooldown = !!(reachedGood || movedReal >= 150);
+    return { fullCooldown, lastMigrateAt: fullCooldown ? now : (now - Math.max(0, cooldownMs - STALL_RETRY_MS)) };
+}
 
 function norm2(x, z) {
     const m = Math.hypot(x, z);
@@ -583,10 +591,9 @@ export default async function migrate(bot, ctx, opts = {}) {
     try {
         const ns = readMState();
         const movedReal = Math.round(bot.entity.position.distanceTo(pos0));
-        const cooldownMs = (opts.cooldownMin ?? 20) * 60000;
         const STALL_RETRY_MS = 3 * 60000;
-        const fullCooldown = reachedGood || movedReal >= 150;
-        ns.lastMigrateAt = fullCooldown ? Date.now() : (Date.now() - Math.max(0, cooldownMs - STALL_RETRY_MS));
+        const { fullCooldown, lastMigrateAt } = migrateCooldownStamp({ reachedGood, movedReal, cooldownMin: opts.cooldownMin, now: Date.now() });
+        ns.lastMigrateAt = lastMigrateAt;
         ns.oceanStreak = 0; ns.noAnimalStreak = 0;
         // remember where we LEFT as a barren centroid, so a future migration heads further out.
         ns.barren = { x: Math.round(pos0.x), z: Math.round(pos0.z), t: Date.now() };
@@ -617,4 +624,4 @@ export default async function migrate(bot, ctx, opts = {}) {
     return r;
 }
 
-export { migrate, shouldMigrate, migrateBearing, siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, marchBlockingThreat, oceanCrossingAbort };
+export { migrate, shouldMigrate, migrateBearing, siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, marchBlockingThreat, oceanCrossingAbort, migrateCooldownStamp };

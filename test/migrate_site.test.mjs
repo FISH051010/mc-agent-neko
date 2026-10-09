@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Vec3 from 'vec3';
 import {
-    siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, shouldMigrate, marchBlockingThreat, oceanCrossingAbort,
+    siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, shouldMigrate, marchBlockingThreat, oceanCrossingAbort, migrateCooldownStamp,
 } from '../bots/_supervisor/skills/migrate.js';
 
 // migrate.js site selection / start gate — the T-0042 / T-0051 / T-0055 / T-0059 / T-0061 / T-0110④ family.
@@ -66,4 +66,16 @@ test('C250: a march aborts after 7 cumulative water legs (open ocean), not befor
     // live #33: 637b straight out to sea, wet bunker at night → drowned.
     assert.equal(oceanCrossingAbort(6), false);
     assert.equal(oceanCrossingAbort(7), true);
+});
+
+test('C222: a stalled migration (~27b) only backdates the cooldown → retry eligible in 3min, not locked out 20min', () => {
+    const now = 1e12;
+    const stalled = migrateCooldownStamp({ reachedGood: false, movedReal: 27, cooldownMin: 20, now });
+    assert.equal(stalled.fullCooldown, false);
+    assert.equal(now - stalled.lastMigrateAt, 17 * 60000, 'cooldown 20min − 3min retry window');
+    assert.equal(shouldMigrate({ food: 20, insideDeathZone: true, msSinceLastMigrate: (now + 3 * 60000 + 1) - stalled.lastMigrateAt, cooldownMs: 20 * 60000 }).go, true);
+    const real = migrateCooldownStamp({ reachedGood: false, movedReal: 160, cooldownMin: 20, now });
+    assert.equal(real.fullCooldown, true);
+    assert.equal(real.lastMigrateAt, now);
+    assert.equal(migrateCooldownStamp({ reachedGood: true, movedReal: 5, now }).fullCooldown, true, 'settled on a good site');
 });
