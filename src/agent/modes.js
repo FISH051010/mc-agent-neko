@@ -25,6 +25,7 @@ import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as a
 import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
+import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobility_geom.js';
 
@@ -3938,6 +3939,7 @@ const modes_list = [
     },
     {
         name: 'mobility',
+        maxBurstMs: 90000,   // ★T-0122: longest legit burst ≈ 2×20s capped digs + acquire; past this it's a hung await (mode_latch.js)
         description: 'Continuous god-view modeling of the bot\'s freedom of movement; instant dig-out when entombed.',
         interrupts: ['all'],
         on: true,
@@ -6941,6 +6943,10 @@ async function execute(mode, agent, func, timeout=-1) {
         agent.self_prompter.stopLoop();
     let interrupted_action = agent.actions.currentActionLabel;
     mode.active = true;
+    // ★T-0122: burst 序号 + 起始时间 — ModeController 对超过 maxBurstMs 的 latch 强制解锁; 被放弃的旧 burst
+    //   事后才 settle 时, finally 凭序号判断"不是我的"而不去清掉新 burst 的 active。
+    const _burst = mode._burstSeq = (mode._burstSeq || 0) + 1;
+    mode.activeSince = Date.now();
     // ★所有权令牌: 与 mode.active 同生同灭; finally 只释放自己的 (owner-tag 语义 —
     // 若期间被后来者覆写, release 是 no-op)。
     setBodyOwner(agent.bot, `mode:${mode.name}`, 'mode');
@@ -6950,8 +6956,11 @@ async function execute(mode, agent, func, timeout=-1) {
             await func();
         }, { timeout });
     } finally {
-        mode.active = false;
-        releaseBodyOwner(agent.bot, `mode:${mode.name}`);
+        if (mode._burstSeq === _burst) {
+            mode.active = false;
+            mode.activeSince = 0;
+            releaseBodyOwner(agent.bot, `mode:${mode.name}`);
+        }
     }
     
     // Only log mode completion for non-interrupted actions or when there's meaningful output
@@ -7046,6 +7055,25 @@ class ModeController {
         if (_agent.isIdle()) {
             this.unPauseAll();
         }
+        // ★T-0122: release reflex latches held past their declared maxBurstMs (a hung await inside a burst
+        //   would otherwise freeze the mode's model AND starve every reflex after it — see mode_latch.js).
+        try {
+            const _bot = _agent.bot;
+            releaseExpiredLatches(modes_list, Date.now(), (m, heldMs) => {
+                try { releaseBodyOwner(_bot, `mode:${m.name}`); } catch (e) {}
+                // the hung burst still occupies the ActionManager slot — free it too, else the next reflex's
+                // runAction→stop() waits 15s for it and then force-reconnects ("action-refused-stop").
+                const _am = _agent.actions;
+                const _slotLabel = _am.currentActionLabel;
+                if (_am.executing && _slotLabel === `mode:${m.name}`) { _am.executing = false; _am.currentActionLabel = ''; _am.currentActionFn = null; }
+                const held = _bot.heldItem ? _bot.heldItem.name : 'empty';
+                const dig = _bot.targetDigBlock ? `${_bot.targetDigBlock.name}@${_bot.targetDigBlock.position}` : '-';
+                const win = _bot.currentWindow ? (_bot.currentWindow.type || 'open') : '-';
+                const mob = _bot._mobility ? _bot._mobility.state : '-';
+                fs.appendFileSync('bots/_supervisor/progress.txt',
+                    `[${new Date().toISOString()}] [modes] ★LATCH RELEASE ${m.name} held ${Math.round(heldMs / 1000)}s > maxBurst ${Math.round(m.maxBurstMs / 1000)}s — hung await abandoned (T-0122). mob=${mob} held=${held} targetDig=${dig} window=${win} slot=${_slotLabel || '-'}\n`);
+            });
+        } catch (e) {}
         // always-on observers (e.g. threat_radar) run every tick regardless of what the
         // agent is executing — they only record, never act, so they bypass the
         // idle/interruptible gate and the active-mode break below. Without this, a
