@@ -108,9 +108,17 @@ export function rotateAwayFromAborted(avoidList, p0, sx, sz, now = Date.now()) {
 // ★T-0158 (death #7 10-09 20:08:26 suffocation @y32, 前一刻从 y49 坠到 y32): 砂砾层里的两个重力坑。
 const MD_GRAV_RE = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|[a-z_]*concrete_powder)$/;
 const MD_VOIDISH_RE = /^(air|cave_air|void_air|water|flowing_water|lava|flowing_lava)$/;
-/** ① 落脚支撑是悬在空洞上的重力块 → 挖开其上那格它就塌, bot 踩空 (= 当作无支撑, 走 void-hop)。 */
-export function supportCollapses(supportName, underSupportName) {
-    return MD_GRAV_RE.test(supportName || '') && MD_VOIDISH_RE.test(underSupportName || '');
+/**
+ * ① 落脚支撑是悬在空洞上的重力块 → 挖开其上那格它就塌, bot 踩空 (= 当作无支撑, 走 void-hop)。
+ *    `below` = 支撑格下方从上到下的方块名; 叠着的砂砾一路往下, 第一个非重力格是空/液体 = 整摞都会塌。
+ */
+export function supportCollapses(supportName, below) {
+    if (!MD_GRAV_RE.test(supportName || '')) return false;
+    for (const n of (Array.isArray(below) ? below : [below])) {
+        if (MD_GRAV_RE.test(n || '')) continue;          // stacked gravel — keep looking down
+        return MD_VOIDISH_RE.test(n || '');
+    }
+    return false;   // all gravity within the probe — no void seen
 }
 /**
  * ② 新站位列 (feet..clear) 头顶上方是否还会掉重力块进来: 从 topY+1 往上走, 先遇到重力块 = 会塌;
@@ -678,8 +686,9 @@ export default async function mineDown(bot, ctx, opts = {}) {
         // No solid support under the new feet (cliff/cave) => don't blind-drop; stop.
         // ★T-0158①: a gravity block hanging over a void is NOT support — digging the cell above it drops it
         // (death #7: gravel floor over a cave, 17-block fall y49→32). Treat it exactly like no support.
-        const _supportCollapses = supportCollapses(nm(support), nm(bn(fx, cy - 3, fz)));
-        if (_supportCollapses) log_(`support ${nm(support)}@${fx},${cy - 2},${fz} hangs over ${nm(bn(fx, cy - 3, fz))} — collapses when dug above; treating as void (T-0158)`);
+        const _below = [3, 4, 5, 6].map(d => nm(bn(fx, cy - d, fz)));
+        const _supportCollapses = supportCollapses(nm(support), _below);
+        if (_supportCollapses) log_(`support ${nm(support)}@${fx},${cy - 2},${fz} hangs over ${_below.join('/')} — collapses when dug above; treating as void (T-0158)`);
         if (_supportCollapses || /^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) {
             rememberAbortedHeading(bot, sx, sz);   // ★T-0139 next dispatch turns away from the void
             // ★T-0137② turn / sidestep ≤4b to a column with 3 solid below and restart the stair — this dispatch

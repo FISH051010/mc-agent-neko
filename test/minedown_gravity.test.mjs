@@ -10,6 +10,8 @@ test('T-0158: a gravel floor over a cave is not support', () => {
     assert.equal(supportCollapses('sand', 'water'), true);
     assert.equal(supportCollapses('gravel', 'stone'), false, 'gravel resting on stone holds');
     assert.equal(supportCollapses('stone', 'air'), false, 'a stone ledge over a cave does not fall');
+    assert.equal(supportCollapses('gravel', ['gravel', 'sand', 'cave_air']), true, 'a gravel stack over a cave collapses as a whole');
+    assert.equal(supportCollapses('gravel', ['gravel', 'stone']), false);
 });
 
 test('T-0158: do not step into a column that still has gravel coming down', () => {
