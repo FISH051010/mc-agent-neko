@@ -73,3 +73,21 @@ export async function settleGravityColumn({ blockAt, entities, dig, sleep, cell,
     }
     return { ok: false, redug, reason: 'column still collapsing' };
 }
+
+// ★T-0143 环境感知的挖掘超时: guardedDig 原用 block.digTime(heldType) 估时 — 省略 inWater / notOnGround 两个
+//   各 ×5 的惩罚, 而 bot.dig 实际按 bot.digTime(block) 挖(mineflayer 把水中/悬空/附魔/药水都算进去, water_navigation
+//   还给它打了水下补丁)。实录 10-10 03:12:24-35 ENTOMBED 刚出水浮着(g=0)挖石: 估 ~3s, 真 ~15s → 'dig-timeout'
+//   截断白挖 ×4。超时须与真实挖掘时间同源。上限 30s(落在 45s 的挖出 burst 截止内)。
+export const MOBILITY_DIG_TIMEOUT_CAP_MS = 30000;
+export function mobilityDigTimeoutMs(bot, block) {
+    let dt = NaN;
+    try { if (typeof bot.digTime === 'function') dt = bot.digTime(block); } catch (e) {}
+    if (!Number.isFinite(dt) || dt <= 0) {
+        try {
+            const e = bot.entity || {};
+            dt = block.digTime(bot.heldItem ? bot.heldItem.type : null, false, !!e.isInWater, !e.onGround);
+        } catch (e) {}
+    }
+    if (!Number.isFinite(dt) || dt <= 0) return 5000;
+    return Math.min(MOBILITY_DIG_TIMEOUT_CAP_MS, Math.round(dt * 1.4) + 1500);
+}

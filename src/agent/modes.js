@@ -30,7 +30,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn } from './framework/mobility_signals.js';
+import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining } from './framework/night_owner.js';
@@ -4394,12 +4394,8 @@ const modes_list = [
                         // bot dug seq 126→129 on the SAME stone block, ok:false ms:5005 each, never
                         // broke free). Scale the cutoff to the block's real digTime×1.4 + 1.5s (cap 20s)
                         // and extend the body-dig lock to match so no other owner steals the slot mid-dig.
-                        let digMs = 5000;
-                        try {
-                            const ht = bot.heldItem ? bot.heldItem.type : null;
-                            const dt = fresh.digTime(ht);
-                            if (Number.isFinite(dt) && dt > 0) digMs = Math.min(20000, Math.round(dt * 1.4) + 1500);
-                        } catch (e) {}
+                        // ★T-0143: same clock bot.dig really uses (in water / airborne each ×5, enchant/effects).
+                        const digMs = mobilityDigTimeoutMs(bot, fresh);
                         bot._bodyDigLockUntil = Date.now() + digMs + 2000;
                         try {
                             const _gravity = gravityHazard((p) => bot.blockAt(p), fresh.position, fresh.name);

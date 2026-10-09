@@ -2857,6 +2857,8 @@
 
 - **★C386-S mineDown 遇洞穴空腔就地转向/横移重开竖井(T-0137②, 监工规格)**（2026-10-10，worker-stuck，T-0137 第②步由 worker-tier 转交）: 证据: 03:03:06/27 @-3,43,-1 heading -1,0: 'no floor support under -4,41,-1 (air)' dug=0 原地中止,每次派发都靠 3 连败冷却后重派。机理: 空洞中止=结束整次派发;人类会转个向或侧挪几格接着挖。**改**(③ `skills/mineDown.js`,热加载): 新导出纯函数 `planVoidHop(bn,cx,cy,cz,sx,sz,avoid,R=4)`: ① 先就地换向到"下一级台阶脚/头无流体、其下 3 格实心"的基本方向;② 否则沿两侧垂直线、再沿反向线走 ≤4 格(沿途脚下实心、无流体、非不可破),找"下方 3 格实心且有可行台阶方向"的列;都没有→null。步进循环里空洞中止先记朝向(C385-S),再 `planVoidHop`,turn 直接换向、hop 用 `walkVoidHop`(挖开脚/头逐格前进,同 wedgeSidestep)到位后 `continue`——同一次派发内继续下挖,每派发 ≤3 次;规划/行走失败才诚实中止。打 `void hop N/3: turned|moved Nb to x,z → heading …`。**回归测试**: `test/minedown_void_hop.test.mjs`(4 条,复刻 03:03 现场的洞穴环);T-0139 源码钉随结构更新。**可证伪预测**: 洞穴区下潜出现 `void hop` 行且后续 dig>0,不再出现同点 3 连 'no floor support' + GO_UNDERGROUND 冷却。子 skill 热加载,合并即生效。
 
+- **★C387-S mobility 挖掘超时与真实挖掘时间同源(T-0143)**（2026-10-10，worker-stuck，T-0143）: 证据: 10-10 03:12:24-35 ENTOMBED @-3,47,3 刚出 SWIM 浮水(act_trace g=0): `dig retry 0/1 (ENTOMBED) stone: dig-timeout` ×4(该 5min 共 18 次 dig-timeout)。机理: guardedDig `digMs = fresh.digTime(heldType)×1.4+1.5s` 省略 inWater/notOnGround(各 ×5),而 bot.dig 实际用 bot.digTime(block)(含水中/悬空/附魔/效果,water_navigation 另打水下补丁)→ 阈值远小于真实耗时 → stopDigging 白挖,ENTOMBED 脱困原地磨。**改**: `framework/mobility_signals.js` 新纯函数 `mobilityDigTimeoutMs(bot, block)`(优先 bot.digTime;缺失时自带水中/悬空惩罚;×1.4+1.5s,上限 30s,落在 45s 挖出 burst 截止内);guardedDig 改用之。**回归测试**: `test/mobility_dig_timeout.test.mjs`(3 条 `T-0143:`)。**范围诚实**: 19:10 两次着地(g=1)的 dig-timeout 原因未明,不在本条。需重启 main.js。
+
 ---
 
 ---
