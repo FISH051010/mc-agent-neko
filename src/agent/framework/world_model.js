@@ -243,17 +243,20 @@ export function armorCraftBlocked(world, bot) {
     return !armorCraftFeasible(invCounts(bot), cost, { tableNear: blockNear(bot, 'crafting_table'), furnaceNear: blockNear(bot, 'furnace') }).ok;
 }
 // ★T-0164 滞留熔炉 (smeltSafe 落盘 stranded_smelt.json): ≤64 格、≤3h 内的记录 → RECLAIM_FURNACE 回炉取锭+收炉。
-export const STRANDED_REACH = 64;
+// ★T-0164 迟滞 (21:03:29 实录: reclaimFurnace 走路途中绕出 64 格 → isGoalDone 判完成 → 承诺翻给 GET_IRON_TOOLS, 8 锭仍在炉里,
+//   bot 随后漂到 72 格外再也不提)。提案门 96 格, 释放门 128 格 — 走路绕远不翻承诺。
+export const STRANDED_REACH = 96;
+export const STRANDED_RELEASE_REACH = 128;
 const STRANDED_MAX_AGE_MS = 3 * 3600 * 1000;
-export function strandedFurnaceInReach(world) {
+export function strandedFurnaceInReach(world, reach = STRANDED_REACH) {
     try {
         const j = JSON.parse(readFileSync(SUP('stranded_smelt.json'), 'utf8').replace(/^﻿/, ''));
         const p = world && world.pos;
         if (!p || !Number.isFinite(p.x)) return null;
         const d = (s) => Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z);
-        // 可多条 (旧单对象兼容): 取最近一口在 64 格内、未过期的
+        // 可多条 (旧单对象兼容): 取最近一口在 reach 内、未过期的
         return (Array.isArray(j) ? j : [j])
-            .filter(s => s && Number.isFinite(s.x) && Date.now() - (s.at || 0) <= STRANDED_MAX_AGE_MS && d(s) <= STRANDED_REACH)
+            .filter(s => s && Number.isFinite(s.x) && Date.now() - (s.at || 0) <= STRANDED_MAX_AGE_MS && d(s) <= reach)
             .sort((a, b) => d(a) - d(b))[0] || null;
     } catch (e) { return null; }
 }
@@ -883,7 +886,7 @@ export function proposeTasks(world, bot) {
     // ★2026-07-05 无镐让位 (实录 05:04: 全镐耗尽时 GET_ARMOR@68 一分压过 REPLENISH@67,
     // craftArmor 抢走白天窗口徒手 7.5s/块凿石找炉位反复失败, 补镐链被压制到 3-strike 冷却
     // 才轮上)。无镐=补给紧急态: picks>0 才许提甲件。
-    // ★T-0164 (监工③): 滞留熔炉里的锭/料 ≤64 格 → 回炉取锭+收炉 @57 (压过 tier 链 45-47, 让位 GET_ARMOR@58/MIGRATE@60/
+    // ★T-0164 (监工③): 滞留熔炉里的锭/料 ≤96 格 (释放门 128) → 回炉取锭+收炉 @57 (压过 tier 链 45-47, 让位 GET_ARMOR@58/MIGRATE@60/
     //   食物@70/夜链@91+)。20:40:57 实录 8 铁丢在 -54,22,24 炉里, bot 走开 — 那 8 块就是铁镐+半件甲。
     {
         const st = overworld && !(threat.actionable > 0) ? strandedFurnaceInReach(w) : null;
@@ -1557,7 +1560,7 @@ export function isGoalDone(kind, world, bot) {
         // Done when fully armored OR banked iron can't afford the cheapest MISSING piece (see
         // ironArmorGoalDone — a flat `<4` livelocked at e.g. boots owned + 4 iron, helmet costs 5).
         case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot) || armorCraftBlocked(w, bot);   // ★T-0157 缺台/炉/燃料即释放
-        case PROPOSAL_KIND.RECLAIM_FURNACE: return !strandedFurnaceInReach(w);
+        case PROPOSAL_KIND.RECLAIM_FURNACE: return !strandedFurnaceInReach(w, STRANDED_RELEASE_REACH);   // 释放门 128 > 提案门 96 (迟滞)
         case PROPOSAL_KIND.GET_BED:       return bedKnown(bot);
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment

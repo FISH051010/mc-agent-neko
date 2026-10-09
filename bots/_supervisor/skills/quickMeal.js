@@ -176,9 +176,24 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         // ★18:04:35 实录: attackEntity 预检"远于 4 格且无清晰路径就放弃" → 41.7 格的羊 0 秒收手、零肉。
         //   先安全寻路贴近 (≤2 格, 限时 20s; 动物会走动, 用实时 position), 再出手。
         if (target.position.distanceTo(bot.entity.position) > 3.5) {
-            setSafeMovements(bot);
-            try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
-            try { bot.pathfinder.stop(); } catch (e) {}
+            const approach = async () => {
+                setSafeMovements(bot);
+                try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
+                try { bot.pathfinder.stop(); } catch (e) {}
+            };
+            const d0 = target.position.distanceTo(bot.entity.position);
+            await approach();
+            // ★T-0167 (21:03:01 实录: y56 封闭地下, 猪在 44 格外地面 → 安全寻路 0s 无路, "approached → 44.4b" 照样出手,
+            //   3 连败 FOOD_FLOOR 冷却 5min)。接近没缩短距离且人在地下 → 先上浮 (≤60s) 再接近一次。
+            if (d0 - target.position.distanceTo(bot.entity.position) < 2 && bot.entity.position.y < 62 && !opts._surfaced) {
+                const y0 = Math.round(bot.entity.position.y);
+                prog(`approach made no progress (${d0.toFixed(1)}b) underground y=${y0} — surfaceUp first (≤60s), then retry`);
+                await race(skills.customSkill(bot, 'surfaceUp', 63), Math.min(left(), 60000));
+                try { bot.pathfinder && bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+                prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
+                if (bot.entity.position.y - y0 >= 4) opts = { ...opts, _surfaced: true };
+                if (target.isValid !== false && left() > 5000) await approach();
+            }
             const hd = await hostileDecision(bot);   // 同侦察口径: ≤6 格或逼近才收手; 6-16 格不逼近 → 继续猎 (目标就在眼前)
             if (hd.action === 'yield' && !(await waitHostileClear(bot, Math.min(15000, Math.max(0, left()))))) {
                 prog(`approach deferred: ${hd.h.name} ${hd.h.dist.toFixed(1)}b (hp-critical)`); stopBody(); return { deferred: true, reason: 'hostile-near' };
@@ -215,5 +230,6 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     }
     prog(`done food ${food0}→${bot.food} ate=${ate} gotMeat=${gotMeat} in ${Math.round((Date.now() - t0) / 1000)}s`);
     if (ate > 0 || gotMeat || bot.food > food0) return { ok: true, ate, gotMeat, food: bot.food };
+    if (opts._surfaced) return { ok: true, surfaced: true, ate, gotMeat };   // T-0167: 上浮本身是进度 (下一拍在地面重猎)
     return { failed: true, reason: 'no-progress' };
 }

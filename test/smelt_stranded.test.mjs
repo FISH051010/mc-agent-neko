@@ -89,6 +89,11 @@ test('T-0164: 滞留记录 ≤64 格 → 提 RECLAIM_FURNACE(reclaimFurnace); �
     assert.equal(isGoalDone('RECLAIM_FURNACE', w, bot), false);
     const far = { ...w, pos: { x: 100, y: 62, z: 22, depthBand: 'surface' } };
     assert.ok(!proposeTasks(far, bot).some(x => x.kind === 'RECLAIM_FURNACE'));
+    // 21:03:29 实录迟滞: 72 格 (bot 漂到 12,51,46) 仍提; 走路绕到 110 格不释放; 130 格才释放
+    const at72 = { ...w, pos: { x: 12, y: 51, z: 46, depthBand: 'mid' } };
+    assert.ok(proposeTasks(at72, bot).some(x => x.kind === 'RECLAIM_FURNACE'), '72b → still proposed');
+    assert.equal(isGoalDone('RECLAIM_FURNACE', { ...w, pos: { x: 50, y: 21, z: 23 } }, bot), false, '105b mid-walk → keep commitment');
+    assert.equal(isGoalDone('RECLAIM_FURNACE', { ...w, pos: { x: 80, y: 21, z: 23 } }, bot), true, '135b → release');
     writeStranded(null);
     assert.equal(isGoalDone('RECLAIM_FURNACE', w, bot), true);
 });

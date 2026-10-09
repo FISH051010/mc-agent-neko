@@ -89,16 +89,16 @@ export async function clearAndPickUp(bot, { skills, world }, item, product) {
 }
 /** 回滞留炉收产物/残料并收炉 (由近及远; all=false 只收最近一口)。炉已不在/收完 → 删记录; 太远 → 保留。
  *  返回 {got, furnaces}: got = 收回的锭+料, furnaces = 挖回背包的炉数 (空炉也挖回, 熔炉本身是资产)。 */
-export async function reclaimStranded(bot, { skills, world, log }, { all = false } = {}) {
+export async function reclaimStranded(bot, { skills, world, log }, { all = false, reach = STRANDED_REACH } = {}) {
     let got = 0, furnaces = 0;
     for (let i = 0; i < 4; i++) {
         const p = bot.entity && bot.entity.position;
         if (!p || bot.interrupt_code) break;
         const dist = (s) => Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z);
         const recs = readAllStranded().sort((a, b) => dist(a) - dist(b));
-        const rec = recs.find(s => dist(s) <= STRANDED_REACH);
+        const rec = recs.find(s => dist(s) <= reach);
         if (!rec) {
-            if (recs.length && i === 0) log(bot, `stranded furnace(s) all >${STRANDED_REACH}b away (nearest ${Math.round(dist(recs[0]))}b) — keep records`);
+            if (recs.length && i === 0) log(bot, `stranded furnace(s) all >${reach}b away (nearest ${Math.round(dist(recs[0]))}b) — keep records`);
             break;
         }
         const d = dist(rec);
