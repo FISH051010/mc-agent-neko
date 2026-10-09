@@ -44,6 +44,11 @@ export function famineStall(bot) {
         return !lethal && food <= 2 && !v.canRegen;
     } catch (e) { return false; }
 }
+const WORLD_FRESH_MS = 8000;   // world_model rewrites bot._world every ~2s
+function freshWorldSaysFree(bot, now = Date.now()) {
+    const w = bot && bot._world;
+    return !!(w && Number.isFinite(w.ts) && now - w.ts <= WORLD_FRESH_MS && w.mobility && w.mobility.state === 'FREE');
+}
 function hasPickaxe(bot) {
     try { return bot.inventory.items().some(i => /_pickaxe$/.test(i.name || '')); } catch (e) { return false; }
 }
@@ -63,6 +68,13 @@ export function reflexBusy(bot) {
         //   bot 抬高 1 格撤销下挖 (live 10-10 00:40/42/44/47 四连, 每次 mineDown 返回后空等 ~30s)。
         //   有镐时直接派发 commitment(挖掘/寻路自会挖穿); 无镐的 POCKET 才是真窄缝, 照旧让位给垫/挖反射。
         if (m === 'POCKET' && hasPickaxe(bot)) return false;
+        // ★T-0122 陈旧 mobility: bot._mobility 只在 mobility mode 的 update 里刷新 — 它被自己挂死的 burst
+        //   锁住、或被排在前面的 self_preservation 长 hold 饿死时, 会停在 ENTOMBED/POCKET 不动 (live 10-10
+        //   00:59→01:03 白天 4.5min、01:09→ 夜里 5min+: vitals mob=ENTOMBED 而 world_model 自算 FREE, kernelDriver
+        //   零派发)。world_model 是 always-on 观察者, 每 2s 用同一几何判据自算 mobility — 它新鲜且说有可走
+        //   出口(FREE)时, ENTOMBED/POCKET 这两个纯几何的说法已被物理推翻, 不再让位。SEALED/MAROONED/SWIM*
+        //   依赖 flood-fill/历史, 世界模型算不出, 照旧信任 mobility。
+        if ((m === 'ENTOMBED' || m === 'POCKET') && freshWorldSaysFree(bot)) return false;
         if (m && MOBILITY_YIELD_RE.test(String(m))) return true;
         // ★FROZEN-ALIVE FIX (live -24,50,-31 pin ~6min): the passive `enclosed` flag (a ceiling
         // overhead) is NOT a reason to defer — a bot mining/sheltering underground is "enclosed"

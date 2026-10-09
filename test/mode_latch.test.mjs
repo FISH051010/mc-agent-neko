@@ -41,3 +41,21 @@ test('T-0122: releasing a latch also frees that mode\'s ActionManager slot (no 1
     const src = fs.readFileSync(path.join(root, 'src/agent/modes.js'), 'utf8');
     assert.match(src, /if \(_am\.executing && _slotLabel === `mode:\$\{m\.name\}`\) \{ _am\.executing = false;/);
 });
+
+import { reflexBusy } from '../bots/_supervisor/skills/kernelDriver.js';
+
+// Live 10-10 01:09→: vitals mob=ENTOMBED (bot._mobility frozen — mobility not updating) while the always-on
+// world model, recomputing the same geometry every 2s, said FREE; kernelDriver yielded with zero dispatch.
+const kd = (mobState, world) => ({ _mobility: { state: mobState }, _world: world, inventory: { items: () => [] } });
+const wm = (state, ageMs = 1000) => ({ ts: Date.now() - ageMs, mobility: { state }, threat: {}, vitals: { food: 20 } });
+
+test('T-0122: a stale ENTOMBED/POCKET claim is overridden when the fresh world model sees walkable exits', () => {
+    assert.equal(reflexBusy(kd('ENTOMBED', wm('FREE'))), false);
+    assert.equal(reflexBusy(kd('POCKET', wm('FREE'))), false);
+});
+
+test('T-0122: real entombment, a stale world model, or history-only rescue states still yield', () => {
+    assert.equal(reflexBusy(kd('ENTOMBED', wm('ENTOMBED'))), true, 'physics agrees → genuine');
+    assert.equal(reflexBusy(kd('ENTOMBED', wm('FREE', 60000))), true, 'world model stale → trust mobility');
+    for (const st of ['SEALED', 'MAROONED', 'SWIM', 'SWIM_STUCK']) assert.equal(reflexBusy(kd(st, wm('FREE'))), true, st);
+});
