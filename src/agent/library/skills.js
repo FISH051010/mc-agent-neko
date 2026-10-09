@@ -6951,6 +6951,32 @@ export async function useToolOn(bot, toolName, targetName) {
     return true;
  }
 
+/** ★T-0148 cancel a chopWood the caller has given up on: bump its generation (every chopWood loop yields at the
+ *  next iter via _superseded()) and stop the in-flight dig/path/keys so it can't steal the body. */
+export function cancelChopWood(bot) {
+    try { bot._chopGen = (bot._chopGen || 0) + 1; } catch (e) {}
+    try { bot.stopDigging && bot.stopDigging(); } catch (e) {}
+    try { bot.pathfinder && bot.pathfinder.stop(); } catch (e) {}
+    try { bot.clearControlStates(); } catch (e) {}
+}
+
+/** ★T-0148 time-boxed chopWood. A bare `Promise.race([customSkill('chopWood'), timeout])` only stops WAITING —
+ *  the chop loop keeps running as an orphan and fights the next skill for the body (live 10-10 03:23:47: orphan
+ *  chopWood iter8/9 kept digging spruce_log; mineDown's digs got 'Digging aborted' ×3 → GO_UNDERGROUND cooldown).
+ *  On timeout this cancels the child, then rejects with Error(label) so callers' existing catch paths still run.
+ *  `run` is injectable for tests; production always runs the real chopWood skill. */
+export async function chopWoodWithin(bot, ms, label, args = [], run = (...a) => customSkill(bot, 'chopWood', ...a)) {
+    const tag = label || 'chopWood-timeout';
+    let timer = null;
+    const deadline = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(tag)), ms); });
+    try {
+        return await Promise.race([run(...args), deadline]);
+    } catch (e) {
+        if (e && e.message === tag) cancelChopWood(bot);
+        throw e;
+    } finally { clearTimeout(timer); }
+}
+
 export async function customSkill(bot, skillName, ...args) {
     /**
      * Load and run a hot-reloadable custom skill written to bots/_supervisor/skills/<skillName>.js. The supervisor adds these files at runtime to teach the bot a procedure; the file is re-imported fresh on every call so edits take effect with NO agent restart. The skill module must export a default async function with signature (bot, ctx, ...args) where ctx = { skills, world, mc, Vec3, log }.

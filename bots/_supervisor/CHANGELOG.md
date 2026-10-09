@@ -2875,6 +2875,8 @@
 
 - **★C387-S mobility 挖掘超时与真实挖掘时间同源(T-0143)**（2026-10-10，worker-stuck，T-0143）: 证据: 10-10 03:12:24-35 ENTOMBED @-3,47,3 刚出 SWIM 浮水(act_trace g=0): `dig retry 0/1 (ENTOMBED) stone: dig-timeout` ×4(该 5min 共 18 次 dig-timeout)。机理: guardedDig `digMs = fresh.digTime(heldType)×1.4+1.5s` 省略 inWater/notOnGround(各 ×5),而 bot.dig 实际用 bot.digTime(block)(含水中/悬空/附魔/效果,water_navigation 另打水下补丁)→ 阈值远小于真实耗时 → stopDigging 白挖,ENTOMBED 脱困原地磨。**改**: `framework/mobility_signals.js` 新纯函数 `mobilityDigTimeoutMs(bot, block)`(优先 bot.digTime;缺失时自带水中/悬空惩罚;×1.4+1.5s,上限 30s,落在 45s 挖出 burst 截止内);guardedDig 改用之。**回归测试**: `test/mobility_dig_timeout.test.mjs`(3 条 `T-0143:`)。**范围诚实**: 19:10 两次着地(g=1)的 dig-timeout 原因未明,不在本条。需重启 main.js。
 
+- **★C388-S 限时砍树原语 chopWoodWithin: 超时即叫停孤儿 chopWood(T-0148, 收口 T-0147)**（2026-10-10，worker-stuck，T-0148）: 证据: 03:23:47 replenishKit `chopWood incomplete: replenish-chop-timeout` 后 chopWood 仍在跑([chopDBG] iter8 19:23:50 / iter9 19:24:01,act_trace 19:23:51-58 dig=spruce_log);19:23:54/55/57 mineDown START 后 1-3ms `dig threw: Digging aborted` ×3 → ★dispatch-cooldown GO_UNDERGROUND。机理: HANDOFF §9.1「Promise.race 超时只弃养不取消=孤儿循环打架」——超时方只是不再等,子 skill 不知情,继续挖树,新 dig 中止旧 dig。同型 race 包 chopWood 共 7 处(achieve×2/feedUp×2/prepNether×2/replenishKit×1);worker-tier 的 T-0147(9149c95)已修 replenishKit 一处。**改**: ② `library/skills.js` 新原语 `cancelChopWood(bot)`(bump `_chopGen`→chopWood 各循环 `_superseded()` 下一 iter 让位 + stopDigging + 停寻路/按键)与 `chopWoodWithin(bot, ms, label, args)`(race+超时取消,仍以原 label 抛错保留调用方 catch);7 处统一改用。T-0147 的 supersedeChop 与测试保留(锚点随写法更新)。**回归测试**: `test/chopwood_within.test.mjs`(3 条 `T-0148:`,含"技能目录不得再有裸 race 包 chopWood"的全量守卫)。**可证伪预测**: 限时砍树超时后不再出现 [chopDBG] iter 续跑,紧随其后的 mineDown 不再 1-3ms `Digging aborted`。需重启 main.js(skills.js)。
+
 ---
 
 ---

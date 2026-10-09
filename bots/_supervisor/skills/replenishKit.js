@@ -272,10 +272,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
             const need = Math.max(1, Math.min(12, Math.ceil((64 - planksEq()) / 4)));   // ★宽迟滞: 一次派发最多补 12 log
             prog(`replenishKit: ② chopWood need=${need} (logs=${lb} planksEq=${planksEq()}), budget 120s`);
             try {
-                await Promise.race([
-                    skills.customSkill(bot, 'chopWood', need, { needLogs: true }),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('replenish-chop-timeout')), 120000)),
-                ]);
+                await skills.chopWoodWithin(bot, 120000, 'replenish-chop-timeout', [need, { needLogs: true }]);
             } catch (e) {
                 // ★T-0147 (19:23:47Z 实录): 限时到了只停寻路/按键, chopWood 循环本身没叫停 → 幽灵 chopWood 继续 iter9/10
                 //   砍树, 与随后派发的 mineDown 抢挖掘 ("Digging aborted" ×3 → GO_UNDERGROUND 冷却)。用 chopWood 自带的

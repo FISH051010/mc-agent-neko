@@ -1253,10 +1253,7 @@ async function prepNetherInner(bot, ctx) {
                     if (woodGate.ok) {
                         prog(`prepNether: ★C229 TABLE recovery — surfaced, still wood-blocked (logs=${heldLogs()} planksMax=${maxHeldPlankStack()}); chopWood ${woodGate.target}`);
                         try {
-                            await Promise.race([
-                                skills.customSkill(bot, 'chopWood', 4),
-                                new Promise((_, rej) => setTimeout(() => rej(new Error('table-recovery-chop-timeout')), 90000)),
-                            ]);
+                            await skills.chopWoodWithin(bot, 90000, 'table-recovery-chop-timeout', [4]);
                         } catch (e) { try { bot.pathfinder && bot.pathfinder.stop(); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} prog(`prepNether: TABLE recovery chopWood incomplete: ${e.message}`); }
                     }
                 }
@@ -2276,10 +2273,7 @@ async function prepNetherInner(bot, ctx) {
                     ]);
                 }
                 if (!bot.interrupt_code && !isNightNow()) {
-                    await Promise.race([
-                        skills.customSkill(bot, 'chopWood', 3),
-                        new Promise((_, rej) => setTimeout(() => rej(new Error('wood-first-chop-timeout')), 90000)),
-                    ]);
+                    await skills.chopWoodWithin(bot, 90000, 'wood-first-chop-timeout', [3]);
                 }
             } catch (e) {
                 try { bot.pathfinder && bot.pathfinder.stop(); } catch (_) {}

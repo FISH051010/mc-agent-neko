@@ -1411,10 +1411,7 @@ export default async function feedUp(bot, ctx, targetFood = 18) {
         }
         try {
             prog(`feedUp: targeted oak forage local chop/sweep food=${bot.food} hp=${Math.round(bot.health)}`);
-            await Promise.race([
-                skills.customSkill(bot, 'chopWood', 1, { allowCriticalForage: true, criticalForageLocalOnly: true }),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('targeted-oak-timeout')), 18000)),
-            ]);
+            await skills.chopWoodWithin(bot, 18000, 'targeted-oak-timeout', [1, { allowCriticalForage: true, criticalForageLocalOnly: true }]);
         } catch (e) {
             prog(`feedUp: targeted oak forage local chop stop: ${e.message}`);
             try { bot.pathfinder && bot.pathfinder.stop(); } catch (_) {}
@@ -1644,10 +1641,7 @@ export default async function feedUp(bot, ctx, targetFood = 18) {
                     } else {
                         prog(`feedUp: PlanD apple forage — try one oak chop at food=${bot.food} hp=${Math.round(bot.health)}`);
                         try {
-                            await Promise.race([
-                                skills.customSkill(bot, 'chopWood', 1, { allowCriticalForage: true, criticalForageLocalOnly: true }),
-                                new Promise((_, rej) => setTimeout(() => rej(new Error('apple-forage-timeout')), 22000)),
-                            ]);
+                            await skills.chopWoodWithin(bot, 22000, 'apple-forage-timeout', [1, { allowCriticalForage: true, criticalForageLocalOnly: true }]);
                         } catch (e) {
                             prog(`feedUp: PlanD apple forage stop: ${e.message}`);
                             try { bot.pathfinder && bot.pathfinder.stop(); } catch (_) {}

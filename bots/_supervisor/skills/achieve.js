@@ -317,10 +317,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
             } else if (woodEq() >= 8) {
                 prog(`> skip stock wood buffer — woodEq=${woodEq()} enough; don't chase logs for a craftable plank buffer`);
             } else if (sumRe(/_log$/) < 6 && sumRe(/_planks$/) < 8 && !_nightExposed) {
-                await step(`stock wood buffer (${woodGate.target})`, () => Promise.race([
-                    skills.customSkill(bot, 'chopWood', logBuf - sumRe(/_log$/)),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('woodbuf-timeout')), 90000)),
-                ]).catch(e => { try { bot.pathfinder.stop(); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} }));
+                await step(`stock wood buffer (${woodGate.target})`, () => skills.chopWoodWithin(bot, 90000, 'woodbuf-timeout', [logBuf - sumRe(/_log$/)]).catch(e => { try { bot.pathfinder.stop(); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} }));
             }
         } catch (e) {}
     }
@@ -1168,10 +1165,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
                     motion('achieve.recraft_gate.restock', { picks, cobble: have('cobblestone'), sticks, woodEq: woodEq(), y });
                     try { await skills.customSkill(bot, 'surfaceUp', Math.max(63, Math.floor(bot.entity.position.y) + 8)); } catch (e) {}
                     try {
-                        await Promise.race([
-                            skills.customSkill(bot, 'chopWood', 4),
-                            new Promise((_, rej) => setTimeout(() => rej(new Error('recraft-chop-timeout')), 90000)),
-                        ]);
+                        await skills.chopWoodWithin(bot, 90000, 'recraft-chop-timeout', [4]);
                     } catch (e) { try { bot.pathfinder && bot.pathfinder.stop(); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} }
                     return woodEq() >= 8;
                 }

@@ -18,7 +18,7 @@ test('T-0147: supersedeChop bump chopWood 代号 (使旧循环 _superseded 为�
 
 test('T-0147: replenishKit 的 chopWood 超时分支调用 supersedeChop', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/replenishKit.js', import.meta.url), 'utf8');
-    const i = src.indexOf("rej(new Error('replenish-chop-timeout'))");
+    const i = src.indexOf("'replenish-chop-timeout'");   // T-0148: now via skills.chopWoodWithin(…, 'replenish-chop-timeout', …)
     const catchBlock = src.slice(i, src.indexOf('chopWood incomplete', i));
     assert.ok(/supersedeChop\(bot\)/.test(catchBlock), 'timeout catch supersedes the orphan chop loop');
 });
