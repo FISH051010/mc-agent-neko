@@ -48,6 +48,50 @@ function stairSafety(reads) {
 //   ① turn in place to a cardinal whose stair cell has 3 solid blocks under it; else
 //   ② walk ≤4 blocks along a perpendicular/reverse line on solid footing to a column with 3 solid below and a
 //      viable stair heading from there. Returns null when nothing safe is in reach (honest abort).
+/** Walk a planned same-level line cell by cell, breaking feet/head blocks first (shared by void hop + relocate). */
+export async function walkDugPath(bot, skills, Vec3, bn, path) {
+    for (const [tx, tz] of path) {
+        const cyf = Math.floor(bot.entity.position.y);
+        for (const by of [cyf + 1, cyf]) {
+            const b = bn(tx, by, tz);
+            if (b && b.boundingBox === 'block') { try { await skills.breakBlockAt(bot, tx, by, tz); } catch (e) {} }
+        }
+        try {
+            await bot.lookAt(new Vec3(tx + 0.5, cyf + 0.5, tz + 0.5), true);
+            bot.setControlState('forward', true);
+            const t0 = Date.now();
+            while (Date.now() - t0 < 1500) { const pp = bot.entity.position; if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) < 0.45) break; await new Promise(r => setTimeout(r, 100)); }
+        } finally { try { bot.setControlState('forward', false); } catch (e) {} }
+        const pp = bot.entity.position;
+        if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) > 0.8) return false;
+    }
+    return true;
+}
+
+// ★T-0161 地下换址 = 开横向短隧道 (人类做法)。四向皆被 fluid/void/wedge 记忆覆盖时, 旧 lever#1 调 skills.moveAway(10)
+//   (pathfinder GoalInvert) — 在实心岩层隧道里原地不动 (live 04:23/04:26 @-39,40,5 'relocate failed (moved=0.0b)' ×5;
+//   两份 progress 史上 'relocated … to fresh ground' 成功 0 次)。改为: 当前层选一个基本方向, 沿途 len 格的脚/头格非流体非
+//   不可破、脚下实心、且脚/头格及头顶的侧邻无流体 (别挖穿含水层), 挖过去 ≥8 格 → 越出朝向记忆半径 8, 回到干净起点。
+export function planRelocateTunnel(bn, cx, cy, cz, len = 9) {
+    const nm = (b) => (b && b.name) || 'air';
+    const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
+    const passable = (b) => !FLUID.test(nm(b)) && !UNBREAKABLE.test(nm(b));
+    const wet = (x, y, z) => FLUID.test(nm(bn(x, y, z)));
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+        const path = [];
+        let ok = true;
+        for (let d = 1; d <= len && ok; d++) {
+            const x = cx + dx * d, z = cz + dz * d;
+            if (!passable(bn(x, cy, z)) || !passable(bn(x, cy + 1, z)) || !solid(bn(x, cy - 1, z))) { ok = false; break; }
+            for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (wet(x + ox, cy, z + oz) || wet(x + ox, cy + 1, z + oz)) { ok = false; break; }
+            if (ok && wet(x, cy + 2, z)) ok = false;
+            path.push([x, z]);
+        }
+        if (ok) return { sx: dx, sz: dz, path };
+    }
+    return null;
+}
+
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     const nm = (b) => (b && b.name) || 'air';
     const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
@@ -194,7 +238,15 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 if (!rb || Date.now() - rb.at > 180000) rb = bot._mdRelocateBudget = { at: Date.now(), count: 0 };
                 if (rb.count >= 2) { log_(`relocate budget spent (${rb.count}/2 in <3min) — honest fail, higher layer should reposition`); return { failed: true, abort: 'all headings flooded/wedged; relocate budget spent' }; }
                 const before = bot.entity.position.clone();
-                try { await skills.moveAway(bot, 10); } catch (e) {}
+                // ★T-0161: underground the pathfinder moveAway never moved (0/∞ historically) — tunnel out instead.
+                const _tun = planRelocateTunnel(bn, Math.floor(before.x), Math.round(before.y), Math.floor(before.z));
+                if (_tun) {
+                    const _ok = await walkDugPath(bot, skills, Vec3, bn, _tun.path);
+                    log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length} — ${_ok ? 'arrived' : 'walk stopped early'}`);
+                } else {
+                    log_('relocate tunnel: no dry solid 9-cell line at this level — falling back to moveAway');
+                    try { await skills.moveAway(bot, 10); } catch (e) {}
+                }
                 const p2 = bot.entity.position;
                 const movedB = Math.hypot(p2.x - before.x, p2.z - before.z);
                 const feetB = bn(Math.floor(p2.x), Math.floor(p2.y) - 1, Math.floor(p2.z));
@@ -221,24 +273,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     let dug = 0, ore = 0, abort = null, noProg = 0;
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
-    const walkVoidHop = async (path) => {
-        for (const [tx, tz] of path) {
-            const cyf = Math.floor(bot.entity.position.y);
-            for (const by of [cyf + 1, cyf]) {
-                const b = bn(tx, by, tz);
-                if (b && b.boundingBox === 'block') { try { await skills.breakBlockAt(bot, tx, by, tz); } catch (e) {} }
-            }
-            try {
-                await bot.lookAt(new Vec3(tx + 0.5, cyf + 0.5, tz + 0.5), true);
-                bot.setControlState('forward', true);
-                const t0 = Date.now();
-                while (Date.now() - t0 < 1500) { const pp = bot.entity.position; if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) < 0.45) break; await new Promise(r => setTimeout(r, 100)); }
-            } finally { try { bot.setControlState('forward', false); } catch (e) {} }
-            const pp = bot.entity.position;
-            if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) > 0.8) return false;
-        }
-        return true;
-    };
+    const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
 
     // ★C248b mid-dive pickaxe-survival guard (root-harden — see memory resource-floor-bootstrap-kit).
     // C248 gates the DISPATCH (don't start a dive on a dying lone pick), but a pick that starts
