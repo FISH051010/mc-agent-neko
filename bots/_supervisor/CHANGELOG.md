@@ -2819,6 +2819,8 @@
 
 - **★C374-S 决策层不再提必定 NO-OP 的 GET_BED(T-0119)**（2026-10-10，worker-stuck，T-0119）: 证据(10-10 00:17 实机): 死亡重生 1 木镐 0 木,REPLENISH_KIT@62 已提案,commitment 却粘在 GET_BED@44 → prepNether→setBed `no sheep within 64 ... defer` 3 连 NO-OP,靠 T-0115 冷却才放手,冷却 5min 一过复燃。机理: `bedProposalPriority` 在 woolPath=false 时照返 44,而 prepNether(goals 已退役)的 GET_BED 只剩 setBed,setBed 的全部推进路径 = 床/毛≥3 / 线≥4 / 64b 内羊 / 有剑且 48b 内蜘蛛,全不满足即确定性 defer → 决策层在提 skill 层必拒的任务(noop-dispatch 大类),且 commitment 粘性让 @44 压住 @62。**改**(① `framework/world_model.js`): 新 `bedErrandFeasible(bot)` 精确镜像 setBed 推进路径,GET_BED push 门加之(看不到羊先干别的,实体随走动加载即自然复燃)。`bedProposalPriority`/T-0043 优先级不变。**回归测试**: `test/bed_errand_feasible.test.mjs`(2 条 `T-0119:`,proposeTasks 驱动)。**可证伪预测**: 无羊无毛期间 progress 不再出现 `setBed: no sheep within 64 ... defer` + `★dispatch-cooldown GET_BED` 周期;羊进 64b 内 GET_BED 立即重提。**回滚**: revert;需重启 main.js。
 
+- **★C376-S 部署锁补"捎带判定" `deploy-lock.mjs live <sha>`(T-0114)**（2026-10-10，worker-stuck，T-0114；锁本体=监工 f43a911）: 证据: 10-10 00:21 worker-death 的 C356-C358(128cbf9 落地 00:19:22)随别人的重启上线,若各自再"为自己的提交重启"即第 4 次叠加重启(00:21-00:26 已 3 次)。机理: 部署者只知道"我合并了",不知道"运行中的进程是否已包含它";提交时间≠落地时间(rebase 后的分支稍后 ff-merge)。**改**(④ `bots/_supervisor/deploy-lock.mjs`): 纯函数 `landedAt(reflog, contains)`(分支 reflog 中最早仍包含该提交的 tip 时间)+`alreadyLive({landedMs, procStartMs})`;CLI `live <sha> [--proc main|botwatch] [--repo]` 用 `git merge-base --is-ancestor` 走 reflog、PowerShell 读 init_agent/botwatch 的 CreationDate,exit 0=已上线不必重启。docs 部署锁节加"捎带判定先于拿锁"。实测: 14d991f(落 16:21:58Z)/128cbf9(16:19:22Z) vs main 16:26:00Z → 已上线;f43a911(16:26:43Z)→未上线。**回归测试**: `test/deploy_lock_live.test.mjs`(2 条 `T-0114:`)。**回滚**: revert(纯工具,无需重启)。
+
 ---
 
 ---
