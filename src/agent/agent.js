@@ -29,6 +29,7 @@ import { log, validateNameFormat, handleDisconnection } from './connection_handl
 import fs from 'fs';
 import { dataPath, expandUserPath } from '../utils/paths.js';
 import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket } from './world_scope.js';
+import { deathAlertText, observeKeepInventory, countItems } from './keepinv_report.js';
 
 // ★2026-08-07 路径统一: 本文件所有监工状态文件原来都是裸相对 'bots/_supervisor/xxx' (相对 CWD)。
 // 分发包里代码在 <包根>/app/、CWD 在 <包根>, 靠 bootstrap 的 chdir 才勉强对得上 —— 但那是兜底网,
@@ -656,12 +657,35 @@ export class Agent {
             await this.handleBotDisconnection(reason, bot);
         });
 
+        // keepInventory 实测校正: 死后复活 3s, 背包为空 = 确实掉落; 数量没少 = 确实保留。
+        bot.on('spawn', () => {
+            if (!isCurrentBot()) return;
+            const pre = bot._preDeathItemCount;
+            if (!(bot._diedAt && Date.now() - bot._diedAt < 120000) || !(pre > 0)) return;
+            bot._preDeathItemCount = null;
+            setTimeout(() => {
+                try {
+                    const post = countItems(bot);
+                    const observed = observeKeepInventory(pre, post);
+                    if (observed === null) return;
+                    fs.writeFileSync(SUP('keepinv.json'), JSON.stringify({
+                        _comment: 'keepInventory verification cache for death reporting, corpse-run, and gear-management semantics. value is corrected by observing inventory across each death (keepinv_report.js).',
+                        value: observed,
+                        verifiedVia: `observed respawn inventory: ${pre} items before death -> ${post} after respawn`,
+                        ts: Date.now(),
+                    }, null, 2));
+                } catch (e) {}
+            }, 3000);
+        });
+
         bot.on('death', () => {
             if (!isCurrentBot()) return;
             console.log(`${this.name} died, stopping current actions...`);
             // ★death stamp (read by kernel's busy-stuck watchdog post-death fast path —
             // NOT by skills; the NOTE below about death-abort flags still governs those).
             try { this.bot._diedAt = Date.now(); } catch (e) {}
+            // keepInventory 实测: 记下死前物品数, 复活后比对 (keepinv_report.js)
+            try { this.bot._preDeathItemCount = countItems(this.bot); } catch (e) {}
             // ★capture the live layers NOW (checkpoint #9: the snapshot writer below runs in
             // a later async block, by which time actions.stop()/skill settlement had already
             // nulled _currentSkill/supervised — three deaths mid-nightShelter/shieldFight all
@@ -690,17 +714,18 @@ export class Agent {
             // dialog LLM is informed regardless of pending state.
             try {
                 const deathCause = this._inferDamageCause();
-                // ★2026-07-08 用户令: 死亡告警【硬编码不掉落】。本世界 keepInventory 实际一直 ON,
-                //   但 C344v2 的 in-game 查询把 keepinv.json 误写成 value:false(查询被服务器错答/拒答),
-                //   旧的"只在核实为 false 时报掉落"逻辑因此又回退到"物品已掉落原地"错误文案。既然实际死亡
-                //   不掉落, 直接硬编码——不再读 keepinv.json 判文案, 永远报"保留"。
-                const text = '角色阵亡（死亡不掉落，物品已保留），即将重生。';
+                // ★2026-10-09: 撤掉 07-08 的硬编码"不掉落"(那个世界确实开着 keepInventory)。新世界
+                //   keepInventory=false, 首死全掉光却仍播"已保留"。文案改按 keepinv.json 核实值走, 且该值
+                //   每次复活由背包实测校正 (见下方 spawn 监听 + keepinv_report.js), 查询答错也会被纠正。
+                let _kiv = null;
+                try { const _k = JSON.parse(fs.readFileSync(SUP('keepinv.json'), 'utf8').replace(/^﻿/, '')); if (typeof _k.value === 'boolean') _kiv = _k.value; } catch (e) {}
+                const text = deathAlertText(_kiv);
                 wsServer.broadcast({
                     type: 'alert',
                     severity: 'critical',
                     text,
                     hp: 0,
-                    keepInventory: true,   // ★硬编码: 死亡不掉落
+                    keepInventory: _kiv,
                     cause: deathCause,
                     timestamp: Date.now(),
                 });
