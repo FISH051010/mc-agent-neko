@@ -12,7 +12,15 @@
 
 ---
 
-## C365. ★水下脱困挖掘: 选最快的镐 + 按真实(水下×5/悬浮×5)挖掘时间给超时（modes.js guardedDig + skills.escapeDigPlan 需重启,T-0142,worker-death,⏳待重启）
+## C366. ★MAROONED 行军不爬树叶/树干, 爬台阶落稳即收脚（modes.js MAROONED climb + skills.marchStepClimbable/climbLanded 需重启,T-0152,worker-death,⏳待重启）
+
+**证据**: death #6 10-09 20:03:31Z `fall` @50,70,25 hp=1(饥饿 food0→4)。act_trace: 20:03:27-28 mode:mobility dig spruce_log / spruce_leaves 爬到 y74→76.2; 20:03:29 g=0 ctrl=forward,jump; 20:03:30 y73.4 仍下落(z 22.8→25.4); 20:03:30.305 `MAROONED ledge veto dir=0,1 at 49,75,24`(已在空中)。
+**机理**: MAROONED climb 分支 `_stepSolid` 把任何实心块当可爬台阶, 含 leaves/log → 沿树干+树冠爬到离地 5+ 格; 爬台阶是 forward+jump 固定 420ms, 落上 1 格宽台阶(叶冠边/柱顶)后仍在前冲 → 越过远端边缘自由落体。ledge veto 只在下一轮步进前检查, 管不到这一跳的惯性。hp=1 时摔 4 格即死。
+**改动**: skills.js `marchStepClimbable(name)`(leaves/log/stem/wood/sapling/vine/scaffolding/cobweb/snow/carpet 不可爬 → 走下方"挖穿"分支) + `climbLanded({startY,y,onGround})`; MAROONED climb 用前者判台阶, 前冲改为 40ms 轮询, 一落稳更高一层立即 clearControlStates。
+**可证伪预测**: MAROONED 行军不再出现 dig spruce_leaves 后 y 持续升高到树冠的轨迹; 无 action=mode:mobility/行军后的 fall 死亡。若 MAROONED 在密林里改成横挖树叶后寸步难行 → 看 _clearCells 是否在挖叶后被 safeLandingAhead 挡住。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0152: …'。
+
+## C365. ★水下脱困挖掘: 选最快的镐 + 按真实(水下×5/悬浮×5)挖掘时间给超时（modes.js guardedDig + skills.escapeDigPlan 需重启,T-0142,worker-death,🟡已上线 19:18:18Z）
 
 **证据**: death #4 10-09 19:12:35Z drowning @-2,46,3 coveredAbove=7, mineDiamonds 中挖进封闭水袋: 19:12:10 →SWIM, 19:12:24 →ENTOMBED, `dig retry (ENTOMBED) stone@-3,48,3: dig-timeout` ×4 约 3s 一次, held=wooden_pickaxe(包里有 iron_pickaxe), act_trace g=0(不着地)。
 **机理**: guardedDig 超时 = `digTime(held)` 陆地值×1.4+1.5s。prismarine 实测石头: 木镐 陆地 1150ms / 水下悬浮 28150ms; 铁镐 400 / 9400。超时 ~3.1s → 每次中止 → 挖掘进度清零 → 永远挖不穿; 选镐只要"手上是镐"就放行(木镐), 背包首把而非最快。氧气 15s 内木镐不可能挖穿, 铁镐来得及。

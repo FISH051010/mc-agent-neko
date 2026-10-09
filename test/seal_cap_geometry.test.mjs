@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -179,4 +179,16 @@ test('T-0142: underwater escape dig picks the fastest pick and budgets the REAL 
     assert.ok(woodOnly.digMs > 25000);
     const land = escapeDigPlan(stone, tools, { inWater: false, onGround: true });
     assert.ok(land.digMs < 1000);
+});
+
+test('T-0152: MAROONED march never climbs onto leaves/logs (death #6 fell off a spruce canopy at hp1); stops pushing forward once landed', () => {
+    assert.equal(marchStepClimbable('spruce_leaves'), false);
+    assert.equal(marchStepClimbable('spruce_log'), false);
+    assert.equal(marchStepClimbable('dirt'), true);
+    assert.equal(marchStepClimbable('stone'), true);
+    assert.equal(marchStepClimbable('water'), false);
+    // the fixed 420ms push carried the bot across a 1-wide step: release as soon as it stands one level up
+    assert.equal(climbLanded({ startY: 74, y: 75.0, onGround: true }), true);
+    assert.equal(climbLanded({ startY: 74, y: 75.6, onGround: false }), false, 'still airborne mid-jump');
+    assert.equal(climbLanded({ startY: 74, y: 74.0, onGround: true }), false, 'has not risen yet');
 });

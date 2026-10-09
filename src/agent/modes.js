@@ -4871,7 +4871,9 @@ const modes_list = [
                         // dig away a climbable step's foot block. (Generalises the old C307-A climb, which only
                         // fired toward a log target it already knew was elevated — bot._marchTargetY.)
                         const _footAhead = bot.blockAt(m2.offset(sx, 0, sz));
-                        const _stepSolid = _footAhead && _footAhead.boundingBox === 'block' && !/bedrock|water|lava/.test(_footAhead.name || '');
+                        // ★T-0152: leaves are an obstacle to tunnel through, never a road to climb onto (death #6:
+                        // marched up a spruce canopy to y76 and fell off its 1-wide edge at hp1).
+                        const _stepSolid = _footAhead && _footAhead.boundingBox === 'block' && skills.marchStepClimbable(_footAhead.name);
                         const _tgtY = bot._marchTargetY;
                         const _tgtBelow = Number.isFinite(_tgtY) && _tgtY < m2.y - 1.5;   // target clearly downhill → tunnel through, don't climb over
                         let _climbedStep = false;
@@ -4890,7 +4892,12 @@ const modes_list = [
                                 try { await bot.lookAt(m2.offset(sx + 0.5, 1.2, sz + 0.5), true); } catch (e) {}
                                 if (!gravityHeld()) bot.setControlState('forward', true);   // ★T-0131 no step into a collapsing column
                                 if (!gravityHeld()) bot.setControlState('jump', true);   // ★T-0131 no step into a collapsing column
-                                await new Promise(r => setTimeout(r, 420));
+                                // ★T-0152: stop pushing forward the moment we stand on the step — a fixed 420ms
+                                // of forward carried the bot across a 1-wide step (canopy/pillar top) and off its far edge.
+                                for (let _w = 0; _w < 420; _w += 40) {
+                                    await new Promise(r => setTimeout(r, 40));
+                                    if (skills.climbLanded({ startY: m2.y, y: bot.entity.position.y, onGround: bot.entity.onGround })) break;
+                                }
                                 try { bot.clearControlStates(); } catch (e) {}
                                 if (bot.entity.position.floored().y > m2.y) continue;   // rose a level → re-evaluate from higher up
                             }

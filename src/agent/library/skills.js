@@ -6396,6 +6396,22 @@ export function breakWouldFlood(blockAt, pos) {
 }
 
 /**
+ * ★T-0152 (death #6 10-09 20:03:31 fall, hp1): MAROONED 行军把 spruce_leaves 当可爬台阶, 一路爬上
+ * 树冠 (y74→76), 然后 forward+jump 固定 420ms 越过 1 格宽的叶/柱边缘自由落体 5 格。
+ * 人类: 不在树冠上行军 (叶子是"挖穿"的障碍, 不是路); 跳上台阶一落稳就收脚。
+ */
+export function marchStepClimbable(blockName) {
+    const n = blockName || '';
+    // logs too: hopping onto a trunk = standing on a 1-wide pillar (and the log is the wood we want — chop it)
+    if (/leaves$|_log$|_stem$|_wood$|_sapling$|^vine$|scaffolding|cobweb|^snow$|carpet/.test(n)) return false;
+    return !/bedrock|water|lava/.test(n);
+}
+/** 爬台阶途中是否该立刻松开前进: 已站上更高一层 (落地且脚 y 抬高 ≥0.9)。 */
+export function climbLanded({ startY, y, onGround }) {
+    return !!onGround && Number.isFinite(y) && Number.isFinite(startY) && y >= startY + 0.9;
+}
+
+/**
  * ★T-0142 (death #4 10-09 19:12:35 溺死 @y47 封闭水袋): ENTOMBED 挖出拿着木镐在水下悬浮挖石头 ——
  * 真实耗时 28150ms (水下 ×5、不着地 ×5), 但超时按 digTime(held) 陆地值 1150ms 算成 ~3.1s →
  * 每次 dig-timeout 中止 → 进度清零 → 永远挖不穿, 9s 溺死。包里有铁镐 (9400ms) 却没用。
