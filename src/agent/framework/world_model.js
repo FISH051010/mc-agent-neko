@@ -27,6 +27,8 @@ import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE } from './food_floor.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT']);
+// ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
+export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -1308,15 +1310,19 @@ export function proposeTasks(world, bot) {
     //     (GET_DIAMOND@46, GO_UNDERGROUND@45), yields to bed/food/night/armor. Zero materials →
     //     not proposed (BOOTSTRAP_KIT's wood buffer + surface foraging own restocking); crafting
     //     failure → craftChain returns false → normal 3x/5min cooldown, no livelock.
-    if (overworld && kit.picks >= 1 && !threat.actionable
+    // ★T-0149 (19:35Z 实录: y19 地下镐全磨光, 圆石 217 + 原木 14 + 棍 2 + 0 台): 旧门 picks>=1 → 零镐时无人原地造镐;
+    //   REPLENISH_KIT@67 压不过夜链@94 且先上浮(徒手挖 45 格石), 夜链还在派徒手 mineDown。人类: 原地拍台做两把石镐, 几秒的事。
+    //   零镐且计划里真能造出石镐 → 提 TOOL_UPKEEP@94.5 (压过夜链 91-94, 让位 HOLD@95); 有镐时照旧 @47。
+    const _picklessUpkeep = (kit.picks || 0) === 0;
+    if (overworld && (kit.picks >= 1 || _picklessUpkeep) && !threat.actionable
         && needsToolUpkeep({ sufficientForUnderground: kit.sufficientForUnderground, pickTier: kit.pickTier, counts: invCounts(bot) })) {
         const tableCarried = invCount(bot, /^crafting_table$/) >= 1;
         // ★T-0060: wants/affordability live in kit_gate.toolUpkeepPlan (shared with isGoalDone). It drops an
         // unaffordable stone pick when the wood-only remainder (table/sticks) alone restores the descent gate.
         const { wants } = toolUpkeepPlan({ picks: kit.picks, pickTier: kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) });
-        const materialsOk = wants.length > 0;
+        const materialsOk = wants.length > 0 && (!_picklessUpkeep || wants.some(([n]) => n === 'stone_pickaxe'));
         if (wants.length && materialsOk) {
-            push({ kind: PROPOSAL_KIND.TOOL_UPKEEP, priority: 47, skill: 'craftChain',
+            push({ kind: PROPOSAL_KIND.TOOL_UPKEEP, priority: _picklessUpkeep ? PICKLESS_UPKEEP_PRIORITY : 47, skill: 'craftChain',
                    args: [wants],
                    rationale: `tool budget broken (picks=${kit.picks} tier=${kit.pickTier} table=${tableCarried ? 'yes' : 'NO'}) — craft ${wants.map(w2 => w2[0]).join('+')} so a pick snapping deep never strands the bot`,
                    hints: { picksBudget: kit.picksBudget, wants: wants.map(w2 => w2[0]) } });
@@ -1634,6 +1640,8 @@ function isEmergency(p, world, liveKind) {
     //   When a village is in reach, harvesting it IS the food path; don't let feedUp steal the body.
     const villageClose = world.landmarks && world.landmarks.village && Number(world.landmarks.village.dist) <= 28;
     if (p.kind === PROPOSAL_KIND.GET_FOOD && world.vitals.food <= 4 && !villageClose) return true; // about to starve, no village
+    // ★T-0149: 零镐原地造镐 (craft-only, 几秒, 不移动) — 必须能抢下已粘住的夜链承诺, 否则夜里徒手挖石到天亮
+    if (p.kind === PROPOSAL_KIND.TOOL_UPKEEP && (p.priority || 0) >= PICKLESS_UPKEEP_PRIORITY) return true;
     if (p.kind === PROPOSAL_KIND.MIGRATE && world.migration.inDeathZone) {
         return deathZoneBiting(world) || !(liveKind && DEATHZONE_YIELDS_TO.has(liveKind));
     }

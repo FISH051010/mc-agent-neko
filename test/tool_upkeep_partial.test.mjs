@@ -80,3 +80,25 @@ test('T-0130: 铁镐×3 + 0 石镐 + 圆石 545 + 棍 27 (下矿门开) → 必�
     assert.equal(isGoalDone('TOOL_UPKEEP', w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1 })), true, 'done once an escort exists');
     assert.equal(proposeTasks(w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined);
 });
+
+test('T-0149: y19 地下零镐 + 圆石/原木/棍 (19:35 现场) → TOOL_UPKEEP 原地造石镐 @94.5, 抢下已粘住的夜挖承诺', async () => {
+    const { commitGoal, PICKLESS_UPKEEP_PRIORITY } = await import('../src/agent/framework/world_model.js');
+    const inv = { cobblestone: 217, spruce_log: 14, stick: 2, spruce_planks: 2, birch_log: 2, raw_iron: 1 };
+    const w = dayWorld({ picks: 0, pickTier: 'none', sufficientForUnderground: false });
+    w.time = { ...w.time, phase: 'night', isDay: false };
+    const props = proposeTasks(w, fakeBot(inv));
+    const tu = props.find(p => p.kind === 'TOOL_UPKEEP');
+    assert.ok(tu, 'pickless upkeep proposed');
+    assert.equal(tu.priority, PICKLESS_UPKEEP_PRIORITY);
+    assert.ok(tu.args[0].some(([n]) => n === 'stone_pickaxe'));
+    const bot = fakeBot(inv);
+    bot._commitment = { kind: 'DUSK_MINE_NIGHT', skill: 'mineDown', since: Date.now() - 60000 };
+    const night = { kind: 'DUSK_MINE_NIGHT', priority: 94, skill: 'mineDown' };
+    const c = commitGoal(bot, [night, tu], w);
+    assert.equal(c.kind, 'TOOL_UPKEEP', `sticky night commitment must yield to pickless upkeep (got ${c.kind})`);
+});
+
+test('T-0149: 零镐但没有圆石 → 不提 (造不出石镐就不抢夜链)', () => {
+    const w = dayWorld({ picks: 0, pickTier: 'none', sufficientForUnderground: false });
+    assert.equal(proposeTasks(w, fakeBot({ spruce_log: 14, stick: 2 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined);
+});
