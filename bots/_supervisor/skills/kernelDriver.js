@@ -128,10 +128,26 @@ export function settleDispatch(bot, kind, res, { threw = false, interrupted = fa
     return { failed: true, cooled: true, strikes: DISPATCH_FAIL_LIMIT };
 }
 
+// ★2026-10-10 HOT-SPIN 根治: 派发器的节奏等待曾用 skills.wait —— 它在 bot.interrupt_code 为真时**立即返回**。
+//   interrupt_code 是给子 skill 的停车信号; 一旦它在派发器循环里粘住 (16:04:00 热部署 cancel 交接实录),
+//   子 skill 见之秒退、"防热转" wait(1500) 也秒退 → 1.3s 跑满 5000 次上限 (5000 行 dispatch, 零次真执行),
+//   07-16 两次 "loop exhausted" 同一机理。派发器的等待必须真等: 只认 supervisor cancel 提前醒 (热部署握手
+//   要在 30s 窗内被看到), 不认 interrupt_code。
+const SUPERVISOR_CANCEL_WAKE_MS = 30000;
+export async function pace(bot, ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+        if (bot && bot._supervisorCancelAt && Date.now() - bot._supervisorCancelAt < SUPERVISOR_CANCEL_WAKE_MS) return false;
+        await new Promise((r) => setTimeout(r, Math.min(250, Math.max(1, end - Date.now()))));
+    }
+    return true;
+}
+
 export default async function kernelDriver(bot, ctx) {
     const { skills, world } = ctx;
     const has = (n) => { try { return world.getInventoryCounts(bot)[n] || 0; } catch (e) { return 0; } };
-    const wait = (ms) => skills.wait(bot, ms);
+    // 非 skills.wait: 见上方 pace() 注释 (interrupt 粘住 → 热转)。ctx.pace = 测试接缝 (假时钟快进)。
+    const wait = (ms) => (ctx.pace ? ctx.pace(bot, ms) : pace(bot, ms));
     const inNether = () => { try { return /nether/.test(bot.game.dimension); } catch (e) { return false; } };
 
     // reflexBusy / famineStall live at module scope (pure; pinned by test/kernel_driver.test.mjs)

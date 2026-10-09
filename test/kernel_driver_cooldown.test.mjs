@@ -46,6 +46,7 @@ test('T-0115: the live kernelDriver loop stops re-dispatching a no-op skill afte
     };
     const ctx = {
         world: { getInventoryCounts: () => ({}) },
+        pace: () => Promise.resolve(),   // kernelDriver 的等待走 ctx.pace (2026-10-10 pace() 接缝)
         skills: {
             wait: () => Promise.resolve(),
             customSkill: async (b, name) => { calls.push(name); return NOOP; },   // prepNether NO-OP every time

@@ -39,6 +39,7 @@ const agentFor = (bot) => ({ bot, prompter: { chat_model: { sendRequest: () => n
 async function runOneKernelIteration(bot) {
     const dispatched = [];
     const ctx = {
+        pace: async () => { bot._supervisorCancelAt = Date.now(); },   // kernelDriver 的等待走 ctx.pace (2026-10-10 接缝)
         skills: {
             wait: async () => { bot._supervisorCancelAt = Date.now(); },
             customSkill: async (_b, name) => { dispatched.push(name); },
