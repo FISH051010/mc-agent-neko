@@ -4325,10 +4325,14 @@ const modes_list = [
                     for (let n = 0; n < 2; n++) {
                         const fresh = bot.blockAt(block.position);
                         if (!fresh || fresh.boundingBox !== 'block') return true;
+                        bot._mobDigStep = `equip-pick:${why}`;   // ★T-0123 截止时间日志定位挂在哪一步
                         if (!(await ensurePickForStone(fresh, why))) return false;
+                        bot._mobDigStep = `equip-tool:${why}`;
                         if (!STONY_MOBILITY.test(fresh.name || '')) { try { await bot.tool.equipForBlock(fresh); } catch (e) {} }
                         try { bot.clearControlStates(); } catch (e) {}
+                        bot._mobDigStep = `lookAt:${why}`;
                         try { await bot.lookAt(fresh.position.offset(0.5, 0.5, 0.5), true); } catch (e) {}
+                        bot._mobDigStep = `dig:${why}`;
                         // ★DIG TIMEOUT must scale with ACTUAL dig time (C223). A fixed 5000ms aborts
                         // any dig slower than 5s — but bare-hand stone is ~7.5s (deepslate ~16.5s).
                         // Since C221 opened bare-hand stone digging to escape entombment, this fixed
@@ -4465,7 +4469,8 @@ const modes_list = [
                 // instant dig-out, reflex priority — no stagnation timer, no material
                 // gate (entombed = the gate's exception BY DEFINITION). Head toward the
                 // anchor; one 2-cell column per execute burst, state re-evaluated next tick.
-                execute(this, agent, async () => {
+                // ★T-0123: burst 有截止时间 — 任何无超时 await (equip/lookAt) 挂住都不能冻住模式循环。
+                execute(this, agent, withBurstDeadline(async () => {
                     const tableHold = tableRecoveryHold(bot);
                     if (tableHold) {
                         try {
@@ -4559,14 +4564,18 @@ const modes_list = [
                     }
                     await new Promise(r => setTimeout(r, 600));
                     try { bot.clearControlStates(); } catch (e) {}
-                });
+                }, undefined, () => {
+                    try { bot.clearControlStates(); bot.stopDigging(); } catch (e) {}
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0123 ENTOMBED dig-out burst exceeded deadline (step=${bot._mobDigStep || '?'}) — releasing the mode slot so state re-evaluates\n`); } catch (e) {}
+                }));
             } else if (st === 'SEALED') {
                 // ★C341 (T-0074): walled into a room with interior air — mine OUT through the nearest wall
                 // toward the home anchor, then step into the breach. Re-evaluated each tick; the moment a
                 // wall is breached the flood spills and st leaves SEALED (→ FREE). Mirrors the ENTOMBED
                 // dig-out but the adjacent cell toward the anchor may be room-interior AIR, so scan a few
                 // cells for the first solid wall before digging. guardedDig material-gates + reach-handles.
-                execute(this, agent, async () => {
+                // ★T-0123: 同 ENTOMBED, burst 有截止时间。
+                execute(this, agent, withBurstDeadline(async () => {
                     try { bot.interrupt_code = false; } catch (e) {}
                     if (Date.now() - (bot._lastSealedSayAt || 0) > 20000) { bot._lastSealedSayAt = Date.now(); say(agent, 'Sealed in a room — mining out!'); }
                     // 锚点只用来挑「先凿哪个朝向」，不是直线奔向该坐标（下面 bearings 有轮转兜底）。默认值原本
@@ -4639,7 +4648,10 @@ const modes_list = [
                     }
                     await new Promise(r => setTimeout(r, 500));
                     try { bot.clearControlStates(); } catch (e) {}
-                });
+                }, undefined, () => {
+                    try { bot.clearControlStates(); bot.stopDigging(); } catch (e) {}
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0123 SEALED dig-out burst exceeded deadline (step=${bot._mobDigStep || '?'}) — releasing the mode slot\n`); } catch (e) {}
+                }));
             } else if (st === 'MAROONED') {
                 // ★ENGINEERED MARCH — locally free but every pathfind dead-ends (shattered
                 // cliff/lake terrain): stop asking the planner, BUILD the road. Locked
