@@ -80,7 +80,7 @@ export const EMPTY_WORLD = Object.freeze({
  * High-level kinds of work the world model can propose. Kept coarse on purpose:
  * the LLM judges among these; exact coordinates/x-ray detail never appear here
  * (blueprint §C hard constraint — don't expose the cheat, don't overload the LLM).
- * @typedef {'BOOTSTRAP_KIT'|'SURFACE_RESCUE'|'REPLENISH_KIT'|'GET_FOOD'|'GET_BED'|'GET_ARMOR'|'GET_IRON_TOOLS'|'GET_IRON_ARMOR_SET'|'GET_DIAMOND'|'BANK_GEAR'|'BUILD_HOME'|'GO_UNDERGROUND'|'TOOL_UPKEEP'|'MIGRATE'|'HOLD'|'FORAGE_SURFACE'|'SLEEP'|'FREE_PLAY'|'DUSK_MINE_NIGHT'|'DUSK_GO_BED'|'NIGHT_DIG_ONE'|'NIGHT_SEAL'|'OPENING_SCOUT'|'OPENING_VILLAGE'|'GET_DIAMOND_GEAR'|'GET_DIAMOND_ARMOR'|'GET_PORTAL_KIT'|'ENTER_NETHER'|'GET_BLAZE_RODS'|'HUNT_PEARLS'|'CRAFT_EYES'|'GO_END'|'SLAY_DRAGON'} ProposalKind
+ * @typedef {'BOOTSTRAP_KIT'|'SURFACE_RESCUE'|'REPLENISH_KIT'|'GET_FOOD'|'GET_BED'|'GET_ARMOR'|'GET_IRON_TOOLS'|'GET_IRON_ARMOR_SET'|'GET_DIAMOND'|'BANK_GEAR'|'BUILD_HOME'|'GO_UNDERGROUND'|'TOOL_UPKEEP'|'RECLAIM_FURNACE'|'MIGRATE'|'HOLD'|'FORAGE_SURFACE'|'SLEEP'|'FREE_PLAY'|'DUSK_MINE_NIGHT'|'DUSK_GO_BED'|'NIGHT_DIG_ONE'|'NIGHT_SEAL'|'OPENING_SCOUT'|'OPENING_VILLAGE'|'GET_DIAMOND_GEAR'|'GET_DIAMOND_ARMOR'|'GET_PORTAL_KIT'|'ENTER_NETHER'|'GET_BLAZE_RODS'|'HUNT_PEARLS'|'CRAFT_EYES'|'GO_END'|'SLAY_DRAGON'} ProposalKind
  */
 export const PROPOSAL_KIND = Object.freeze({
     BOOTSTRAP_KIT: 'BOOTSTRAP_KIT',   // wood→planks→table→pick→stone tools
@@ -98,6 +98,7 @@ export const PROPOSAL_KIND = Object.freeze({
     BANK_GEAR: 'BANK_GEAR',           // ★T-0092 背包有高价值矿且将满 → 回家入库 (bankGear, 死不丢投资) — ★P1-5 提案端已停用: keepInventory=true 下前提为假 (见 world_model.js BANK_GEAR_ENABLED)
     GO_UNDERGROUND: 'GO_UNDERGROUND', // gated by surfaceGate / committed venture
     FOOD_FLOOR: 'FOOD_FLOOR',         // ★T-0069 食物本能关闭时的有界兜底: food≤6 且零食物 → 16 格内一次短猎+就地烤 (quickMeal, ≤60s, 不漫游)
+    RECLAIM_FURNACE: 'RECLAIM_FURNACE', // ★T-0164 回滞留熔炉取锭+收炉 (smeltSafe 落盘 stranded_smelt.json, ≤64 格)
     TOOL_UPKEEP: 'TOOL_UPKEEP',       // ★镐耐久预算: 备镐+随身补镐kit(台/棍/圆石) — 把 kit.sufficientForUnderground 从"拒绝下矿的门"升级为"主动修复的目标" (craftChain array preset)
     MIGRATE: 'MIGRATE',
     HOLD: 'HOLD',

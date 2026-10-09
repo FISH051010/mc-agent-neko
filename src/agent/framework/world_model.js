@@ -242,6 +242,18 @@ export function armorCraftBlocked(world, bot) {
     if (cost == null) return false;   // 无可造件 — ironArmorGoalDone 管
     return !armorCraftFeasible(invCounts(bot), cost, { tableNear: blockNear(bot, 'crafting_table'), furnaceNear: blockNear(bot, 'furnace') }).ok;
 }
+// ★T-0164 滞留熔炉 (smeltSafe 落盘 stranded_smelt.json): ≤64 格、≤3h 内的记录 → RECLAIM_FURNACE 回炉取锭+收炉。
+export const STRANDED_REACH = 64;
+const STRANDED_MAX_AGE_MS = 3 * 3600 * 1000;
+export function strandedFurnaceInReach(world) {
+    try {
+        const s = JSON.parse(readFileSync(SUP('stranded_smelt.json'), 'utf8').replace(/^﻿/, ''));
+        if (!s || !Number.isFinite(s.x) || Date.now() - (s.at || 0) > STRANDED_MAX_AGE_MS) return null;
+        const p = world && world.pos;
+        if (!p || !Number.isFinite(p.x)) return null;
+        return Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z) <= STRANDED_REACH ? s : null;
+    } catch (e) { return null; }
+}
 function ironArmorGoalDone(world, bot) {
     const pieces = Math.min(4, (world.vitals && world.vitals.armor) || 0);
     if (pieces >= 4) return true;
@@ -868,6 +880,14 @@ export function proposeTasks(world, bot) {
     // ★2026-07-05 无镐让位 (实录 05:04: 全镐耗尽时 GET_ARMOR@68 一分压过 REPLENISH@67,
     // craftArmor 抢走白天窗口徒手 7.5s/块凿石找炉位反复失败, 补镐链被压制到 3-strike 冷却
     // 才轮上)。无镐=补给紧急态: picks>0 才许提甲件。
+    // ★T-0164 (监工③): 滞留熔炉里的锭/料 ≤64 格 → 回炉取锭+收炉 @57 (压过 tier 链 45-47, 让位 GET_ARMOR@58/MIGRATE@60/
+    //   食物@70/夜链@91+)。20:40:57 实录 8 铁丢在 -54,22,24 炉里, bot 走开 — 那 8 块就是铁镐+半件甲。
+    {
+        const st = overworld && !(threat.actionable > 0) ? strandedFurnaceInReach(w) : null;
+        if (st) push({ kind: PROPOSAL_KIND.RECLAIM_FURNACE, priority: 57, skill: 'reclaimFurnace', args: [],
+                       rationale: `${st.n} ${st.item} stranded in furnace @${st.x},${st.y},${st.z} — walk back, take ${st.product || 'output'} + pick up the furnace`,
+                       hints: { stranded: st } });
+    }
     // ★T-0157 (监工加急): ① 台/熔炉/燃料不齐不提 (19:57 实录 0 木 0 煤 → craftArmor×3 秒败冷却);
     //   ② hp<10 或 food≤6 让位 (先吃/先回血, 甲不急这几十秒; FOOD_FLOOR@70 本就更高, 这里防它不提时甲抢身)。
     if (overworld && time.phase === 'day' && !(threat.actionable > 0) && !ironArmorGoalDone(w, bot)
@@ -1534,6 +1554,7 @@ export function isGoalDone(kind, world, bot) {
         // Done when fully armored OR banked iron can't afford the cheapest MISSING piece (see
         // ironArmorGoalDone — a flat `<4` livelocked at e.g. boots owned + 4 iron, helmet costs 5).
         case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot) || armorCraftBlocked(w, bot);   // ★T-0157 缺台/炉/燃料即释放
+        case PROPOSAL_KIND.RECLAIM_FURNACE: return !strandedFurnaceInReach(w);
         case PROPOSAL_KIND.GET_BED:       return bedKnown(bot);
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
