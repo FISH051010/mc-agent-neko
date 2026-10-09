@@ -63,8 +63,14 @@ export async function walkDugPath(bot, skills, Vec3, bn, path) {
             while (Date.now() - t0 < 1500) { const pp = bot.entity.position; if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) < 0.45) break; await new Promise(r => setTimeout(r, 100)); }
         } finally { try { bot.setControlState('forward', false); } catch (e) {} }
         const pp = bot.entity.position;
-        if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) > 0.8) return false;
+        if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) > 0.8) {
+            // diag (T-0161 live 20:33:31 'walk stopped early' at 2.1b, cause unknown): which cell, what blocks it
+            const nmB = (b) => (b && b.name) || '?';
+            bot._walkDugFail = `cell ${path.indexOf(path.find(c => c[0] === tx && c[1] === tz)) + 1}/${path.length} @${tx},${cyf},${tz} feet=${nmB(bn(tx, cyf, tz))} head=${nmB(bn(tx, cyf + 1, tz))} floor=${nmB(bn(tx, cyf - 1, tz))} pos=${pp.x.toFixed(2)},${pp.y.toFixed(2)},${pp.z.toFixed(2)} ground=${!!bot.entity.onGround}`;
+            return false;
+        }
     }
+    bot._walkDugFail = null;
     return true;
 }
 
@@ -242,7 +248,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 const _tun = planRelocateTunnel(bn, Math.floor(before.x), Math.round(before.y), Math.floor(before.z));
                 if (_tun) {
                     const _ok = await walkDugPath(bot, skills, Vec3, bn, _tun.path);
-                    log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length} — ${_ok ? 'arrived' : 'walk stopped early'}`);
+                    log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length} — ${_ok ? 'arrived' : 'walk stopped early: ' + (bot._walkDugFail || '?')}`);
                 } else {
                     log_('relocate tunnel: no dry solid 9-cell line at this level — falling back to moveAway');
                     try { await skills.moveAway(bot, 10); } catch (e) {}
@@ -730,7 +736,9 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 }
                 if (_r.exhausted && loopRelocates < 1) {
                     const _tun = planRelocateTunnel(bn, cx, cy, cz);
-                    if (_tun && await walkDugPath(bot, skills, Vec3, bn, _tun.path)) {
+                    if (!_tun) log_(`fluid: all 4 headings wet here and no dry 9-cell tunnel line at y${cy}`);
+                    else if (!(await walkDugPath(bot, skills, Vec3, bn, _tun.path))) { loopRelocates++; log_(`fluid: tunnel ${_tun.sx},${_tun.sz} walk stopped early: ${bot._walkDugFail || '?'}`); }
+                    else {
                         loopRelocates++;
                         const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
                         sx = _r2.sx; sz = _r2.sz; noProg = 0;
