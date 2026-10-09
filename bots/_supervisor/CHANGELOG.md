@@ -16,7 +16,7 @@
 
 **证据**: death #4 10-09 19:12:35Z drowning @-2,46,3 coveredAbove=7, mineDiamonds 中挖进封闭水袋: 19:12:10 →SWIM, 19:12:24 →ENTOMBED, `dig retry (ENTOMBED) stone@-3,48,3: dig-timeout` ×4 约 3s 一次, held=wooden_pickaxe(包里有 iron_pickaxe), act_trace g=0(不着地)。
 **机理**: guardedDig 超时 = `digTime(held)` 陆地值×1.4+1.5s。prismarine 实测石头: 木镐 陆地 1150ms / 水下悬浮 28150ms; 铁镐 400 / 9400。超时 ~3.1s → 每次中止 → 挖掘进度清零 → 永远挖不穿; 选镐只要"手上是镐"就放行(木镐), 背包首把而非最快。氧气 15s 内木镐不可能挖穿, 铁镐来得及。
-**改动**: skills.js 纯函数 `escapeDigPlan(block, tools, {inWater,onGround})` 用 block.digTime(type,false,inWater,!onGround) 选最快工具并给 budget=min(30s, 1.4×+1.5s)。guardedDig 判 inWater(isInWater/脚头格水)+onGround, 换最快工具, 超时按真实值(上限 20s→30s)。
+**改动**: skills.js 纯函数 `escapeDigPlan(block, tools, {inWater,onGround})` 用 block.digTime(type,false,inWater,!onGround) 选最快工具。guardedDig 判 inWater(isInWater/脚头格水)+onGround, 挖前换最快工具。超时部分与同时落地的 T-0143 `mobilityDigTimeoutMs` 重叠, rebase 时取 T-0143 实现; 本条保留"选最快镐"。🟡已上线 19:18:18Z(同 C364)。
 **可证伪预测**: 水下 ENTOMBED/SEALED 挖出不再出现 ~3s 节奏的 `dig-timeout`; 挖出期间 held 为最快镐(iron>stone>wood)。仍溺死则看是不是氧气本身不够(需先上浮换气/头顶造气泡, 另修)。
 **回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0142: …'(prismarine-block 真实 digTime)。
 
