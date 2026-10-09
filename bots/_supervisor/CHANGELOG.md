@@ -12,7 +12,15 @@
 
 ---
 
-## C362. ★封闭坑里不对着墙"后撤"苦力怕: 无水平出口→封好就 hold / 没封就封顶（modes.js self_preservation 需重启,T-0127,worker-death,⏳待重启）
+## C363. ★SEALED 脱困重力感知: 不钻砂砾柱下、不在砂砾下往上挖, 优先不塌的墙（modes.js mobility + skills.gravityOverColumn 需重启,T-0132,worker-death,⏳待重启）
+
+**证据**: death #3 10-09 18:40:50Z `suffocation` @100,66,-39 underground coveredAbove=6 tod=5099(白天) action=mode:mobility hp=1。18:36→18:40 mobility SEALED↔FREE 每 6-10s 切换, 横向掘进 17 格(95,66,-56→100,66,-39), vitals 背包 gravel 8→16→25→35→37 = 在砂砾层里挖。
+**机理**: C341 SEALED 挖出只做了防水(C347), 不看重力方块: 挖开砂砾墙 → 上方整列塌下回填缺口(→又判 SEALED) → bot 踏进缺口或执行向上挖时, 落下的砂砾进头格 → 窒息; hp=1(食物开关关闭, 回不了血)一下即死。人类: 挖砂砾站旁边挖到不掉为止, 不钻砂砾柱下; 能换方向就换不塌的墙。
+**改动**: skills.js `GRAVITY_BLOCK_RE` + 纯函数 `gravityOverColumn(blockAt,x,footY,z)`(缺口两格及其上 3 格内有重力块)。modes.js SEALED: 选墙两轮(先只选非重力列, 没有才选重力列); 向上挖前若头顶 3 格内有重力块则不挖; 破的是重力墙时等 400ms 让塌方落地, 列里仍有重力块就原地不进(下一拍从外面继续挖), 8s 节流记 progress。
+**可证伪预测**: 砂砾/沙区 SEALED 脱困出 `SEALED breach … under a gravity column — mining it from outside, not stepping in (T-0132)`; 不再有 action=mode:mobility 的 suffocation 死亡。若出现"砂砾区 SEALED 永远挖不出"→查是否四面全重力且上方也重力(此时应允许等塌完后进入, 看日志是否一直 stillFalling)。
+**回滚**: revert 本提交, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0132: …'。
+
+## C362. ★封闭坑里不对着墙"后撤"苦力怕: 无水平出口→封好就 hold / 没封就封顶（modes.js self_preservation 需重启,T-0127,worker-death,🟡已捎带上线 18:28:32）
 
 **证据**(T-0127, worker-stuck 记录): 10-10 02:12-02:13 夜 @73,71,54 hp=1 food=0, 1×1 过夜坑内苦力怕 2.6-3.7 格, `creeper backoff wedged: stuck=8 … rotate=±0.96` 连刷 19 行(当晚累计 36; 17:30-17:33 同型 21 行), 位置不变, 18:13:19 才 `creeper backoff gated … emergency bunker/hold`。
 **机理**: 苦力怕反射在近距(≤5.5)时无条件进入 raw-sprint 后撤循环; 后撤要先连续 8 次零位移才转向、再撞满计数才 bunkerDown。坑里四面是墙, 后撤物理上不可能 → 在引信窗口里白白空转 ~25s。

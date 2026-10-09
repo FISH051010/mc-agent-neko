@@ -6369,6 +6369,21 @@ export function creeperResponseInPocket(blockAt, feet) {
     return anyExit ? 'backoff' : 'bunker';
 }
 
+/**
+ * ★T-0132 (death #3 10-10 18:40:50 suffocation @100,66,-39, hp1): SEALED 脱困在砂砾层里横挖 17 格,
+ * gravel 8→37 —— 每挖开一格砂砾墙, 上方整列塌下回填; 踏进缺口/往上挖时落下的砂砾进头格 → 窒息。
+ * 判据: 一个 2 高缺口列 (脚 footY / 头 footY+1, 位于 x,z) 的上方 1-3 格内有重力方块 = 还会塌。
+ * 人类: 挖砂砾站在旁边挖到它不再掉, 不钻到砂砾柱下面; 有别的方向就换不塌的墙。
+ */
+export const GRAVITY_BLOCK_RE = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|[a-z_]*concrete_powder)$/;
+export function gravityOverColumn(blockAt, x, footY, z, span = 3) {
+    for (let dy = 0; dy <= 1 + span; dy++) {   // the breach cells themselves (refill) + what sits above them
+        const b = blockAt(new Vec3(x, footY + dy, z));
+        if (b && GRAVITY_BLOCK_RE.test(b.name || '')) return true;
+    }
+    return false;
+}
+
 const FLUID_RE = /water|lava|kelp|seagrass|bubble_column/;
 /**
  * ★T-0105 溺死链: 挖掉 pos 处方块会不会把液体放进来 (其上方或四个水平邻格是液体)。

@@ -4649,12 +4649,19 @@ const modes_list = [
                         if (bot._sealedStuckBursts >= 2) { bot._sealedDirIdx = ((bot._sealedDirIdx || 0) + 1) % bearings.length; bot._sealedStuckBursts = 0; }
                     }
                     let dug = false, sx = anchorSx, sz = anchorSz;
+                    // ★T-0132: a breach column with gravity blocks in/over it re-fills (gravel cascade) and
+                    // drops onto whoever steps in. Two passes: first only gravity-free walls, then (no other
+                    // choice) gravity walls — which we mine from where we stand without stepping in (below).
+                    const _gravCol = (w) => { try { return skills.gravityOverColumn((p) => bot.blockAt(p), w.cell.x, m2.y, w.cell.z); } catch (e) { return false; } };
+                    let _gravBreach = false;
                     // try bearings from the current pointer, dig the first DRY breachable wall
+                    for (let pass = 0; pass < 2 && !dug; pass++)
                     for (let k = 0; k < bearings.length && !dug; k++) {
                         const idx = ((bot._sealedDirIdx || 0) + k) % bearings.length;
                         const [dx, dz] = bearings[idx];
                         const w = wallAlong(dx, dz);
-                        if (w && !w.floody && w.block) {
+                        if (w && !w.floody && w.block && (pass === 1 || !_gravCol(w))) {
+                            _gravBreach = _gravCol(w);
                             await guardedDig(w.block, 'SEALED'); dug = true; sx = dx; sz = dz; bot._sealedDirIdx = idx;
                             // clear the rest of the 2-high column at that wall cell
                             const other = w.cell.y === m2.y + 1 ? bot.blockAt(w.cell.offset(0, -1, 0)) : bot.blockAt(w.cell.offset(0, 1, 0));
@@ -4663,11 +4670,33 @@ const modes_list = [
                     }
                     // every horizontal bearing is wet or air-only → mine straight UP toward the surface/air
                     if (!dug) {
-                        for (const c of [m2.offset(0, 2, 0), m2.offset(0, 3, 0)]) {
-                            const b = bot.blockAt(c);
-                            if (b && b.boundingBox === 'block' && !/bedrock|water|lava/.test(b.name || '')) { await guardedDig(b, 'SEALED-up'); dug = true; }
+                        // ★T-0132: never mine UP under a gravity column — whatever we free falls into our head cell.
+                        const _gravUp = (() => { try { return skills.gravityOverColumn((p) => bot.blockAt(p), m2.x, m2.y + 2, m2.z); } catch (e) { return true; } })();
+                        if (!_gravUp) {
+                            for (const c of [m2.offset(0, 2, 0), m2.offset(0, 3, 0)]) {
+                                const b = bot.blockAt(c);
+                                if (b && b.boundingBox === 'block' && !/bedrock|water|lava/.test(b.name || '')) { await guardedDig(b, 'SEALED-up'); dug = true; }
+                            }
                         }
                         if (dug) { sx = 0; sz = 0; }
+                    }
+                    // ★T-0132: after breaching a gravity wall, only step in once the column has stopped
+                    // falling (breach cells empty AND nothing gravity left over them). Otherwise stay put —
+                    // the next burst digs the refilled cell again from outside (gravel only falls straight
+                    // down the breach column, never onto a bot standing beside it).
+                    if (dug && (sx !== 0 || sz !== 0) && _gravBreach) {
+                        await new Promise(r => setTimeout(r, 400));   // let the cascade land
+                        const bx2 = m2.x + sx, bz2 = m2.z + sz;
+                        let stillFalling = true;
+                        try { stillFalling = skills.gravityOverColumn((p) => bot.blockAt(p), bx2, m2.y, bz2); } catch (e) {}
+                        if (stillFalling) {
+                            if (Date.now() - (bot._sealedGravLogAt || 0) > 8000) {
+                                bot._sealedGravLogAt = Date.now();
+                                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] SEALED breach @${bx2},${m2.y},${bz2} under a gravity column — mining it from outside, not stepping in (T-0132) hp=${Math.round(bot.health)}\n`); } catch (e) {}
+                            }
+                            try { bot.clearControlStates(); } catch (e) {}
+                            return;
+                        }
                     }
                     if (sx === 0 && sz === 0) {
                         try { await bot.lookAt(m2.offset(0.5, 2.4, 0.5), true); } catch (e) {}

@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -131,4 +131,17 @@ test('T-0127: creeper next to a 1×1 night pit — no horizontal exit means no "
     assert.equal(creeperResponseInPocket(shaft, new Vec3(0, 66, 0)), 'bunker');
     // standing on open ground → running is possible
     assert.equal(creeperResponseInPocket(world({ groundTop: 65 }), new Vec3(0, 66, 0)), 'backoff');
+});
+
+test('T-0132: a breach column under gravel keeps cascading — never step in / never dig up under it (death #3 suffocation, gravel 8→37)', () => {
+    const base = world({ groundTop: 70 });
+    const gravelAt = (cells) => (p) => cells.some(c => c.x === p.x && c.y === p.y && c.z === p.z) ? { name: 'gravel', boundingBox: 'block' } : base(p);
+    // breach column at (1,66..67): gravel two above the head cell → still unstable
+    assert.equal(gravityOverColumn(gravelAt([new Vec3(1, 69, 0)]), 1, 66, 0), true);
+    // the wall itself is gravel → cascade risk
+    assert.equal(gravityOverColumn(gravelAt([new Vec3(1, 67, 0)]), 1, 66, 0), true);
+    // plain stone/dirt column → safe to step in
+    assert.equal(gravityOverColumn(base, 1, 66, 0), false);
+    // gravel far above (beyond the 3-cell span) doesn't block
+    assert.equal(gravityOverColumn(gravelAt([new Vec3(1, 72, 0)]), 1, 66, 0), false);
 });
