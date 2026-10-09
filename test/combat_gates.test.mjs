@@ -3,7 +3,7 @@ import test from 'node:test';
 import Vec3 from 'vec3';
 import {
     combatHasPriority, armoredSoloBrawl, rangedUnreachableTrap, isFutileMob, recordFightOutcome,
-    unblacklistAttackers, FUTILE_FIGHT_STRIKES,
+    unblacklistAttackers, FUTILE_FIGHT_STRIKES, bunkerCooldownReopen,
 } from '../src/agent/combat_gates.js';
 
 // T-0063 family — "战斗无能": reflexes fragmenting fights, boxed bots air-swinging at mobs behind walls,
@@ -90,4 +90,22 @@ test('C360: a cycle where the target took damage or we closed in resets the tall
         recordFightOutcome(bot, { id: z.id, name: 'zombie', t0, dist0: 4 });
     }
     assert.equal(isFutileMob(bot, z), false);
+});
+
+
+const reopen = (mobs, { sealed = false, day = false, creeper8 = false } = {}) =>
+    bunkerCooldownReopen({ hostiles: mobs, pos: P, creeperNear8: creeper8, sealedNow: () => sealed, isDay: () => day });
+
+test('T-0050/C316-A: during the seal-fail cooldown a SKELETON kiting at 6-15b re-opens bunkering (#118: 47s of arrows)', () => {
+    assert.equal(reopen([mob('skeleton', 6)]), true);
+    assert.equal(reopen([mob('skeleton', 16)]), false, 'beyond engagement range');
+});
+
+test('T-0067: at night, not in a real box, a melee mob closing within 9b re-opens bunkering (lead time before contact)', () => {
+    assert.equal(reopen([mob('zombie', 8)]), true);
+    assert.equal(reopen([mob('zombie', 8)], { sealed: true }), false, 'really boxed: let the escape work run (C18 lesson)');
+    assert.equal(reopen([mob('zombie', 8)], { day: true }), false);
+    assert.equal(reopen([mob('zombie', 4)], { sealed: true }), true, '<5b always re-opens');
+    assert.equal(reopen([], { creeper8: true }), true);
+    assert.equal(reopen([mob('zombie', 12)]), false, 'loitering far melee mob does not keep preempting');
 });

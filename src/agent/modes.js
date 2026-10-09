@@ -4,7 +4,7 @@ import { readJsonCached } from '../utils/json_io.js';
 import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
-import { combatHasPriority, armoredSoloBrawl, rangedUnreachableTrap, futileMobBlacklist, isFutileMob, unblacklistAttackers, recordFightOutcome, FUTILE_FIGHT_STRIKES, FUTILE_MOB_TTL_MS, FUTILE_CLOSE_EPS } from './combat_gates.js';
+import { bunkerCooldownReopen, combatHasPriority, armoredSoloBrawl, rangedUnreachableTrap, futileMobBlacklist, isFutileMob, unblacklistAttackers, recordFightOutcome, FUTILE_FIGHT_STRIKES, FUTILE_MOB_TTL_MS, FUTILE_CLOSE_EPS } from './combat_gates.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
 import fs from 'fs';
@@ -1058,23 +1058,13 @@ const modes_list = [
                 // her mid-reseal (#118, full iron armor, NO shield → canWin false → should've
                 // sealed). Treat a ranged hostile within its engagement range as a live threat
                 // that re-opens bunkering so we seal AWAY from the arrows instead of trading hits.
-                const _RANGED_RE = /skeleton|stray|witch|pillager|ghast|blaze|drowned/i;
-                const _ranged = this.nearbyHostiles(bot).some(e => e && e.position && _RANGED_RE.test(e.name || '')
-                    && e.position.distanceTo(bot.entity.position) < 15);
-                // ★T-0067 — STANDDOWN LEAK FIX: the no-mob seal-fail standdown handed the night to
-                // the skill-layer dig-in for 45s, but if dig-in never built a real box and a MELEE
-                // mob then closed in, the old gate only re-opened bunkering at <5b — by then the
-                // zombie was already meleeing (实测: standdown → mob 9.6m→1.8m→死, never re-sealed).
-                // Give a proper lead time: while we are NOT inside a real sealed box, any melee
-                // hostile within 9b re-opens bunkering so we can wall/flee BEFORE it reaches us.
-                // If we ARE genuinely boxed in (coverReal), keep the cooldown so the escape work is
-                // not preempted (preserves the C18 chimney-top "let it run" lesson).
-                const _sealedNow = this.sealedNightBox(bot);
-                const _meleeApproaching = !_sealedNow && !this.isDay(bot)
-                    && this.nearbyHostiles(bot).some(e => e && e.position && !_RANGED_RE.test(e.name || '')
-                        && e.position.distanceTo(bot.entity.position) < 9);
-                const _close = this.nearbyHostiles(bot).some(e => e.position && e.position.distanceTo(bot.entity.position) < 5)
-                    || this.nearestCreeper(bot, 8) || _ranged || _meleeApproaching;
+                // (C316-A / T-0067 reopen criteria live in combat_gates.bunkerCooldownReopen — test/combat_gates.test.mjs)
+                const _close = bunkerCooldownReopen({
+                    hostiles: this.nearbyHostiles(bot), pos: bot.entity.position,
+                    creeperNear8: !!this.nearestCreeper(bot, 8),
+                    // thunks, evaluated inside in the original order (sealedNightBox, then isDay)
+                    sealedNow: () => this.sealedNightBox(bot), isDay: () => this.isDay(bot),
+                });
                 if (!_close) return;
             }
             // ★ALREADY-IN-A-CAVE: NO self-sealing (用户: "夜里在矿底下能不能别再封路了?

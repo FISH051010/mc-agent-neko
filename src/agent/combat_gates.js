@@ -232,3 +232,22 @@ export function recordFightOutcome(bot, cycle) {
     } catch (e) {}
 }
 
+
+// ★bunkerDown no-mob seal-fail COOLDOWN re-open gate (moved verbatim from modes.js self_preservation.bunkerDown).
+// During the 45s cooldown only a TRUE threat re-opens bunkering:
+//   · any hostile < 5b, or a creeper < 8b (original gate);
+//   · ★C316-A (T-0050/#118): a RANGED attacker (skeleton/stray/witch/pillager/ghast/blaze/drowned) < 15b — it
+//     kites outside the 5b window and whittles the bot (47s of arrows before a husk closed in);
+//   · ★T-0067: at NIGHT and NOT in a real sealed box, a MELEE hostile < 9b — lead time to wall/flee before contact.
+// sealedNow / isDay are thunks (evaluated in the same order as before: only when the melee branch needs them).
+export function bunkerCooldownReopen({ hostiles, pos, creeperNear8, sealedNow, isDay }) {
+    const _RANGED_RE = /skeleton|stray|witch|pillager|ghast|blaze|drowned/i;
+    const _ranged = hostiles.some(e => e && e.position && _RANGED_RE.test(e.name || '')
+        && e.position.distanceTo(pos) < 15);
+    const _sealedNow = sealedNow();
+    const _meleeApproaching = !_sealedNow && !isDay()
+        && hostiles.some(e => e && e.position && !_RANGED_RE.test(e.name || '')
+            && e.position.distanceTo(pos) < 9);
+    return !!(hostiles.some(e => e.position && e.position.distanceTo(pos) < 5)
+        || creeperNear8 || _ranged || _meleeApproaching);
+}
