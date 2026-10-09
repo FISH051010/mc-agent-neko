@@ -108,6 +108,15 @@ function forceMinAdvance(opts) {
     return (o.minAdvance != null) ? o.minAdvance : (o.force === true ? 48 : 0);
 }
 
+// ★C263: only an unavoidable POINT-BLANK CREEPER (<4.5b) aborts a march leg — any other hostile is left to the
+// reflex layer (interrupt) or walked past; the old "any hostile within 8b" quit every snowy_taiga escape at 25-254b. PURE.
+function marchBlockingThreat(entities, selfEntity, pos) {
+    return entities.some(e => e && e !== selfEntity && e.position && /creeper/.test((e.name || '').toLowerCase())
+        && e.position.distanceTo(pos) < 4.5);
+}
+// ★C250 HARD OCEAN-ABORT (#33 drowning root): cap CUMULATIVE water legs — turning can't escape an open ocean. PURE.
+function oceanCrossingAbort(waterLegs) { return waterLegs >= 7; }
+
 function norm2(x, z) {
     const m = Math.hypot(x, z);
     return m < 1e-6 ? { x: 0, z: 0, m: 0 } : { x: x / m, z: z / m, m };
@@ -247,11 +256,7 @@ export default async function migrate(bot, ctx, opts = {}) {
     // a body that walked into the blast. So only a creeper within ~4.5b aborts the leg; everything
     // else is left to the reflex (yield) or simply walked past.
     const closeCreeper = () => {
-        try {
-            return Object.values(bot.entities || {}).some(e =>
-                e && e !== bot.entity && e.position && /creeper/.test((e.name || '').toLowerCase())
-                && e.position.distanceTo(bot.entity.position) < 4.5);
-        } catch { return false; }
+        try { return marchBlockingThreat(Object.values(bot.entities || {}), bot.entity, bot.entity.position); } catch { return false; }
     };
     const edibleHeld = () => {
         try { return bot.inventory.items().some(i => /cooked_|_bread|^bread$|^apple$|carrot|potato|^beef$|porkchop|^chicken$|^mutton$|^cod$|^salmon$|melon_slice|sweet_berries|_stew|^rabbit$|baked_/.test(i.name) && i.name !== 'rotten_flesh'); }
@@ -451,7 +456,7 @@ export default async function migrate(bot, ctx, opts = {}) {
         // sea (live: 637b march to -750, then a wet-bunker at night → drowned). Cap CUMULATIVE
         // water legs: once we've crossed too much open water, STOP marching and (after the loop)
         // walk back to the last land seen (`best` scores land > ocean), rather than drown mid-sea.
-        if (waterLegs >= 7) { abort = `open-ocean crossing (${waterLegs} water legs, totalAdv=${Math.round(totalAdv)}b) — abort + return to land, don't drown mid-ocean`; break; }
+        if (oceanCrossingAbort(waterLegs)) { abort = `open-ocean crossing (${waterLegs} water legs, totalAdv=${Math.round(totalAdv)}b) — abort + return to land, don't drown mid-ocean`; break; }
 
         // ---- advance ONE leg via short, reliably-plannable hops along the current bearing ----
         try { if (bot._mobility && bot._mobility.state === 'MAROONED') { bot._mobility.state = 'FREE'; log_('cleared MAROONED — migrate owns movement'); } } catch (e) {}
@@ -612,4 +617,4 @@ export default async function migrate(bot, ctx, opts = {}) {
     return r;
 }
 
-export { migrate, shouldMigrate, migrateBearing, siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance };
+export { migrate, shouldMigrate, migrateBearing, siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, marchBlockingThreat, oceanCrossingAbort };

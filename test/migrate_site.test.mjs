@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import Vec3 from 'vec3';
 import {
-    siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, shouldMigrate,
+    siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance, shouldMigrate, marchBlockingThreat, oceanCrossingAbort,
 } from '../bots/_supervisor/skills/migrate.js';
 
 // migrate.js site selection / start gate — the T-0042 / T-0051 / T-0055 / T-0059 / T-0061 / T-0110④ family.
@@ -49,4 +50,20 @@ test('T-0042/C309: woodless-bootstrap deadlock is unlivable evidence on its own;
     assert.equal(shouldMigrate({ ...base, bootstrapStuck: true, isNight: true }).go, false, 'never start a long march at night');
     assert.equal(shouldMigrate({ ...base, insideDeathZone: true, msSinceLastMigrate: 60000 }).go, false, 'cooldown');
     assert.equal(shouldMigrate({ ...base, force: true, isNight: true }).go, true, 'force bypasses the start gate (T-0102 woodBarren relies on it)');
+});
+
+
+test('C263: only a point-blank creeper aborts a migration leg; zombies/skeletons are walked past or handled by reflexes', () => {
+    // live: a single wandering skeleton within 8b ended every snowy_taiga escape at 25-254b (needed ~800b).
+    const me = { position: new Vec3(0, 64, 0) };
+    const at = (name, d) => ({ name, position: new Vec3(d, 64, 0) });
+    assert.equal(marchBlockingThreat([at('skeleton', 6), at('zombie', 2)], me, me.position), false);
+    assert.equal(marchBlockingThreat([at('creeper', 3)], me, me.position), true);
+    assert.equal(marchBlockingThreat([at('creeper', 6)], me, me.position), false);
+});
+
+test('C250: a march aborts after 7 cumulative water legs (open ocean), not before', () => {
+    // live #33: 637b straight out to sea, wet bunker at night → drowned.
+    assert.equal(oceanCrossingAbort(6), false);
+    assert.equal(oceanCrossingAbort(7), true);
 });
