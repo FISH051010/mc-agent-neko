@@ -44,6 +44,8 @@ export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
     if (sticks < 4) wants.push(['stick', 1]);                       // 1 craft = 4 sticks
     // 木器 tier 有 ≥6 圆石 → 一次造 2 把石镐 (一把石镐 131 耐久, 下矿 3min 就磨光 — 10-10 16:40 实录)
     if (!durable || picks < 2) wants.push(['stone_pickaxe', (!durable && cobble >= 6) ? 2 : 1]);
+    // ★T-0130 护航石镐: 铁+镐在手却 0 石镐 → 造 1 把 (挖普通石用它, 护住铁镐; worker-stuck T-0128 diamondDiveReady 要求 ≥1 石镐)
+    else if (IRON_PLUS_RE.test(pickTier || '') && (counts['stone_pickaxe'] || 0) === 0) wants.push(['stone_pickaxe', 1]);
     const needsCobble = wants.some(([n]) => n === 'stone_pickaxe');
     if (wants.length && (!needsCobble || cobble >= 3) && woodUnits >= Math.max(2, woodCost(wants)))
         return { wants: withPlanks(wants, counts), partial: false };
@@ -69,8 +71,12 @@ export function digOneCapViable({ picks, gravityPit, y }) {
 // ★T-0118 回归修 (10-10 16:40 实录): 石镐磨光后 tier 掉回木器, 背包 97 圆石 + 2 木镐 + 9 原木 — 下矿门因
 // canRecraftPick 照开, TOOL_UPKEEP 只在门关时才提 → 没有任何提案把圆石变成石镐, bot 拿木镐抱着圆石往下挖。
 // 维护需求 = 下矿门关, 或 还在木器 tier 却揣着够造石镐的圆石 (人: 有圆石立刻换石镐)。提案端与 isGoalDone 同口径。
+// ★T-0130 (worker-stuck 报, 02:26 现场: iron_pickaxe×3 + stone_pickaxe×0 + 圆石 545 + 棍 27): 铁镐在手、下矿门开 →
+//   旧判据不需维护 → 永不补护航石镐 → T-0128 的 diamondDiveReady 门让 GET_DIAMOND 永不提出。
+const IRON_PLUS_RE = /iron|diamond|netherite/;
 export function needsToolUpkeep({ sufficientForUnderground, pickTier, counts }) {
     counts = counts || {};
     const cobble = (counts['cobblestone'] || 0) + (counts['cobbled_deepslate'] || 0);
-    return !sufficientForUnderground || (!PICK_DURABLE_RE.test(pickTier || '') && cobble >= 3);
+    const escortMissing = IRON_PLUS_RE.test(pickTier || '') && (counts['stone_pickaxe'] || 0) === 0 && cobble >= 3;
+    return !sufficientForUnderground || (!PICK_DURABLE_RE.test(pickTier || '') && cobble >= 3) || escortMissing;
 }

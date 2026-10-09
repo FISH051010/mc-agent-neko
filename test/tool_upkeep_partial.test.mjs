@@ -68,3 +68,15 @@ test('T-0118 回归: 石镐磨光掉回木器, 揣 97 圆石 + 2 木镐 + 原木
     const stoneW = dayWorld({ picks: 2, pickTier: 'stone', sufficientForUnderground: true });
     assert.equal(proposeTasks(stoneW, fakeBot({ ...inv, stone_pickaxe: 2 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined, 'stone tier + gate open → no upkeep');
 });
+
+test('T-0130: 铁镐×3 + 0 石镐 + 圆石 545 + 棍 27 (下矿门开) → 必须提 TOOL_UPKEEP 造 1 把护航石镐; 已有石镐则不提', () => {
+    const inv = { iron_pickaxe: 3, cobblestone: 545, stick: 27, spruce_log: 19, spruce_planks: 8 };   // 02:26 live (worker-stuck)
+    const w = dayWorld({ picks: 3, pickTier: 'iron', sufficientForUnderground: true });
+    w.vitals = { ...w.vitals, hp: 20, food: 20 };
+    const tu = proposeTasks(w, fakeBot(inv)).find(p => p.kind === 'TOOL_UPKEEP');
+    assert.ok(tu, 'escort stone pick upkeep proposed');
+    assert.deepEqual(tu.args[0].find(([n]) => n === 'stone_pickaxe'), ['stone_pickaxe', 1]);
+    assert.equal(isGoalDone('TOOL_UPKEEP', w, fakeBot(inv)), false);
+    assert.equal(isGoalDone('TOOL_UPKEEP', w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1 })), true, 'done once an escort exists');
+    assert.equal(proposeTasks(w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined);
+});
