@@ -11,6 +11,12 @@
 // opts: { steps=40, heading=null (auto), targetY=45 }
 
 import { collectExposedOresDuringDescent } from './descentOreSweep.js';
+import fs from 'fs';
+import path from 'path';
+// ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
+//   每个拒跑/abort 原因都对监工不可见。现在同时落 progress.txt — 拒跑闸 / DONE 结果 / abort 原因一行一条。
+const PROG_MD = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
+export function progLine(m) { try { fs.appendFileSync(PROG_MD, `[${new Date().toISOString()}] [mineDown] ${m}\n`); } catch (e) {} }
 
 // ★C311 (T-0048): WATER was missing here — only lava was guarded. mineDown dug a staircase
 // straight into an aquifer at depth (y35) and the bot drowned (#112), while its siblings
@@ -40,7 +46,8 @@ export default async function mineDown(bot, ctx, opts = {}) {
     const { log, skills, Vec3 } = ctx;
     const steps = opts.steps || 40;
     const targetY = opts.targetY != null ? opts.targetY : 45;
-    const log_ = (m) => log(bot, `[mineDown] ${m}`);
+    const log_ = (m) => { log(bot, `[mineDown] ${m}`); progLine(m); };
+    progLine(`START y=${Math.round(bot.entity.position.y)} targetY=${targetY} picks=${bot.inventory.items().filter(i => /_pickaxe$/.test(i.name || '')).map(i => i.name).join(',') || 'none'}`);
     const bn = (x, y, z) => { try { return bot.blockAt(new Vec3(x, y, z)); } catch { return null; } };
     const nm = (b) => (b && b.name) || 'air';
 
