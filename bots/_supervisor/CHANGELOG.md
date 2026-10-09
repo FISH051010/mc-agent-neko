@@ -12,6 +12,14 @@
 
 ---
 
+## C356. ★夜庇护不再烧原木: 原木仅在木料盈余(板当量>64 基线)时可当封顶/补墙料（skills.js resolveCapBlock + modes.js bunkerDown fillerOf 需重启,T-0113,worker-death,⏳待重启）
+
+**证据**(T-0113 overseer): 新世界首夜 15:46→15:50 logs 16→9→2、dirt 5→0, 期间 nightShelter(NIGHT_DIG_ONE) 连派 10 次; 旧 digOneCapOne 挖前定死 capName, 背包无泥土时 fallback 第一个非木板物品 = spruce_log。
+**机理**: ①每次重派都在已封坑里再挖+再封(C354 已堵) ②挖出的土不回用(C354 已改为每次重解析、泥土优先) ③原木仍是封顶/补墙/垫柱的合法兜底料, 与"木板禁封"(af13246)不对称——原木是同一条工具链的上游。
+**改动**: skills.js `woodPlankEq/woodAboveReserve/isWoodBlockName` + `WOOD_RESERVE_PLANKS=64`(=REPLENISH_KIT planksEq 目标); resolveCapBlock 非木整方块优先, 原木仅在用掉一块后仍 ≥64 板当量时可选。modes.bunkerDown fillerOf 同规则(且同等条件下非木料优先)。creeperInterpose(苦力怕贴脸垫块)不受限——那是一块原木换一条命。
+**可证伪预测**: 夜里 logs 计数不再因庇护下降(vitals inv 对比黄昏/黎明); 封顶仍成功(用挖出的 dirt/cobble)。若出现"有原木却封不上顶、被怪打死"→看当时是否 woodPlankEq≤64 且无土无石(那是真缺料, 应加深挖取土而非放宽)。
+**回滚**: revert 本提交, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs`('T-0113: …' + 改写的 T-0105 首夜包断言)。
+
 ## C355. ★床锚优先级读 keepInventory 真值: OFF 世界+羊在眼前 → GET_BED 先于下矿（world_model.js 需重启,T-0043,worker-death,⏳待重启）
 
 **证据**: 2026-10-09 新世界 `KEEPINV OFF`(keepinv.json value:false, C344v2 只读查询)。首夜 15:51 死亡后背包全掉(-50,57,23 水里), 重生在裸露世界出生点 8,73,-4 且仍是夜里, 2 次挨 zombie。world_model GET_BED 两处让位(@44 让 GO_UNDERGROUND@45 / 钻石就绪时整个不提)注释都写着"keepInventory ON, 延后床锚不亏"。

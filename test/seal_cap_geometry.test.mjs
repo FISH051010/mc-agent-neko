@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -70,7 +70,9 @@ function fakeBot(items) {
 test('T-0105: cap material never a non-full block (stick / pressure plate) — first-night pack', () => {
     // vitals 2026-10-09 15:46: {spruce_pressure_plate:1, spruce_planks:2, wooden_pickaxe:2, spruce_log:16}
     assert.equal(resolveCapBlock(fakeBot([['spruce_pressure_plate', 1], ['stick', 4], ['spruce_planks', 2], ['wooden_pickaxe', 2]])), null);
-    assert.equal(resolveCapBlock(fakeBot([['spruce_pressure_plate', 1], ['spruce_planks', 2], ['wooden_pickaxe', 2], ['spruce_log', 16]])), 'spruce_log');
+    // (T-0113: 16 logs is AT the wood baseline → not spent; the dirt the dig yields is the cap)
+    assert.equal(resolveCapBlock(fakeBot([['spruce_pressure_plate', 1], ['spruce_planks', 2], ['wooden_pickaxe', 2], ['spruce_log', 16]])), null);
+    assert.equal(resolveCapBlock(fakeBot([['spruce_pressure_plate', 1], ['spruce_log', 16], ['dirt', 1]])), 'dirt');
 });
 
 test('T-0105: freshly dug dirt wins over logs; gravity blocks never cap (sand falls on the head)', () => {
@@ -97,4 +99,16 @@ test('T-0105: overhead break that would let water in is refused (edge_unstick he
     const sideWet = (p) => (p.y === 59 && p.x === 1 && p.z === 0) ? { name: 'flowing_water', boundingBox: 'empty' } : base(p);
     assert.equal(breakWouldFlood(sideWet, new Vec3(0, 59, 0)), true, 'water beside the roof block');
     assert.equal(breakWouldFlood(base, new Vec3(0, 59, 0)), false, 'dry roof may be broken');
+});
+
+test('T-0113: logs are NOT cap material while wood is at/below the replenish baseline (first night: 16 logs burned to 2)', () => {
+    // 15 logs = 60 plank-eq < 64 baseline → never cap with a log; the dug dirt is the cap.
+    assert.equal(resolveCapBlock(fakeBot([['spruce_log', 15], ['wooden_pickaxe', 2]])), null);
+    assert.equal(resolveCapBlock(fakeBot([['spruce_log', 15], ['dirt', 1]])), 'dirt');
+    assert.equal(woodAboveReserve(fakeBot([['spruce_log', 16]])), false, '64-4=60 < 64 after spending one');
+    // genuine surplus (20 logs = 80 plank-eq) → a log may be spent in an emergency
+    assert.equal(resolveCapBlock(fakeBot([['spruce_log', 20]])), 'spruce_log');
+    // planks count toward the reserve but are never cap material themselves
+    assert.equal(resolveCapBlock(fakeBot([['oak_planks', 64], ['oak_log', 1]])), 'oak_log');
+    assert.equal(resolveCapBlock(fakeBot([['oak_planks', 64]])), null);
 });

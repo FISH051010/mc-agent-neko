@@ -1417,8 +1417,13 @@ const modes_list = [
             const GRAVITY_FILL = /^(sand|red_sand|gravel)$/;
             const fillerOf = () => {
                 const c = world.getInventoryCounts(bot);
-                const all = Object.keys(c).filter(n => c[n] > 0 && FILL_RE.test(n) && !skills.isPlankBlock(n));
-                return all.find(n => !GRAVITY_FILL.test(n)) || all[0];
+                // ★T-0113: logs are tool-chain material like planks — only spend them as wall/pillar
+                // filler when wood is above the replenish baseline (skills.woodAboveReserve).
+                const woodOk = skills.woodAboveReserve(bot);
+                const all = Object.keys(c).filter(n => c[n] > 0 && FILL_RE.test(n) && !skills.isPlankBlock(n)
+                    && (woodOk || !skills.isWoodBlockName(n)));
+                return all.find(n => !GRAVITY_FILL.test(n) && !skills.isWoodBlockName(n))
+                    || all.find(n => !GRAVITY_FILL.test(n)) || all[0];
             };
             try { bot.clearControlStates(); } catch (e) {}
             // ★ STEP ONTO DRY LAND FIRST (the human move at a water edge). The endless

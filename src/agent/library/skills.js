@@ -6255,7 +6255,22 @@ export function isCapBlockName(name, registry) {
     return !!b && b.boundingBox === 'block';
 }
 
-/** 按【当前】背包解析封顶料 (每次放置前重解析 —— 挖下来的泥土立刻可用)。泥土 > 石系 > 其它整方块。 */
+// ★T-0113 (新世界首夜: 一夜 nightShelter 封顶/补墙烧掉 7 原木=28 板, 而挖出来的土没用上):
+// 原木和木板一样是工具链命脉 (镐/台/棍/剑全靠它)。人类不会拿原木糊坑顶 —— 挖坑挖出来的土就够。
+// 原木只在木料【盈余】(板当量扣掉这一块后仍 ≥ 补给基线 64, = REPLENISH_KIT 的 planksEq 目标) 时才可当料。
+const CAP_WOOD_RE = /_log$|_wood$|_stem$|_hyphae$/;
+export const WOOD_RESERVE_PLANKS = 64;
+/** 板当量: 原木/木块 ×4 + 木板。 */
+export function woodPlankEq(bot) {
+    try {
+        return bot.inventory.items().reduce((s, it) => s + (CAP_WOOD_RE.test(it.name) ? it.count * 4 : (isPlankBlock(it.name) ? it.count : 0)), 0);
+    } catch (e) { return 0; }
+}
+/** 用掉一块原木当建材后, 木料仍不低于补给基线。 */
+export function woodAboveReserve(bot) { return woodPlankEq(bot) - 4 >= WOOD_RESERVE_PLANKS; }
+export function isWoodBlockName(name) { return CAP_WOOD_RE.test(name || ''); }
+
+/** 按【当前】背包解析封顶料 (每次放置前重解析 —— 挖下来的泥土立刻可用)。泥土 > 石系 > 其它整方块; 原木仅盈余时。 */
 export function resolveCapBlock(bot) {
     const reg = bot && bot.registry;
     let items = [];
@@ -6263,8 +6278,11 @@ export function resolveCapBlock(bot) {
     const has = new Set(items.filter(it => it && it.count > 0).map(it => it.name));
     const pref = CAP_PREFS.find(n => has.has(n) && isCapBlockName(n, reg));
     if (pref) return pref;
-    const any = items.find(it => it && it.count > 0 && isCapBlockName(it.name, reg));
-    return any ? any.name : null;
+    const woodOk = woodAboveReserve(bot);
+    const nonWood = items.find(it => it && it.count > 0 && !CAP_WOOD_RE.test(it.name) && isCapBlockName(it.name, reg));
+    if (nonWood) return nonWood.name;
+    const wood = woodOk ? items.find(it => it && it.count > 0 && CAP_WOOD_RE.test(it.name) && isCapBlockName(it.name, reg)) : null;
+    return wood ? wood.name : null;
 }
 
 /**
