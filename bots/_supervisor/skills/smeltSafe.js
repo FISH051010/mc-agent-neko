@@ -16,11 +16,30 @@ const stRegister = (type, p) => {
         fs.writeFileSync(STATIONS_F, JSON.stringify(a));
     } catch (e) {}
 };
+// ★T-0138 (18:57:06Z 实录: GET_IRON_TOOLS→smeltSafe ×3、GET_ARMOR→craftArmor→smeltSafe ×3 全部秒败冷却; 背包
+//   圆石 144 + 原木 12 + 0 台 0 炉): 熔炉是 3×3 配方, craftRecipeLocal 只认"随身台/4 格内台" — 没台就退出, 可木料
+//   就在包里。人类: 先拍一张台再做炉。自给自足: 缺台且木料够 → 先折板造随身台。日志同落 progress.txt。
+const PROG_SS = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
+const progSS = (m) => { try { fs.appendFileSync(PROG_SS, `[${new Date().toISOString()}] [smeltSafe] ${m}\n`); } catch (e) {} };
+export async function ensureCarriedTable(bot, { skills, world }) {
+    const c = () => world.getInventoryCounts(bot) || {};
+    if ((c()['crafting_table'] || 0) > 0) return true;
+    try { if (world.getNearestBlock(bot, 'crafting_table', 4)) return true; } catch (e) {}
+    const planks = () => Object.keys(c()).filter(k => k.endsWith('_planks')).reduce((s, k) => s + (c()[k] || 0), 0);
+    if (planks() < 4) {
+        const log = Object.keys(c()).find(k => k.endsWith('_log') && c()[k] > 0);
+        if (log) await skills.craftRecipeLocal(bot, log.replace(/_log$/, '_planks'), 1).catch(() => false);
+    }
+    if (planks() >= 4) await skills.craftRecipeLocal(bot, 'crafting_table', 1).catch(() => false);
+    return (c()['crafting_table'] || 0) > 0;
+}
 export default async function smeltSafe(bot, ctx, item, num = 1) {
-    const { skills, world, log } = ctx;
+    const { skills, world } = ctx;
+    const log = (b, m) => { ctx.log(b, m); progSS(m); };
     const findFurnace = () => world.getNearestBlock(bot, 'furnace', 4);
     if (!findFurnace()) {
         if (!(world.getInventoryCounts(bot)['furnace'] > 0)) {
+            if (!(await ensureCarriedTable(bot, { skills, world }))) log(bot, 'smeltSafe: no carried/nearby table and no wood to make one');
             // Furnace is a 3x3 recipe. Craft it in the current pocket instead of
             // walking toward an old remote table; abort cleanly if no reachable
             // table can be placed. A failed craft must never fall through into
