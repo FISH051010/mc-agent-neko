@@ -2901,6 +2901,8 @@
 
 - **★C392-S mineDown 流体中止在同一派发内换向/换址(T-0162)**（2026-10-10，worker-stuck，T-0162；worker-tier 指出）: 证据: 20:22:59 起 3 个朝向依次撞流体,每次派发只试 1 个朝向 → dug=0 failed ×3 → kernelDriver 3-strike 冷却 5min;C391-S 的换址隧道要 4 向全记满才触发,永远轮不到。**改**(③ `skills/mineDown.js`,热加载): 步进循环里 step-0 流体中止记向后立即 `rotateAwayFromAborted` 换下一个干净朝向并 `continue`(≤4 次/派发);四向皆湿则同派发内 `planRelocateTunnel`+`walkDugPath` 挖出到干岩层再换向继续(≤1 次);都不行才 break。日志 `fluid turn N/4: heading a→b` / `fluid: all 4 headings wet here — tunnelled …`。**回归测试**: `test/minedown_fluid_reheading.test.mjs`(2 条 `T-0162:`,修前接线断言红)。**可证伪预测**: 含水层区不再出现"3 次 dug=0 流体 abort → GO_UNDERGROUND 冷却",代之以同派发内 fluid turn 后继续下挖。子 skill 热加载,合并即生效。
 
+- **★C393-S SEALED 脱困 episode 让位给有目的技能(T-0163, T-0135 回归)**（2026-10-10，worker-stuck，T-0163）: 实录 10-09 20:36:15/20:38:15 地下自家矿道恒"有界" → T-0135 episode 只看 sr.sealed 便一路随行 5min, 与 branchMine:ore-window 抢挖掘槽 (Digging aborted/dig slot busy), 20:38:58.98 打断 smeltSafe 炼铁 (GET_ARMOR 进度丢)。根因两条: ① `_stationaryTask` 写成 `agent.supervised_skill || bot._currentSkill`, kernelDriver 下 supervised_skill='kernel' 恒真 → smelt/craft 子技能永远看不到; ② 去抖与 episode 不看 purposefulDigActive。修: 两者拼接; `_sealedWorking = _stationaryTask || purposefulDigActive` 重置去抖并传入 `sealedEscapeStep({working})` → 直接结束/不开 episode。空闲真密室行为不变。测试 test/sealed_purposeful_work.test.mjs。
+
 ---
 
 ---

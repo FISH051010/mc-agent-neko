@@ -4094,7 +4094,8 @@ const modes_list = [
                     const _stationaryTask = (() => {
                         try {
                             const lbl = String((agent.actions && agent.actions.currentActionLabel) || '');
-                            const skl = String(agent.supervised_skill || bot._currentSkill || '');
+                            // ★T-0163: supervised_skill is 'kernel' under kernelDriver — `||` never reached the smelt/craft child.
+                            const skl = String(agent.supervised_skill || '') + ' ' + String(bot._currentSkill || '');
                             return /smelt|craft|cook|furnace|sleep|standby|brew|enchant/i.test(lbl + ' ' + skl);
                         } catch (e) { return false; }
                     })();
@@ -4102,7 +4103,9 @@ const modes_list = [
                         bot._sealedSuppressSayAt = Date.now();
                         console.log('🔒 SEALED 升级已抑制 — 正在执行原地技能(炼铁/合成等)，站着不动是任务本身，不是被困。');
                     }
-                    if (!_sr || _stationaryTask) { this._sealedSince = 0; this._sealedAnchor = null; }
+                    // ★T-0163: branchMine/mineDown/pathfinder digging (non-reflex dig-slot owner) = working, not trapped.
+                    const _sealedWorking = _stationaryTask || purposefulDigActive(bot, now);
+                    if (!_sr || _sealedWorking) { this._sealedSince = 0; this._sealedAnchor = null; }
                     else if (!this._sealedSince || (this._sealedAnchor && _pp.distanceTo(this._sealedAnchor) > 3)) {
                         this._sealedSince = now; this._sealedAnchor = _pp.clone();   // newly sealed / moved (mining) → (re)start timer
                     } else if (now - this._sealedSince > 10000) {
@@ -4110,7 +4113,7 @@ const modes_list = [
                     }
                     // ★T-0135: a confirmed trap opens an escape episode — no 10s re-debounce per dug cell.
                     const _esc = sealedEscapeStep({ episode: this._sealedEpisode, sr: _srObj, enc, night: _isNightMob, now,
-                        debounceSealed: _debounceSealed && !_stationaryTask });
+                        debounceSealed: _debounceSealed && !_sealedWorking, working: _sealedWorking });
                     if (!this._sealedEpisode && _esc.episode) { try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0135 sealed escape episode START @${Math.round(_pp.x)},${Math.round(_pp.y)},${Math.round(_pp.z)}\n`); } catch (e) {} }
                     if (this._sealedEpisode && !_esc.episode) { try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0135 sealed escape episode END (${_srObj.reason || 'open'}) after ${Math.round((now - this._sealedEpisode.since) / 1000)}s, moved ${this._sealedEpisodeFrom ? Math.round(_pp.distanceTo(this._sealedEpisodeFrom)) : '?'}b\n`); } catch (e) {} }
                     if (!this._sealedEpisode && _esc.episode) this._sealedEpisodeFrom = _pp.clone();

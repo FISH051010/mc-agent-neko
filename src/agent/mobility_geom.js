@@ -49,8 +49,11 @@ export function detectSealedRoom(bot) {
 // ('spill' = open space reached), the cover lifts (sky), night falls (the room is then a shelter), or the
 // episode ages out. Pure — pinned by test/sealed_escape.test.mjs.
 export const SEALED_EPISODE_MAX_MS = 5 * 60000;
-export function sealedEscapeStep({ episode, sr, enc, night, now, debounceSealed }) {
+export function sealedEscapeStep({ episode, sr, enc, night, now, debounceSealed, working = false }) {
     if (night || !enc) return { st: null, episode: null };
+    // ★T-0163: own mine tunnels are always bounded — a skill digging/smelting/crafting = not trapped (live 20:38:58
+    //   a ridealong episode interrupted smeltSafe). End/skip the episode; the skill owns the body.
+    if (working) return { st: null, episode: null };
     if (episode && now - episode.since > SEALED_EPISODE_MAX_MS) episode = null;
     if (episode) {
         if (sr && (sr.sealed || sr.reason === 'no-stand')) return { st: 'SEALED', episode: { ...episode, lastAt: now } };
