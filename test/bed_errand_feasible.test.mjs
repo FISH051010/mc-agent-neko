@@ -48,3 +48,29 @@ test('T-0119: setBed\'s hunger gates are mirrored — food<6 shrinks the sheep h
     assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1, iron_sword: 1 }, [['spider', 30, 0]]), 7)), false, 'spider 48b venture needs food>=8');
     assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1, white_wool: 3 }), 0)), true, 'wool in pack needs no hunt');
 });
+
+test('T-0178: 夜里 (timeOfDay 12800-23000) 有剑+蜘蛛 → 不可行 (setBed 只在白天猎); 白天同场景可行', () => {
+    const night = makeBot({ stone_pickaxe: 2, stone_sword: 1 }, [['spider', 20, 0]]);
+    night.time = { timeOfDay: 16000 };
+    assert.equal(bedErrandFeasible(night), false, '22:31 live: night spider + stone sword');
+    const day = makeBot({ stone_pickaxe: 2, stone_sword: 1 }, [['spider', 20, 0]]);
+    day.time = { timeOfDay: 4000 };
+    assert.equal(bedErrandFeasible(day), true);
+});
+
+test('T-0178: 羊在 64 格内但 10 格内有僵尸 → 不可行 (setBed 有敌对就 defer); 包里有床/羊毛不受昼夜影响', () => {
+    const mobbed = makeBot({ stone_sword: 1 }, [['sheep', 30, 0], ['zombie', 5, 0]]);
+    mobbed.time = { timeOfDay: 4000 };
+    assert.equal(bedErrandFeasible(mobbed), false);
+    const woolNight = makeBot({ white_wool: 3 }); woolNight.time = { timeOfDay: 16000 };
+    assert.equal(bedErrandFeasible(woolNight), true);
+});
+
+test('T-0178: 已承诺的 GET_BED 入夜即释放 (isGoalDone 与提案门同谓词)', async () => {
+    const { isGoalDone } = await import('../src/agent/framework/world_model.js');
+    const b = makeBot({ stone_sword: 1 }, [['spider', 20, 0]]);
+    b.time = { timeOfDay: 16000 };
+    assert.equal(isGoalDone('GET_BED', dayWorld(), b), true);
+    b.time = { timeOfDay: 4000 };
+    assert.equal(isGoalDone('GET_BED', dayWorld(), b), false);
+});

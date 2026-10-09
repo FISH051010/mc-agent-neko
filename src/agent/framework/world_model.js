@@ -1595,7 +1595,7 @@ export function isGoalDone(kind, world, bot) {
         // ironArmorGoalDone — a flat `<4` livelocked at e.g. boots owned + 4 iron, helmet costs 5).
         case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot) || armorCraftBlocked(w, bot);   // ★T-0157 缺台/炉/燃料即释放
         case PROPOSAL_KIND.RECLAIM_FURNACE: return !strandedFurnaceInReach(w, STRANDED_RELEASE_REACH);   // 释放门 128 > 提案门 96 (迟滞)
-        case PROPOSAL_KIND.GET_BED:       return bedKnown(bot);
+        case PROPOSAL_KIND.GET_BED:       return bedKnown(bot) || !bedErrandFeasible(bot);   // ★T-0178 同谓词: 入夜/无路径即释放 (防 holding commitment 续派 setBed NO-OP)
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
@@ -2100,12 +2100,19 @@ export function bedErrandFeasible(bot) {
         // ★T-0119 返工 (live 10-10 01:42 food=0: 'setBed: no sheep within 12 … fit=close-only' ×3): setBed shrinks
         //   its hunts by hunger — sheep 64b only at food>=6 (else 12b); spider 48b needs a non-wooden sword +
         //   food>=8, 12b needs any sword + food>=6, else no spider hunt at all. Mirror those gates exactly.
+        // ★T-0178 (22:31:15-36Z 实录: 夜里 y21 有蜘蛛 + T-0170 刚造的石剑 → 判可行 → GET_BED → setBed 夜里不猎,
+        //   "no bed and could not make one" NO-OP ×3 冷却)。setBed 两条猎取路径都只在白天 (同口径 timeOfDay 12800-23000 为夜);
+        //   羊路径要 10 格内无敌对, 蜘蛛路径要 6 格内敌对 ≤2。镜像之。
+        const tod = bot.time && Number.isFinite(bot.time.timeOfDay) ? bot.time.timeOfDay : null;
+        if (tod != null && tod >= 12800 && tod <= 23000) return false;
+        const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|pillager|vindicator/;
+        const countNear = (re, r) => ents.filter(e => e && re.test(e.name || '') && e.position && e.position.distanceTo(me) <= r).length;
         const food = Number.isFinite(bot.food) ? bot.food : 20;
-        if (near(/^sheep$/, food >= 6 ? 64 : 12)) return true;
+        if (countNear(HOSTILE_RE, 10) === 0 && near(/^sheep$/, food >= 6 ? 64 : 12)) return true;
         const swords = (bot.inventory.items() || []).filter(i => /_sword$/.test(i.name || ''));
         const strongSword = swords.some(i => !/^wooden_sword$/.test(i.name));
         const spiderRange = (strongSword && food >= 8) ? 48 : (swords.length && food >= 6) ? 12 : 0;
-        return near(/^spider$/, spiderRange);
+        return countNear(HOSTILE_RE, 6) <= 2 && near(/^spider$/, spiderRange);
     } catch (e) { return false; }
 }
 

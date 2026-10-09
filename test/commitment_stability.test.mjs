@@ -52,6 +52,7 @@ test('T-0108: death zone that is actually biting (low hp / actionable threat) st
 
 test('T-0108: calm death-zone MIGRATE still preempts a non-kit daytime commitment (zone gets left)', () => {
     const bot = fakeBot(PROPOSAL_KIND.GET_BED, 'getBed');
+    bot.inventory = { items: () => [{ name: 'white_wool', count: 3 }] };   // T-0178: GET_BED 需有可行路径才不判完成 (本条验 MIGRATE 抢占)
     const g = commitGoal(bot, [{ kind: PROPOSAL_KIND.GET_BED, priority: 50, skill: 'getBed' }, MIG], world());
     assert.equal(g.kind, PROPOSAL_KIND.MIGRATE);
 });
