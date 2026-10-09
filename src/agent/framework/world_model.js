@@ -752,7 +752,14 @@ export function proposeTasks(world, bot) {
     }
 
     // 3) Bed (mandatory respawn anchor) — once kit exists. (overworld-only: no beds off-overworld — they explode.)
-    if (overworld && kit.picks >= 1 && !bedKnown(bot) && !(hasIronTierPick(w) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < DIAMOND_FLOOR)) {   // ★T-0092 completion (worker-sync): GET_BED@50 was an UNFULFILLABLE wool-errand (no wool→no bed→bedKnown永false) that OUTRANKED GET_DIAMOND@46, so an iron-tooled+armored bot never descended for diamond. Yield GET_BED exactly when the bot is diamond-ready (mirror the GET_DIAMOND gate) so GET_DIAMOND wins → mineDiamonds descends. Safe: pure re-prioritize, does NOT gate pick/bed-MAKING (keepInventory ON so a delayed respawn-anchor loses nothing).
+    // ★T-0043: the two yields below assume keepInventory ON — bedProposalPriority() re-checks that premise.
+    const _bedPri = bedProposalPriority({
+        keepInvOff: keepInventoryOff(),
+        woolPath: woolPathVisible(bot),
+        preIronDescend: !hasIronTierPick(w),
+        diamondYield: hasIronTierPick(w) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < DIAMOND_FLOOR,
+    });
+    if (overworld && kit.picks >= 1 && !bedKnown(bot) && _bedPri != null) {   // ★T-0092 completion (worker-sync): GET_BED@50 was an UNFULFILLABLE wool-errand (no wool→no bed→bedKnown永false) that OUTRANKED GET_DIAMOND@46, so an iron-tooled+armored bot never descended for diamond. Yield GET_BED exactly when the bot is diamond-ready (mirror the GET_DIAMOND gate) so GET_DIAMOND wins → mineDiamonds descends. Safe: pure re-prioritize, does NOT gate pick/bed-MAKING (keepInventory ON so a delayed respawn-anchor loses nothing).
         // ★T-0110 (worker-frozen 0701): RE-ENABLE the @44 yield the T-0060 note below deferred. That
         // note's exact blocker — "@44 → GO_UNDERGROUND → mineDown NO-OP-spun → HARD-PINNED, because the
         // stuck-relocate wasn't firing; real fix = migrate-away-from-stuck-spot + mineDown-relocate-on-
@@ -768,8 +775,10 @@ export function proposeTasks(world, bot) {
         // yield off exactly when it's needed (live: stoneKitReady=false after a NIGHT_SEAL spent cobble).
         // Throughout stone-tier, mining iron beats a wool-errand the bot usually can't fulfil anyway.
         const preIronDescend = !hasIronTierPick(w);
-        push({ kind: PROPOSAL_KIND.GET_BED, priority: preIronDescend ? 44 : 50, skill: 'prepNether',
-               rationale: preIronDescend ? 'no bed, but stone-kit-ready + pre-iron — DESCEND for iron first (bed deferred; keepInv ON), yield to GO_UNDERGROUND@45' : 'no bed yet — secure wool→bed as respawn anchor (mandatory, blueprint §D.3)' });
+        push({ kind: PROPOSAL_KIND.GET_BED, priority: _bedPri, skill: 'prepNether',
+               rationale: _bedPri === 50 && preIronDescend
+                   ? 'no bed + keepInventory OFF + sheep/wool in reach — bed BEFORE descending (a bedless death drops the whole kit and respawns at bare world spawn)'
+                   : (preIronDescend ? 'no bed, but stone-kit-ready + pre-iron — DESCEND for iron first (bed deferred; keepInv ON), yield to GO_UNDERGROUND@45' : 'no bed yet — secure wool→bed as respawn anchor (mandatory, blueprint §D.3)') });
     }
 
     // 3b) ARMOR — close the chronic unarmored-death gap (86% of deaths are unarmored; bot makes an
@@ -1873,6 +1882,41 @@ export function dynamicBreadTarget(bot, world) {
         else if (breadStock >= 64) bot._breadEngaged = false;
         return bot._breadEngaged ? 64 : 5;
     } catch (e) { return 0; }
+}
+
+/** ★T-0043: keepInventory 核实值 (agent.js C344v2 每次 spawn 只读查询后写 keepinv.json)。
+ *  只有【明确 false】才算 OFF; 文件缺失/未核实 → null (沿用旧的 keepInv-ON 假设, 不改行为)。 */
+let _keepInvCache = { at: 0, v: null };
+export function keepInventoryOff() {
+    if (Date.now() - _keepInvCache.at < 30000) return _keepInvCache.v;
+    let v = null;
+    try { const k = JSON.parse(readFileSync(SUP('keepinv.json'), 'utf8').replace(/^﻿/, '')); if (k && k.value === false) v = true; else if (k && k.value === true) v = false; } catch (e) {}
+    _keepInvCache = { at: Date.now(), v };
+    return v;
+}
+
+/** 床料路径"就在眼前": 背包已有床/≥3 羊毛, 或 48 格内看得见羊 (setBed 猎羊→羊毛→床)。 */
+export function woolPathVisible(bot) {
+    try {
+        if (invCount(bot, /_bed$/) >= 1 || invCount(bot, /_wool$/) >= 3) return true;
+        const me = bot.entity && bot.entity.position;
+        if (!me) return false;
+        return Object.values(bot.entities || {}).some(e => e && e.name === 'sheep' && e.position && e.position.distanceTo(me) <= 48);
+    } catch (e) { return false; }
+}
+
+/**
+ * ★T-0043 (夜重生死循环根: 无床锚 → 每次死亡重生在裸露的世界出生点): GET_BED 提案优先级。
+ * 两处让位 (stone-tier @44 让 GO_UNDERGROUND@45; 钻石就绪时整个不提) 的理由都写着
+ * "keepInventory ON, 延后床锚不亏" —— keepInventory OFF 的世界里这前提不成立: 每次死亡掉光
+ * 全套装备并重生到远离装备/家的出生点, 夜里重生即暴露。人类此时: 羊就在眼前就先做床再下矿;
+ * 看不到羊才先去干别的 (不为一张床满世界找羊 —— T-0092/T-0060 的"无羊空转"教训保留)。
+ * @returns {number|null} null = 本轮不提 GET_BED
+ */
+export function bedProposalPriority({ keepInvOff, woolPath, preIronDescend, diamondYield }) {
+    if (keepInvOff === true && woolPath) return 50;
+    if (diamondYield) return null;
+    return preIronDescend ? 44 : 50;
 }
 
 /** Cheap check whether a bed/respawn anchor is known. Defensive — reads files the

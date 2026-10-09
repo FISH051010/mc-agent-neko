@@ -12,7 +12,19 @@
 
 ---
 
-## C354. ★★封顶失败(seal-fail)几何根因 + 夜庇护重派下沉溺死链（①modes.js bunkerDown/edge_unstick + ②skills.js 封顶原语 需重启,T-0105,worker-death,⏳待重启）
+## C355. ★床锚优先级读 keepInventory 真值: OFF 世界+羊在眼前 → GET_BED 先于下矿（world_model.js 需重启,T-0043,worker-death,⏳待重启）
+
+**证据**: 2026-10-09 新世界 `KEEPINV OFF`(keepinv.json value:false, C344v2 只读查询)。首夜 15:51 死亡后背包全掉(-50,57,23 水里), 重生在裸露世界出生点 8,73,-4 且仍是夜里, 2 次挨 zombie。world_model GET_BED 两处让位(@44 让 GO_UNDERGROUND@45 / 钻石就绪时整个不提)注释都写着"keepInventory ON, 延后床锚不亏"。
+
+**机理**: 让位的前提在 keepInv OFF 世界失效 —— 无床时每次死亡 = 掉光全套 + 重生到远离装备的裸地表(夜里重生即暴露, T-0043 原型)。床同时是重生锚和跳夜手段, 价值随死亡成本上升。
+
+**改动**: world_model.js 新 `keepInventoryOff()`(读 keepinv.json, 仅明确 false 才算 OFF, 30s 缓存) + `woolPathVisible(bot)`(床/≥3 羊毛在包或 48 格内有羊) + 纯函数 `bedProposalPriority()`: keepInv OFF 且羊毛路径在眼前 → GET_BED@50(压过 GO_UNDERGROUND@45 / GET_IRON_TOOLS@47, 钻石就绪也照提); 否则原让位不变(看不到羊不为床满图找羊, 保留 T-0092/T-0060 教训)。
+
+**可证伪预测**: keepInv OFF + 附近有羊时 progress `[proposeTasks]`/kernel 出 GET_BED@50 并派 prepNether→setBed, bed.json 出现、夜里 GO_BED 睡觉、死亡后重生在床边(death_log 后的 spawn 位置≈床)。无羊时行为与旧版一致。若出现"GET_BED@50 反复 no-op 冷却占住白天、挖矿停滞"→ 收紧 woolPath(要求羊可达/距离更近)。
+
+**回滚**: revert world_model.js 本段, 重启 main.js。回归 `test/bed_priority_keepinv.test.mjs`(4 条 T-0043)。
+
+## C354. ★★封顶失败(seal-fail)几何根因 + 夜庇护重派下沉溺死链（①modes.js bunkerDown/edge_unstick + ②skills.js 封顶原语 需重启,T-0105,worker-death,🟡已重启 23:58 待夜验）
 
 **（2026-10-09，worker-death，T-0105 / 关联 T-0043·T-0057）**
 
