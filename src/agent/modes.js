@@ -26,7 +26,7 @@ import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading } from './mobility_geom.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -686,27 +686,8 @@ const modes_list = [
                     || wet(bot.blockAt(me.offset(ux * 1.1, -1, uz * 1.1))),
                 drop: droppy(ux, uz),
             });
-            let hx = dx, hz = dz, needJump = true;   // boxed-in fallback: jump + push straight
-            let _found = false;
-            // ★C334-A (T-0068 "逃怪缺翻越地形脱离"): 旧扇形只搜前向 ±90° 弧[0,±45,±90]——若前向被
-            // 2 格墙/台地挡满(U 形角落), 5 个朝向全 head-blocked → fallback 直冲撞墙 → 被地形逼角
-            // 无限 kite till dawn 甩不掉群(今日多条夜群杀死)。修: 扇形扩到【全 360°】(加 ±135°,180°),
-            // 被前向逼角时能向后/绕行找到任意开口脱离, 而非撞死墙角。偏好序不变(away 方向 0/±45/±90
-            // 先试, 背向 ±135/180 只在前向弧全堵=真逼角时才用——first-match 保证仅最后兜底), 故正常逃
-            // 仍优先远离威胁, 只有走投无路才回绕。dry/wet 两遍+跌落守卫保留。
-            const _FAN = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, 3 * Math.PI / 4, -3 * Math.PI / 4, Math.PI];
-            for (const pass = { dry: true }, arr = [true, false]; arr.length && !_found;) {
-                pass.dry = arr.shift();
-                for (const a of _FAN) {
-                    const ca = Math.cos(a), sa = Math.sin(a);
-                    const ux = dx * ca - dz * sa, uz = dx * sa + dz * ca;   // rotate desired heading by a
-                    const p = probe(ux, uz);
-                    // ★#1 (review-2026-07-06 坑里跳不出): step-up(p.foot=有台阶)且落脚后头顶(y2)实心 =
-                    //   2 格墙唇/低天花板, jump 只上 1 格必撞顶翻不过 → 原地死跳(实录被钉死跳 10s 被追死)。
-                    //   拒该朝向, 让扇形换向或落到凿墙出口; 平走(p.foot=false)不受影响。
-                    if (!p.head && !p.drop && (!pass.dry || !p.water) && !(p.foot && p.above)) { hx = ux; hz = uz; needJump = p.foot; _found = true; break; }   // head clear + no ledge (+dry) + 非2格唇 → run
-                }
-            }
+            // (fan-out heading choice lives in mobility_geom.chooseFleeHeading — pinned by test/flee_heading.test.mjs)
+            const { hx, hz, needJump, found: _found } = chooseFleeHeading(dx, dz, probe);
             // ★C334-A 真逼角(全 360° head 全堵/全 droppy)+有镐 → "翻越"=向 away 方向凿穿头层 1 格开口
             // (旧 fallback 只撞墙)。让被 2 格墙完全箱住的 bot 自己挖出逃生口而非原地被压死。一次一格,
             // 数拍凿通; 无镐则退回撞墙 fallback(总比不动强)。掘进方向=最贴近 away 的朝向(dx,dz)。
