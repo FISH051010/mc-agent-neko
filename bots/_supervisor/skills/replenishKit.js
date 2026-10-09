@@ -30,6 +30,30 @@ export function shouldChopBeforeCrafting({ picks, planksEq }) {
     return true;
 }
 
+// ★T-0111 离场收台 — 敲 6 格内的台并确认捡回。kernel 切承诺的 interrupt 只是"该走了", 不是危险:
+//   暂时屏蔽它把台带走 (≤maxMs), 结束后原样恢复 (期间若有人再置 interrupt 也保留)。
+export async function reclaimTable(bot, { skills, world }, { maxMs = 6000 } = {}) {
+    const has = () => { try { return (world.getInventoryCounts(bot)['crafting_table'] || 0) > 0; } catch (e) { return false; } };
+    if (has()) return true;
+    let tb = null;
+    try { tb = (await world.getNearestBlocksWhereAsync(bot, (b) => b && b.name === 'crafting_table', 6, 1))[0]; } catch (e) {}
+    if (!tb) return false;
+    const masked = !!bot.interrupt_code;
+    if (masked) bot.interrupt_code = false;
+    try {
+        const work = (async () => {
+            const p = tb.position;
+            await skills.breakBlockAt(bot, p.x, p.y, p.z).catch(() => {});
+            if (!has() && skills.ensurePickupAt) await skills.ensurePickupAt(bot, p, { radius: 4 }).catch(() => {});
+            if (!has()) await skills.pickupNearbyItems(bot).catch(() => {});
+        })();
+        await Promise.race([work, new Promise(r => setTimeout(r, maxMs))]);
+    } finally {
+        if (masked) bot.interrupt_code = true;
+    }
+    return has();
+}
+
 export default async function replenishKit(bot, ctx, opts = {}) {
     const { skills, world, log } = ctx;
     const BUDGET_MS = 300000;                     // 5min 硬预算
@@ -407,15 +431,13 @@ export default async function replenishKit(bot, ctx, opts = {}) {
 
     // ── ⑨ ★离场台回收 (12:49 实录: 台 2→1→0 漏光 — ⓪.5/③.5 的 craftRecipe 回退会自放台
     //    但没有 craftRecipeLocal 的 T-0079 回收)。包里没台且 6 格内有台块 → 拆回包。──
-    if (!stop() && cnt('crafting_table') < 1) {
-        try {
-            const tb = (await world.getNearestBlocksWhereAsync(bot, (b) => b && b.name === 'crafting_table', 6, 1))[0];   // ★async 分块 yield 版, 消同步 findBlock 阻塞
-            if (tb) {
-                await skills.breakBlockAt(bot, tb.position.x, tb.position.y, tb.position.z).catch(() => {});
-                await skills.pickupNearbyItems(bot).catch(() => {});
-                prog(`replenishKit: ⑨ 离场台回收 → table=${cnt('crafting_table')}`);
-            }
-        } catch (e) {}
+    // ★T-0111 (10-10 16:00:55 实录): kernel 切承诺时 interrupt 已置位 → 旧 `!stop()` 门要么跳过本步(台留原地,
+    //   bot 被派走 = 台丢), 要么 bot.dig 敲掉台后 pickupNearbyItems 的寻路见 interrupt 放弃 → 台掉地上没捡
+    //   → 背包 0 台 → 下矿门关 (T-0060 死锁的起点)。人类离开前一定把台捡走: 只要不是 supervisor cancel/死亡、
+    //   附近无怪, 就屏蔽 kernel 切换 interrupt ≤6s 把台敲下捡回, 结束恢复 interrupt。
+    if (!cancelRequested() && !bot.death_abort && cnt('crafting_table') < 1 && hostilesNear(8) === 0) {
+        await reclaimTable(bot, { skills, world }, { maxMs: 6000 });
+        prog(`replenishKit: ⑨ 离场台回收 → table=${cnt('crafting_table')}`);
     }
 
     const met = picks() >= 3 && tierPickGoalMet() && planksEq() >= 64;   // ★3镐/64板 + tier 镐达标(铁4/钻3, 宽迟滞令)
