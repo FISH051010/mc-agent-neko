@@ -66,3 +66,41 @@ export function chooseFleeHeading(dx, dz, probe) {
     }
     return { hx, hz, needJump, found: _found };
 }
+
+// ★C305-A (T-0036) POCKET escape plan, PURE (choice logic moved verbatim from modes.js mobility POCKET branch).
+// A) CLIMB OUT first: own head-room above, a neighbour whose FOOT cell is a solid step with air above it →
+//    jump onto it (no digging). The foot-slot case the old head-only carve missed (spun ~4min with zero motion).
+// B) else DIG a step-out: BOTH foot (dy0) and head (dy1) neighbour walls count (old code dug head only), only
+//    over a solid non-fluid floor; stone without a pick is gated unless enclosed (bare-hand breakout allowed).
+// Returns { action: {kind:'climb',dx,dz,onto} | {kind:'dig',dx,dz,wall,other} | null, gated: [walls skipped by the no-pick gate] }.
+export function planPocketEscape(blockAt, m2, { hasPick, enclosed, stonyRe }) {
+    const _pPassable = (b) => !b || (b.boundingBox !== 'block' && !/water|lava/.test(b.name || ''));
+    const _pSolid = (b) => !!(b && b.boundingBox === 'block');
+    const _pDiggable = (b) => _pSolid(b) && !/bedrock|water|lava/.test(b.name || '');
+    const _pNoPickGated = (b) => (!hasPick && stonyRe.test(b.name || '') && !enclosed);
+    const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    if (_pPassable(blockAt(m2.offset(0, 2, 0)))) {
+        for (const [dx, dz] of DIRS) {
+            const bFoot = blockAt(m2.offset(dx, 0, dz));
+            const bHead = blockAt(m2.offset(dx, 1, dz));
+            const bAbove = blockAt(m2.offset(dx, 2, dz));
+            if (_pSolid(bFoot) && !/water|lava/.test(bFoot.name || '') && _pPassable(bHead) && _pPassable(bAbove)) {
+                return { action: { kind: 'climb', dx, dz, onto: bFoot.name }, gated: [] };
+            }
+        }
+    }
+    const gated = [];
+    for (const [dx, dz] of DIRS) {
+        const bFoot = blockAt(m2.offset(dx, 0, dz));
+        const bHead = blockAt(m2.offset(dx, 1, dz));
+        const bFloor = blockAt(m2.offset(dx, -1, dz));
+        if (!_pSolid(bFloor) || /water|lava/.test(bFloor.name || '')) continue;
+        const wall = _pDiggable(bFoot) ? bFoot : (_pDiggable(bHead) ? bHead : null);
+        if (!wall) continue;
+        if (_pNoPickGated(wall)) { gated.push(wall); continue; }
+        const otherB = wall === bFoot ? blockAt(m2.offset(dx, 1, dz)) : blockAt(m2.offset(dx, 0, dz));
+        const other = (_pDiggable(otherB) && !_pNoPickGated(otherB)) ? otherB : null;
+        return { action: { kind: 'dig', dx, dz, wall, other }, gated };
+    }
+    return { action: null, gated };
+}

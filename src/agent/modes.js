@@ -26,7 +26,7 @@ import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobility_geom.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -4963,69 +4963,43 @@ const modes_list = [
                     // (foot OR head wall, not head-only) only when no ready climb exists.
                     const m2 = bot.entity.position.floored();
                     const enclosedTrapped = !!(bot._mobility && bot._mobility.enclosed);
-                    const _pPassable = (b) => !b || (b.boundingBox !== 'block' && !/water|lava/.test(b.name || ''));
-                    const _pSolid = (b) => !!(b && b.boundingBox === 'block');
-                    const _pDiggable = (b) => _pSolid(b) && !/bedrock|water|lava/.test(b.name || '');
                     // Skip no-pick stone ONLY when NOT enclosed (bare-hand stone is slow/no-drop, not
                     // worth it for a normal step-out). When ENCLOSED (sealed in a cavity) the bot MUST
                     // dig out even bare-handed (ensurePickForStone permits enclosed no-pick stone).
-                    const _pNoPickGated = (b) => (!hasPick() && STONY_MOBILITY.test(b.name || '') && !enclosedTrapped);
                     let _pActed = false;
-                    // A) CLIMB OUT — regains surface height, no block-breaking. The foot-slot case the
-                    //    old head-only carve missed: neighbor foot is a solid STEP, neighbor head+above
-                    //    are air, own head has room → jump-forward onto the step.
-                    if (_pPassable(bot.blockAt(m2.offset(0, 2, 0)))) {
-                        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                            const bFoot = bot.blockAt(m2.offset(dx, 0, dz));
-                            const bHead = bot.blockAt(m2.offset(dx, 1, dz));
-                            const bAbove = bot.blockAt(m2.offset(dx, 2, dz));
-                            if (_pSolid(bFoot) && !/water|lava/.test(bFoot.name || '') && _pPassable(bHead) && _pPassable(bAbove)) {
-                                try {
-                                    await bot.lookAt(m2.offset(dx, 1, dz).offset(0.5, 0.4, 0.5), true);
-                                    bot.setControlState('forward', true);
-                                    bot.setControlState('jump', true);
-                                    await new Promise(r => setTimeout(r, 500));
-                                } finally { try { bot.clearControlStates(); } catch (e) {} }
-                                try {
-                                    fs.appendFileSync('bots/_supervisor/progress.txt',
-                                        `[${new Date().toISOString()}] [mobility] POCKET step-up climb dir=${dx},${dz} onto ${bFoot.name} y=${Math.floor(bot.entity.position.y)}\n`);
-                                } catch (e) {}
-                                _pActed = true;
-                                break;
-                            }
-                        }
+                    // (A climb / B dig choice lives in mobility_geom.planPocketEscape — pinned by test/pocket_escape.test.mjs)
+                    const _plan = planPocketEscape((q) => bot.blockAt(q), m2, { hasPick: hasPick(), enclosed: enclosedTrapped, stonyRe: STONY_MOBILITY });
+                    for (const gw of _plan.gated) {
+                        try { bot._pocketNoPickBlockedAt = Date.now(); } catch (e) {}
+                        try {
+                            fs.appendFileSync('bots/_supervisor/progress.txt',
+                                `[${new Date().toISOString()}] [mobility] POCKET no-pick stone gate: ${gw.name} @${gw.position.x},${gw.position.y},${gw.position.z}\n`);
+                        } catch (e) {}
                     }
-                    // B) DIG a step-out — no ready climb → open a passage by digging the blocking wall.
-                    //    Consider BOTH foot (dy0) and head (dy1) neighbor cells (old code dug head only);
-                    //    require a floor below the target so we don't open into a void/hazard.
-                    if (!_pActed) {
-                        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                            const bFoot = bot.blockAt(m2.offset(dx, 0, dz));
-                            const bHead = bot.blockAt(m2.offset(dx, 1, dz));
-                            const bFloor = bot.blockAt(m2.offset(dx, -1, dz));
-                            if (!_pSolid(bFloor) || /water|lava/.test(bFloor.name || '')) continue;
-                            const wall = _pDiggable(bFoot) ? bFoot : (_pDiggable(bHead) ? bHead : null);
-                            if (!wall) continue;
-                            if (_pNoPickGated(wall)) {
-                                try { bot._pocketNoPickBlockedAt = Date.now(); } catch (e) {}
-                                try {
-                                    fs.appendFileSync('bots/_supervisor/progress.txt',
-                                        `[${new Date().toISOString()}] [mobility] POCKET no-pick stone gate: ${wall.name} @${wall.position.x},${wall.position.y},${wall.position.z}\n`);
-                                } catch (e) {}
-                                continue;
-                            }
-                            await guardedDig(wall, 'POCKET');
-                            // clear the OTHER cell of the 2-tall passage so she can actually walk in
-                            const other = wall === bFoot ? bot.blockAt(m2.offset(dx, 1, dz)) : bot.blockAt(m2.offset(dx, 0, dz));
-                            if (_pDiggable(other) && !_pNoPickGated(other)) { try { await guardedDig(other, 'POCKET'); } catch (e) {} }
-                            try {
-                                await bot.lookAt(m2.offset(dx, 1, dz).offset(0.5, 0, 0.5), true);
-                                bot.setControlState('forward', true);
-                                await new Promise(r => setTimeout(r, 350));
-                            } finally { try { bot.clearControlStates(); } catch (e) {} }
-                            _pActed = true;
-                            break;
-                        }
+                    if (_plan.action && _plan.action.kind === 'climb') {
+                        const { dx, dz, onto } = _plan.action;
+                        try {
+                            await bot.lookAt(m2.offset(dx, 1, dz).offset(0.5, 0.4, 0.5), true);
+                            bot.setControlState('forward', true);
+                            bot.setControlState('jump', true);
+                            await new Promise(r => setTimeout(r, 500));
+                        } finally { try { bot.clearControlStates(); } catch (e) {} }
+                        try {
+                            fs.appendFileSync('bots/_supervisor/progress.txt',
+                                `[${new Date().toISOString()}] [mobility] POCKET step-up climb dir=${dx},${dz} onto ${onto} y=${Math.floor(bot.entity.position.y)}\n`);
+                        } catch (e) {}
+                        _pActed = true;
+                    } else if (_plan.action && _plan.action.kind === 'dig') {
+                        const { dx, dz, wall, other } = _plan.action;
+                        await guardedDig(wall, 'POCKET');
+                        // clear the OTHER cell of the 2-tall passage so she can actually walk in
+                        if (other) { try { await guardedDig(other, 'POCKET'); } catch (e) {} }
+                        try {
+                            await bot.lookAt(m2.offset(dx, 1, dz).offset(0.5, 0, 0.5), true);
+                            bot.setControlState('forward', true);
+                            await new Promise(r => setTimeout(r, 350));
+                        } finally { try { bot.clearControlStates(); } catch (e) {} }
+                        _pActed = true;
                     }
                 });
             }
