@@ -23,6 +23,7 @@ import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as a
 import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
+import { createSwimTracker } from './swim_progress.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -4316,20 +4317,20 @@ const modes_list = [
                     // (避 floody 朝向、挖穿干侧、向上兜底"air is above water")——那段正是为含水层写的。
                     // 边界: 开放湖/河/海 enc=false 走原 SWIM/SWIM_STUCK 不变; 头顶有竖井时 (0,0) 列
                     // 见天 → enc=false → 自动让位 SWIM_STUCK 爬竖井; 受控深潜瞬时穿水踩不到 12s 门。
+                    if (!this._swimTrack) this._swimTrack = createSwimTracker();
                     if (enc) {
                         if (!this._submTrapAt) this._submTrapAt = now;
                         else if (now - this._submTrapAt > 12000) st = 'ENTOMBED';
-                        // keep horizontal anchor fresh so surfacing into open water doesn't instantly SWIM_STUCK
-                        this._swimAnchor = sp2.clone(); this._swimAnchorAt = now;
+                        // fresh episode so surfacing into open water doesn't instantly SWIM_STUCK
+                        this._swimTrack.reset();
                     } else {
                         this._submTrapAt = 0;
-                        if (!this._swimAnchor || Math.hypot(sp2.x - this._swimAnchor.x, sp2.z - this._swimAnchor.z) > 1.0) {
-                            this._swimAnchor = sp2.clone(); this._swimAnchorAt = now;   // made real horizontal headway → reset
-                        } else if (now - (this._swimAnchorAt || now) > 12000) {
-                            st = 'SWIM_STUCK';
-                        }
+                        // ★T-0091: windowed net-progress (all samples of the last 12s inside a 2.5b disc),
+                        // latched until 4b of real headway. The old ">1b from anchor → re-anchor" test was
+                        // reset forever by circling / pacing wider than 1 block (same blind spot as the y-bob).
+                        if (this._swimTrack.observe(now, sp2.x, sp2.z)) st = 'SWIM_STUCK';
                     }
-                } else { this._swimAnchor = null; this._swimAnchorAt = 0; this._submTrapAt = 0; }
+                } else { if (this._swimTrack) this._swimTrack.reset(); this._submTrapAt = 0; }
                 // ★C341 (T-0074): SEALED-ROOM override. Locally FREE/POCKET (interior air to move in) but
                 // covered above (enc) — the ONLY situation that can be a walled-in room. Flood-fill the
                 // reachable air; if fully bounded (no exit, no chimney to sky), it's a sealed room → escalate
@@ -4730,9 +4731,8 @@ const modes_list = [
                             try { bot.clearControlStates(); } catch (e) {}
                         }
                     }
-                    // re-anchor the SWIM_STUCK timer so a single escape burst that DID move us
-                    // doesn't immediately re-flag; the state machine re-evaluates from scratch.
-                    try { this._swimAnchor = bot.entity.position.clone(); this._swimAnchorAt = Date.now(); } catch (e) {}
+                    // ★T-0091: NO re-anchor here — the swim tracker stays latched until real headway,
+                    // so this reflex keeps the body burst after burst instead of 1 burst per 12s.
                     try { bot._mobility = { ...(bot._mobility || {}), state: 'SWIM_STUCK', since: this.stateSince }; } catch (e) {}
                 });
             } else if (st === 'ENTOMBED') {

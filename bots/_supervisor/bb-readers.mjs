@@ -18,6 +18,9 @@ export const DIR = path.dirname(fileURLToPath(import.meta.url));
 export const TICKET_PORT = parseInt(process.env.TICKET_PORT || '48920', 10);
 
 export const now = () => Date.now();
+// ★T-0091: mobility states that mean "physically stuck". SWIM_STUCK (no horizontal net progress in
+// water) was missing, so a bot bobbing in a water trap for hours never raised mobility-stuck.
+export const STUCK_MOBILITY_RE = /MAROONED|ENTOMB|POCKET|SWIM_STUCK/i;
 export const rd = (n) => { try { return fs.readFileSync(path.join(DIR, n), 'utf8'); } catch { return null; } };
 export const rj = (n) => { try { return JSON.parse(rd(n)); } catch { return null; } };
 

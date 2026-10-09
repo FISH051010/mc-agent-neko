@@ -37,7 +37,7 @@ import path from 'path';
 import http from 'http';
 // shared black-box read layer (paths/parse/omniscient-fuse) — same readers overseer-snapshot uses,
 // so field names + staleness semantics can never drift between the two consumers.
-import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState } from './bb-readers.mjs';
+import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
 import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive } from './botwatch-trackers.mjs';
 
@@ -194,7 +194,7 @@ const D = [
         // ENTOMBED but is CORRECTLY sheltering, not stuck — don't false-fire on a legit night-hold (live
         // 2026-06-20: "sealed night hold" hp20/food20 covered, T-0027 false-fired). Real stuck = no safe
         // shelter: daytime, OR exposed (no real cover), OR under actionable threat.
-        active: (s) => /MAROONED|ENTOMB|POCKET/i.test(s.mob || '')
+        active: (s) => STUCK_MOBILITY_RE.test(s.mob || '')
             && !(s.wm && s.wm.time && !s.wm.time.isDay && s.wm.cover && s.wm.cover.coverReal && (!s.threat || (s.threat.actionable | 0) === 0)),
         ticket: (s, dur) => ({
             type: 'stuck', severity: 'high', dedupKey: 'mobility-stuck',
