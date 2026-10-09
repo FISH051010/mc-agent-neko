@@ -146,6 +146,8 @@ loop:
 | aab013c (worker-tests) | src/agent/modes.js + 新 src/agent/combat_gates.js | main.js | 战斗仲裁门(T-0063 族 C332/C353/C354/C360/C367)原样搬出，无行为变化 |
 | 78c3203 (worker-tests) | src/agent/modes.js + 新 src/agent/mobility_geom.js | main.js | detectSealedRoom(T-0074 C341)原样搬出，无行为变化 |
 | b80bd9b (worker-tests) | src/agent/library/skills.js | main.js | collectBlock 内 C304-V/W 矿线几何判据原样提为 oreLineBuried，无行为变化（chopWood 部分热加载已生效） |
+| 9649063 (worker-tests) | src/agent/library/skills.js | main.js | craftRecipeLocal 的 T-0079 回收判据提为 tablePlacedFromCarry，无行为变化 |
+| c65f6f7 (worker-tests) | bots/_supervisor/botwatch.mjs + botwatch-trackers.mjs | botwatch 进程 | survival-churn tracker(T-0073)原样抽出，无行为变化 |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 
 **部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
