@@ -101,6 +101,14 @@ export default async function craftChain(bot, ctx, preset) {
         log(bot, t ? `table placed at ${t.position.x},${t.position.y},${t.position.z}` : 'could not place table after retries');
     }
 
+    // STEP 2b ★T-0060: 清单显式要台、却没有任何需台配方 (STEP 2 不跑) → 直接造一张随身台。
+    //   原先台只在 STEP 2 里造, STEP 3 又跳过它 → TOOL_UPKEEP 的 [[crafting_table,1]] 永远零产出,
+    //   3 连败冷却 (10-10 16:26 实录), 下矿门 (需随身台) 一直关着。
+    if (!needsTable && recipes.some(([n]) => n === 'crafting_table')
+        && !(world.getInventoryCounts(bot)['crafting_table'] > 0)) {
+        if (await craftSmart('crafting_table', 1)) progressed++;
+    }
+
     // STEP 3: craft everything else (sticks + tools), skipping planks/table.
     for (const [name, count] of recipes) {
         if (/_planks$/.test(name) || name === 'crafting_table') continue;
