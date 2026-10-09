@@ -2899,6 +2899,8 @@
 
 - **★C391-S mineDown 地下换址改为开横向短隧道(T-0161)**（2026-10-10，worker-stuck，T-0161）: 证据: 04:23/04:26 @-39,40,5 y40 含水层: 四向皆被 fluid/void/wedge 朝向记忆覆盖 → lever#1 relocate `skills.moveAway(bot,10)` → `relocate failed (moved=0.0b … cleanHeading=false)` ×5 → GO_UNDERGROUND、DUSK_MINE_NIGHT 各 3 连败冷却 5min。两份 progress 史上 `relocated … to fresh ground` 成功 **0** 次——pathfinder GoalInvert 在实心岩层隧道里原地不动,这条杠杆从未生效;C385-S 把空洞计入同一记忆后"四向皆坏"更常见,才暴露。(worker-tier 以为是"流体中止不入记忆",实际日志已示 '4 fluid/void/wedge-aborted heading(s) remembered'——记忆在,换址坏。)**改**(③ `skills/mineDown.js`,热加载): 新导出 `planRelocateTunnel(bn,cx,cy,cz,len=9)`(当前层逐向检查 9 格: 脚/头格非流体非不可破、脚下实心、脚/头侧邻与头顶无流体,免挖穿含水层)与 `walkDugPath`(由 walkVoidHop 抽出的挖走执行器);relocate 先挖隧道走 ≥8 格越出记忆半径,规划不到才退回 moveAway。**回归测试**: `test/minedown_relocate_tunnel.test.mjs`(4 条 `T-0161:`)。**可证伪预测**: 出现 `relocate tunnel …×9 — arrived` → `relocated 9.0b to fresh ground`,不再有 moved=0.0b 的 3 连冷却。子 skill 热加载,合并即生效。
 
+- **★C392-S mineDown 流体中止在同一派发内换向/换址(T-0162)**（2026-10-10，worker-stuck，T-0162；worker-tier 指出）: 证据: 20:22:59 起 3 个朝向依次撞流体,每次派发只试 1 个朝向 → dug=0 failed ×3 → kernelDriver 3-strike 冷却 5min;C391-S 的换址隧道要 4 向全记满才触发,永远轮不到。**改**(③ `skills/mineDown.js`,热加载): 步进循环里 step-0 流体中止记向后立即 `rotateAwayFromAborted` 换下一个干净朝向并 `continue`(≤4 次/派发);四向皆湿则同派发内 `planRelocateTunnel`+`walkDugPath` 挖出到干岩层再换向继续(≤1 次);都不行才 break。日志 `fluid turn N/4: heading a→b` / `fluid: all 4 headings wet here — tunnelled …`。**回归测试**: `test/minedown_fluid_reheading.test.mjs`(2 条 `T-0162:`,修前接线断言红)。**可证伪预测**: 含水层区不再出现"3 次 dug=0 流体 abort → GO_UNDERGROUND 冷却",代之以同派发内 fluid turn 后继续下挖。子 skill 热加载,合并即生效。
+
 ---
 
 ---

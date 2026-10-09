@@ -272,6 +272,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     log_(`START pos=${Math.round(bot.entity.position.x)},${Math.round(bot.entity.position.y)},${Math.round(bot.entity.position.z)} hp=${Math.round(bot.health)} food=${bot.food} heading=${sx},${sz} targetY=${targetY}`);
     let dug = 0, ore = 0, abort = null, noProg = 0;
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
+    let fluidTurns = 0, loopRelocates = 0;   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
     const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
 
@@ -715,7 +716,29 @@ export default async function mineDown(bot, ctx, opts = {}) {
         if (!safe.safe) {
             abort = `unsafe at ${fx},${cy - 1},${fz}: ${safe.reason}`;
             // feed the heading-rotation memory (see START) so the next dispatch tries a different way
-            if (/fluid/.test(safe.reason || '')) rememberAbortedHeading(bot, sx, sz);
+            if (/fluid/.test(safe.reason || '')) {
+                rememberAbortedHeading(bot, sx, sz);
+                // ★T-0162: one heading per dispatch meant three wet headings = three zero-dig dispatches = kernel
+                //   3-strike cooldown before the 4th heading / T-0161 tunnel relocate ever ran (live 20:22:59).
+                //   Re-head (and if every cardinal is wet here, tunnel out) inside THIS dispatch instead.
+                const _r = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
+                if (_r.rotated && fluidTurns < 4) {
+                    fluidTurns++;
+                    log_(`fluid turn ${fluidTurns}/4: heading ${sx},${sz} → ${_r.sx},${_r.sz} (fluid near ${fx},${cy - 1},${fz})`);
+                    sx = _r.sx; sz = _r.sz; noProg = 0;
+                    continue;
+                }
+                if (_r.exhausted && loopRelocates < 1) {
+                    const _tun = planRelocateTunnel(bn, cx, cy, cz);
+                    if (_tun && await walkDugPath(bot, skills, Vec3, bn, _tun.path)) {
+                        loopRelocates++;
+                        const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
+                        sx = _r2.sx; sz = _r2.sz; noProg = 0;
+                        log_(`fluid: all 4 headings wet here — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz} to dry rock, heading ${sx},${sz}`);
+                        continue;
+                    }
+                }
+            }
             break;
         }
         // No solid support under the new feet (cliff/cave) => don't blind-drop; stop.
