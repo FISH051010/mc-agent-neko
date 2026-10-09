@@ -79,6 +79,16 @@ export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     return null;
 }
 
+// ★T-0148 诊断 (监工): 'Digging aborted' = 别人在我们挖到一半时开了新 dig 或调了 stopDigging。把那一刻谁持有身体/
+//   挖掘槽/在挖什么记进 DONE, 下次一眼看出是孤儿 chopWood、反射 mode 还是 pathfinder。只诊断, 不改 strike 计数。
+export function digInterrupter(bot) {
+    try {
+        const o = bot._bodyOwner;
+        const t = bot.targetDigBlock;
+        return `[by owner=${o ? o.name : '-'} digSlot=${bot._bodyDigLockOwner || '-'} digging=${t ? t.name + '@' + t.position : '-'} chopGen=${bot._chopGen ?? '-'}]`;
+    } catch (e) { return '[by ?]'; }
+}
+
 // ★T-0139: heading memory for step-0 terrain aborts, shared by the fluid abort and the no-floor (cave void)
 //   abort. The no-floor abort used to skip it → every re-dispatch walked the same deterministic heading into
 //   the same void (live 10-10 02:58:23→26 @-3,43,-1: 3× 'no floor support … (air)', dig=0 → GO_UNDERGROUND
@@ -673,7 +683,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
             // change (the -22,82,10 pin family). breakBlockAt returns strict true only when a block
             // was actually removed, so count only those.
             dug += [r1, r2, r3].filter(v => v === true).length;
-        } catch (e) { abort = `dig threw: ${e && e.message || e}`; break; }
+        } catch (e) { abort = `dig threw: ${e && e.message || e}${/aborted/i.test(String(e && e.message || e)) ? ' ' + digInterrupter(bot) : ''}`; break; }   // ★T-0148 diag: who stopped our dig
 
         // Walk forward; the bot falls 1 block into the cleared step. Low-level (no pathfinder).
         try {

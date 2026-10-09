@@ -2877,6 +2877,8 @@
 
 - **★C388-S 限时砍树原语 chopWoodWithin: 超时即叫停孤儿 chopWood(T-0148, 收口 T-0147)**（2026-10-10，worker-stuck，T-0148）: 证据: 03:23:47 replenishKit `chopWood incomplete: replenish-chop-timeout` 后 chopWood 仍在跑([chopDBG] iter8 19:23:50 / iter9 19:24:01,act_trace 19:23:51-58 dig=spruce_log);19:23:54/55/57 mineDown START 后 1-3ms `dig threw: Digging aborted` ×3 → ★dispatch-cooldown GO_UNDERGROUND。机理: HANDOFF §9.1「Promise.race 超时只弃养不取消=孤儿循环打架」——超时方只是不再等,子 skill 不知情,继续挖树,新 dig 中止旧 dig。同型 race 包 chopWood 共 7 处(achieve×2/feedUp×2/prepNether×2/replenishKit×1);worker-tier 的 T-0147(9149c95)已修 replenishKit 一处。**改**: ② `library/skills.js` 新原语 `cancelChopWood(bot)`(bump `_chopGen`→chopWood 各循环 `_superseded()` 下一 iter 让位 + stopDigging + 停寻路/按键)与 `chopWoodWithin(bot, ms, label, args)`(race+超时取消,仍以原 label 抛错保留调用方 catch);7 处统一改用。T-0147 的 supersedeChop 与测试保留(锚点随写法更新)。**回归测试**: `test/chopwood_within.test.mjs`(3 条 `T-0148:`,含"技能目录不得再有裸 race 包 chopWood"的全量守卫)。**可证伪预测**: 限时砍树超时后不再出现 [chopDBG] iter 续跑,紧随其后的 mineDown 不再 1-3ms `Digging aborted`。需重启 main.js(skills.js)。
 
+- **C389-S mineDown 'Digging aborted' 记录打断者(T-0148 诊断, 监工建议)**（2026-10-10，worker-stuck）: mineDown `dig threw: Digging aborted` 时在 DONE 的 abort 后附 `[by owner=<_bodyOwner> digSlot=<_bodyDigLockOwner> digging=<targetDigBlock> chopGen=<_chopGen>]`(新导出 `digInterrupter`),下次能直接看出是孤儿 chopWood、反射 mode 还是寻路打断。只诊断,不改 strike 计数(与监工议定: 打断真根已由 C388-S 修,保留 3-strike 冷却兜底未知打断源)。测试 `test/minedown_dig_interrupter.test.mjs`。子 skill 热加载。
+
 ---
 
 ---
