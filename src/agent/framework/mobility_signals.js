@@ -31,3 +31,45 @@ export function withBurstDeadline(fn, ms = DIGOUT_BURST_DEADLINE_MS, onTimeout =
         }
     };
 }
+
+// ★T-0131 重力柱沉降 (死于窒息实录 10-10 18:40:49 @100,66,-39: mobility SEALED 脱困 dig=gravel →
+//   18:40:50 ctrl=forward 走进刚挖开的格 → 上方砂砾柱塌落埋头 → suffocation, hp=1, 丢全套铁装)。
+//   人类做法: 挖开砂砾后看一眼头顶 — 柱子没塌完就等它落定、把落下来的再挖掉, 落干净才进那一格。
+export const GRAVITY_BLOCK_RE = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|[a-z_]*concrete_powder|anvil|chipped_anvil|damaged_anvil)$/;
+const isGravity = (b) => !!(b && GRAVITY_BLOCK_RE.test(b.name || ''));
+const up = (p, dy) => (typeof p.offset === 'function' ? p.offset(0, dy, 0) : { x: p.x, y: p.y + dy, z: p.z });
+
+/** Contiguous gravity blocks stacked directly above `pos` (pos+1 upward). */
+export function gravityColumnAbove(blockAt, pos, maxUp = 16) {
+    let n = 0;
+    for (let dy = 1; dy <= maxUp; dy++) { if (isGravity(blockAt(up(pos, dy)))) n++; else break; }
+    return n;
+}
+
+/** A falling_block entity still dropping inside the column over `pos`. */
+export function fallingBlockInColumn(entities, pos, r = 0.9) {
+    return Object.values(entities || {}).some(e => e && /falling_block|falling_sand/.test(e.name || '') && e.position
+        && Math.abs(e.position.x - (pos.x + 0.5)) <= r && Math.abs(e.position.z - (pos.z + 0.5)) <= r && e.position.y >= pos.y - 0.5);
+}
+
+/** Does opening `pos` (its block is about to be / was just dug) expose the bot to a collapsing column? */
+export function gravityHazard(blockAt, pos, dugName = '') {
+    return GRAVITY_BLOCK_RE.test(dugName || '') || gravityColumnAbove(blockAt, pos) > 0;
+}
+
+/** After digging `cell`, wait for its gravity column to finish collapsing, re-digging whatever lands in the
+ *  cell, until the cell is open with nothing falling and no gravity block directly over it.
+ *  Deps injected (blockAt/entities/dig/sleep) so the timing logic is testable without a server. */
+export async function settleGravityColumn({ blockAt, entities, dig, sleep, cell, maxRounds = 12, waitMs = 300 }) {
+    let redug = 0;
+    for (let round = 0; round < maxRounds; round++) {
+        await sleep(waitMs);
+        const b = blockAt(cell);
+        if (isGravity(b)) { try { await dig(b); redug++; } catch (e) {} continue; }
+        if (b && b.boundingBox === 'block') return { ok: false, redug, reason: 'cell re-filled by non-gravity block' };
+        if (fallingBlockInColumn(entities(), cell)) continue;
+        if (isGravity(blockAt(up(cell, 1)))) continue;   // unsupported → about to fall next tick
+        return { ok: true, redug };
+    }
+    return { ok: false, redug, reason: 'column still collapsing' };
+}

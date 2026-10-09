@@ -30,7 +30,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, withBurstDeadline } from './framework/mobility_signals.js';
+import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 
@@ -4355,6 +4355,12 @@ const modes_list = [
                     for (let n = 0; n < 2; n++) {
                         const fresh = bot.blockAt(block.position);
                         if (!fresh || fresh.boundingBox !== 'block') return true;
+                        // ★T-0131 ②: near death, never open a collapsing column — one block of gravel on the head is lethal.
+                        if ((bot.health || 20) <= 4 && gravityHazard((p) => bot.blockAt(p), fresh.position, fresh.name)) {
+                            bot._gravityHoldUntil = Date.now() + 4000;
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0131 gravity dig refused at hp=${Math.round(bot.health || 0)} (${why}) ${fresh.name}@${fresh.position.x},${fresh.position.y},${fresh.position.z} — pick another bearing\n`); } catch (e) {}
+                            return false;
+                        }
                         bot._mobDigStep = `equip-pick:${why}`;   // ★T-0123 截止时间日志定位挂在哪一步
                         if (!(await ensurePickForStone(fresh, why))) return false;
                         bot._mobDigStep = `equip-tool:${why}`;
@@ -4379,10 +4385,25 @@ const modes_list = [
                         } catch (e) {}
                         bot._bodyDigLockUntil = Date.now() + digMs + 2000;
                         try {
+                            const _gravity = gravityHazard((p) => bot.blockAt(p), fresh.position, fresh.name);
                             await Promise.race([
                                 bot.dig(fresh, true),
                                 new Promise((_, rej) => setTimeout(() => rej(new Error('dig-timeout')), digMs)),
                             ]);
+                            // ★T-0131 ①: the cell is open but its gravity column may still be coming down — drain it
+                            //   (re-dig what lands) before ANY step into it; unresolved → hold steps, report failure.
+                            if (_gravity) {
+                                bot._mobDigStep = `gravity-settle:${why}`;
+                                bot._bodyDigLockUntil = Date.now() + 20000;
+                                const st = await settleGravityColumn({
+                                    blockAt: (p) => bot.blockAt(p), entities: () => bot.entities,
+                                    sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+                                    dig: (b) => Promise.race([bot.dig(b, true), new Promise((_, rej) => setTimeout(() => rej(new Error('dig-timeout')), 4000))]),
+                                    cell: fresh.position,
+                                });
+                                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0131 gravity column (${why}) ${fresh.name}@${fresh.position.x},${fresh.position.y},${fresh.position.z}: ${st.ok ? 'settled' : 'UNSETTLED ' + st.reason} redug=${st.redug}\n`); } catch (e) {}
+                                if (!st.ok) { bot._gravityHoldUntil = Date.now() + 4000; return false; }
+                            }
                             return true;
                         } catch (e) {
                             try { bot.stopDigging(); } catch (_) {}
@@ -4401,6 +4422,9 @@ const modes_list = [
                     }
                 }
             };
+            // ★T-0131: set by guardedDig when a dug cell's gravity column hasn't settled (or a gravity dig was refused at
+            //   low hp) — every dig-out/march step below honours it instead of walking under falling gravel.
+            const gravityHeld = () => (bot._gravityHoldUntil || 0) > Date.now();
             // ── reactions ──
             if (st === 'SWIM_STUCK') {
                 // ★C346 (T-0091): the swim instinct piston-bobs forever in a "head-hole + all-
@@ -4586,11 +4610,11 @@ const modes_list = [
                     if (sx === 0 && sz === 0) {
                         // dig-up step: jump into the cleared column
                         try { await bot.lookAt(m2.offset(0.5, 2.4, 0.5), true); } catch (e) {}
-                        bot.setControlState('jump', true);
+                        if (!gravityHeld()) bot.setControlState('jump', true);   // ★T-0131 no step into a collapsing column
                         bot.setControlState('forward', false);
                     } else {
                         try { await bot.lookAt(m2.offset(sx + 0.5, 1.6, sz + 0.5), true); } catch (e) {}
-                        bot.setControlState('forward', true);
+                        if (!gravityHeld()) bot.setControlState('forward', true);   // ★T-0131 no step into a collapsing column
                     }
                     await new Promise(r => setTimeout(r, 600));
                     try { bot.clearControlStates(); } catch (e) {}
@@ -4700,10 +4724,10 @@ const modes_list = [
                     }
                     if (sx === 0 && sz === 0) {
                         try { await bot.lookAt(m2.offset(0.5, 2.4, 0.5), true); } catch (e) {}
-                        bot.setControlState('jump', true);
+                        if (!gravityHeld()) bot.setControlState('jump', true);   // ★T-0131 no step into a collapsing column
                     } else {
                         try { await bot.lookAt(m2.offset(sx + 0.5, 1.6, sz + 0.5), true); } catch (e) {}
-                        bot.setControlState('forward', true);
+                        if (!gravityHeld()) bot.setControlState('forward', true);   // ★T-0131 no step into a collapsing column
                     }
                     await new Promise(r => setTimeout(r, 500));
                     try { bot.clearControlStates(); } catch (e) {}
@@ -4840,8 +4864,8 @@ const modes_list = [
                             if (!_climbBlocked) {
                                 _climbedStep = true;   // keep the foot-ahead block as the step — never dual-dig it away below
                                 try { await bot.lookAt(m2.offset(sx + 0.5, 1.2, sz + 0.5), true); } catch (e) {}
-                                bot.setControlState('forward', true);
-                                bot.setControlState('jump', true);
+                                if (!gravityHeld()) bot.setControlState('forward', true);   // ★T-0131 no step into a collapsing column
+                                if (!gravityHeld()) bot.setControlState('jump', true);   // ★T-0131 no step into a collapsing column
                                 await new Promise(r => setTimeout(r, 420));
                                 try { bot.clearControlStates(); } catch (e) {}
                                 if (bot.entity.position.floored().y > m2.y) continue;   // rose a level → re-evaluate from higher up
@@ -4940,7 +4964,7 @@ const modes_list = [
                             break;
                         }
                         try { await bot.lookAt(m2.offset(sx + 0.5, 1.6, sz + 0.5), true); } catch (e) {}
-                        bot.setControlState('forward', true);
+                        if (!gravityHeld()) bot.setControlState('forward', true);   // ★T-0131 no step into a collapsing column
                         await new Promise(r => setTimeout(r, 260));
                         try { bot.clearControlStates(); } catch (e) {}
                     }
@@ -5055,7 +5079,7 @@ const modes_list = [
                         if (other) { try { await guardedDig(other, 'POCKET'); } catch (e) {} }
                         try {
                             await bot.lookAt(m2.offset(dx, 1, dz).offset(0.5, 0, 0.5), true);
-                            bot.setControlState('forward', true);
+                            if (!gravityHeld()) bot.setControlState('forward', true);   // ★T-0131 no step into a collapsing column
                             await new Promise(r => setTimeout(r, 350));
                         } finally { try { bot.clearControlStates(); } catch (e) {} }
                         _pActed = true;
