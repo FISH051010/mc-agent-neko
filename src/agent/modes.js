@@ -31,6 +31,7 @@ import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobilit
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { purposefulDigActive, withBurstDeadline } from './framework/mobility_signals.js';
+import { surfaceGateAuto } from './framework/surface_gate.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -5943,22 +5944,11 @@ const modes_list = [
                     }
                 } catch (e) {}
                 if (decidedBy === 'auto') {
-                    if (isNight || isDusk) { gateMode = 'hold'; gateReason = 'night/dusk'; }
-                    else if (actionable > 0) { gateMode = 'hold'; gateReason = `actionable threat x${actionable}`; }
-                    // ★C289: a PICKLESS bot (picks==0) must NOT be held underground — surfacing to
-                    // get wood→pick is its only escape from the resource floor. Live 2026-06-20 (T-0012
-                    // catch-22): y60 pocket, daylight, 0 pick/wood/table, surfaceGate held "kit
-                    // insufficient (picks)" → she never surfaced to get the wood that makes the pick →
-                    // permanent deadlock. hold should block going DOWN (deep-mine — already gated by
-                    // sufficientForUnderground in proposeTasks), NOT going UP. So free a 0-pick bot to
-                    // surface (this branch only reached when it's already day + no actionable threat).
-                    // A bot WITH a pick but under-kitted (picks>=1) keeps the normal hold.
-                    else if (!sufficientForUnderground) {
-                        if (picks === 0) { gateMode = 'free'; gateReason = 'bootstrap: surface for wood→pick'; }
-                        else { gateMode = 'hold'; gateReason = 'kit insufficient (picks)'; }
-                    }
-                    else if (!foodSufficient) { gateMode = 'hold'; gateReason = 'low food'; }
-                    else { gateMode = 'free'; gateReason = 'safe day, kitted'; }
+                    // ★C289 (pickless bot surfaces, never held) + ★T-0125 ('low food' hold only when food
+                    // instincts are on — with them off nothing can raise food, so the hold never clears and
+                    // the whole tier chain idles at FREE_PLAY). Logic lives in framework/surface_gate.js.
+                    const _sg = surfaceGateAuto({ isNight, isDusk, actionable, sufficientForUnderground, picks, foodSufficient, foodInstincts: foodInstinctsEnabled() });
+                    gateMode = _sg.mode; gateReason = _sg.reason;
                 }
                 const allowSurface = gateMode === 'free';
                 // --- recommendation ---
