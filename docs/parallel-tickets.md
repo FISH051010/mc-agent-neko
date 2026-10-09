@@ -128,6 +128,16 @@ loop:
    ```
 4. 冒烟自检过 → 工单转 `verifying`，挂 Monitor 盯实机；游戏内验证通过才 `closed`（验收纪律：mock 单测≠验收）。
 
+### 待捎带部署队列（无行为变化、不值得单独重启的改动）
+
+纯重构/可测性改动不单独重启，排在这里，由**下一次任何人重启 main.js / botwatch 时捎带上线**。捎带的人部署后把对应行划掉（或删掉），冒烟自检同上。
+
+| 合入提交 | 文件 | 需重启什么 | 说明 |
+|---|---|---|---|
+| d51f7cc (worker-tests) | src/agent/agent.js + 新 src/agent/world_scope.js | main.js | C333 新世界检测原样抽出（T-0065 测试用），无行为变化 |
+| e7ca2bf (worker-tests) | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（cancel re-arm 或重启 main.js） | reflexBusy/famineStall/no-op 判据提为模块级纯函数，无行为变化 |
+| 2d4190a (worker-tests) | bots/_supervisor/botwatch.mjs + 新 botwatch-trackers.mjs | botwatch 进程 | frozen/wedge tracker 原样抽出，无行为变化 |
+
 **部署锁**：同一时刻只允许一个 agent 重启 stack。约定：要重启前先 `comment` 工单"deploying now"，
 做完再 comment"deployed"。（后续可加 `deploy.lock` 文件锁强制串行。）
 
