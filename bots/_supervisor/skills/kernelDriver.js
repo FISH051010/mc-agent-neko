@@ -25,54 +25,84 @@ import path from 'path';
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] [kernel] ${s}\n`); } catch (e) {} };
 
+// Reflex-busy gate: if the ① instinct layer (modes.js) is mid-rescue — a mobility
+// trap (ENTOMBED/POCKET/MAROONED/SEALED/SWIM) or an actionable threat — DON'T dispatch
+// a strategic child on top of it. Yield with a short
+// wait so self_preservation / mobility / self_defense can run first, then re-poll.
+// ★T-0101/T-0083 FROZEN-ALIVE 互锁破除 (worker-frozen): food 见底(<=2)
+//   且无现实急症(贴脸 creeper<4.5 / 正在挨打 / swarm 围殴贴脸)时,
+//   food hold 是死锁不是避险,reflexBusy 必须让位给决策层派 GET_FOOD/villageHarvest 去觅食。
+//   与 world_model.js isFamineStall(w) 同口径(决策层那端已破 HOLD@95 与 villageClose 否决)。
+export function famineStall(bot) {
+    try {
+        const w = bot._world; if (!w) return false;
+        const t = w.threat || {}, v = w.vitals || {};
+        const creeperLethal = Number.isFinite(t.creeperDist) && t.creeperDist < 4.5;
+        const swarmPin = (t.actionable || 0) >= 2;   // 用 actionable(可达威胁)非 raw closest(墙外够不到的怪不算 LETHAL)
+        const lethal = creeperLethal || !!t.takingDamage || swarmPin;
+        const food = (v.food != null) ? v.food : (bot.food != null ? bot.food : 20);
+        return !lethal && food <= 2 && !v.canRegen;
+    } catch (e) { return false; }
+}
+export function reflexBusy(bot) {
+    try {
+        // ★饥饿觅食解锁: 纯饥饿僵局(非 LETHAL)时,绝不让 reflex 门把觅食派发卡死。决策层此刻
+        //   committed 到 GET_FOOD/OPENING_VILLAGE(去 village@近 收割/觅食),必须放行去执行,否则
+        //   bot 在封箱里饿死(9h 实锤)。觅食 skill 自带 hostileNear/hp gate,不会无脑冲怪堆。
+        //   注意 POCKET 等 mobility 门也放行——封箱(enclosed)常被建模为 POCKET,但那不是真被卡死
+        //   的窄缝(coverReal 安全),让位只会空等;觅食派发会带 bot 走出去(走出后 POCKET 自然解除)。
+        if (famineStall(bot)) return false;
+        const m = bot._mobility && bot._mobility.state;
+        if (m && /ENTOMBED|POCKET|MAROONED|SEALED|SWIM/.test(String(m))) return true;
+        // ★FROZEN-ALIVE FIX (live -24,50,-31 pin ~6min): the passive `enclosed` flag (a ceiling
+        // overhead) is NOT a reason to defer — a bot mining/sheltering underground is "enclosed"
+        // BY DEFINITION. When mobility has already released to FREE (state not a rescue state)
+        // but enclosed is still set, deferring here = deadlock: mobility thinks it's FREE (won't
+        // act), kernelDriver yields forever (won't dispatch), bot stands frozen while botwatch
+        // STUCK-ZONE-cancels every 5min to no effect. Only the ACTIVE rescue STATES above warrant
+        // yielding; once they clear, the strategic layer MUST dispatch (mine/surface out). So the
+        // standalone enclosed check is removed.
+        const w = bot._world;
+        if (w && w.threat && w.threat.actionable) return true;
+    } catch (e) {}
+    return false;
+}
+
+
+// ★NO-OP-SPIN ESCAPE criteria (T-0110), pure — pinned by test/kernel_driver.test.mjs.
+// Genuine progress = a >8b HORIZONTAL hop, real DESCENT (>4b down toward iron), or an ORE/log gain.
+export function noopIsProgress(anchor, anchorSig, p, sig) {
+    const horiz = Math.hypot(p.x - anchor.x, p.z - anchor.z);
+    const descended = (anchor.y - p.y) > 4;   // net drop toward iron = real progress
+    return horiz > 8 || descended || sig > anchorSig;
+}
+// Which escape (if any) a churned-out no-op spin may take: 'migrate' (day) / 'nightShelter' (night),
+// or null when blocked (legit sealed night hold / active combat / deep mining).
+export function noopEscapePlan(w) {
+    w = w || {};
+    const isDay = !(w.time && w.time.isDay === false);
+    const legitNightHold = !isDay && w.cover && w.cover.coverReal === true && (!w.threat || (w.threat.actionable || 0) === 0);
+    const inCombat = w.threat && ((w.threat.actionable || 0) > 0 || w.threat.takingDamage === true);
+    // ★DEPTH GATE (T-0110 refine — live death: escape fired on a barren branchMine
+    // @y18 → migrate marched UP through terrain → SUFFOCATION @y52 + lost the shaft +
+    // respawned at spawn). At mid/deep the bot is actively mining; a barren branchMine
+    // stretch is NORMAL and migrate would path dangerously upward. Down here mineDown
+    // owns relocation (branchMine stallRounds → returns → GO_UNDERGROUND re-dispatches a
+    // fresh branch). Only escape at/near the surface, where a true no-op-pin (coastal
+    // prepNether / mineDown-can't-descend) needs a horizontal migrate.
+    const db = w.pos && w.pos.depthBand;
+    const deepMining = db === 'mid' || db === 'deep';
+    if (!legitNightHold && !inCombat && !deepMining) return isDay ? 'migrate' : 'nightShelter';
+    return null;
+}
+
 export default async function kernelDriver(bot, ctx) {
     const { skills, world } = ctx;
     const has = (n) => { try { return world.getInventoryCounts(bot)[n] || 0; } catch (e) { return 0; } };
     const wait = (ms) => skills.wait(bot, ms);
     const inNether = () => { try { return /nether/.test(bot.game.dimension); } catch (e) { return false; } };
 
-    // Reflex-busy gate: if the ① instinct layer (modes.js) is mid-rescue — a mobility
-    // trap (ENTOMBED/POCKET/MAROONED/SEALED/SWIM) or an actionable threat — DON'T dispatch
-    // a strategic child on top of it. Yield with a short
-    // wait so self_preservation / mobility / self_defense can run first, then re-poll.
-    // ★T-0101/T-0083 FROZEN-ALIVE 互锁破除 (worker-frozen): food 见底(<=2)
-    //   且无现实急症(贴脸 creeper<4.5 / 正在挨打 / swarm 围殴贴脸)时,
-    //   food hold 是死锁不是避险,reflexBusy 必须让位给决策层派 GET_FOOD/villageHarvest 去觅食。
-    //   与 world_model.js isFamineStall(w) 同口径(决策层那端已破 HOLD@95 与 villageClose 否决)。
-    const famineStall = () => {
-        try {
-            const w = bot._world; if (!w) return false;
-            const t = w.threat || {}, v = w.vitals || {};
-            const creeperLethal = Number.isFinite(t.creeperDist) && t.creeperDist < 4.5;
-            const swarmPin = (t.actionable || 0) >= 2;   // 用 actionable(可达威胁)非 raw closest(墙外够不到的怪不算 LETHAL)
-            const lethal = creeperLethal || !!t.takingDamage || swarmPin;
-            const food = (v.food != null) ? v.food : (bot.food != null ? bot.food : 20);
-            return !lethal && food <= 2 && !v.canRegen;
-        } catch (e) { return false; }
-    };
-    const reflexBusy = () => {
-        try {
-            // ★饥饿觅食解锁: 纯饥饿僵局(非 LETHAL)时,绝不让 reflex 门把觅食派发卡死。决策层此刻
-            //   committed 到 GET_FOOD/OPENING_VILLAGE(去 village@近 收割/觅食),必须放行去执行,否则
-            //   bot 在封箱里饿死(9h 实锤)。觅食 skill 自带 hostileNear/hp gate,不会无脑冲怪堆。
-            //   注意 POCKET 等 mobility 门也放行——封箱(enclosed)常被建模为 POCKET,但那不是真被卡死
-            //   的窄缝(coverReal 安全),让位只会空等;觅食派发会带 bot 走出去(走出后 POCKET 自然解除)。
-            if (famineStall()) return false;
-            const m = bot._mobility && bot._mobility.state;
-            if (m && /ENTOMBED|POCKET|MAROONED|SEALED|SWIM/.test(String(m))) return true;
-            // ★FROZEN-ALIVE FIX (live -24,50,-31 pin ~6min): the passive `enclosed` flag (a ceiling
-            // overhead) is NOT a reason to defer — a bot mining/sheltering underground is "enclosed"
-            // BY DEFINITION. When mobility has already released to FREE (state not a rescue state)
-            // but enclosed is still set, deferring here = deadlock: mobility thinks it's FREE (won't
-            // act), kernelDriver yields forever (won't dispatch), bot stands frozen while botwatch
-            // STUCK-ZONE-cancels every 5min to no effect. Only the ACTIVE rescue STATES above warrant
-            // yielding; once they clear, the strategic layer MUST dispatch (mine/surface out). So the
-            // standalone enclosed check is removed.
-            const w = bot._world;
-            if (w && w.threat && w.threat.actionable) return true;
-        } catch (e) {}
-        return false;
-    };
+    // reflexBusy / famineStall live at module scope (pure; pinned by test/kernel_driver.test.mjs)
 
     prog('==== kernelDriver START (sticky executor — sole dispatch source) ====');
     let lastSkill = null;
@@ -143,7 +173,7 @@ export default async function kernelDriver(bot, ctx) {
         if (!c || !c.skill) { await wait(1500); continue; }
 
         // Defer to the reflex layer if it's mid-rescue — short wait so ① runs first.
-        if (reflexBusy()) { await wait(800); continue; }
+        if (reflexBusy(bot)) { await wait(800); continue; }
 
         // Dispatch only on a skill change (avoid stomping a still-running child). The
         // commitment's args are forwarded positionally, matching customSkill's
@@ -196,25 +226,13 @@ export default async function kernelDriver(bot, ctx) {
                     if (noopSkill !== c.skill || !noopAnchor) {
                         noopSkill = c.skill; noopAnchor = { x: p.x, y: p.y, z: p.z }; noopAnchorAt = Date.now(); noopAnchorSig = sig;
                     } else {
-                        const horiz = Math.hypot(p.x - noopAnchor.x, p.z - noopAnchor.z);
-                        const descended = (noopAnchor.y - p.y) > 4;   // net drop toward iron = real progress
-                        if (horiz > 8 || descended || sig > noopAnchorSig) {
+                        if (noopIsProgress(noopAnchor, noopAnchorSig, p, sig)) {
                             noopAnchor = { x: p.x, y: p.y, z: p.z }; noopAnchorAt = Date.now(); noopAnchorSig = sig;
                         } else if (Date.now() - noopAnchorAt > 90000 && Date.now() - noopLastEscapeAt > 120000) {
                             const w = bot._world || {};
-                            const isDay = !(w.time && w.time.isDay === false);
-                            const legitNightHold = !isDay && w.cover && w.cover.coverReal === true && (!w.threat || (w.threat.actionable || 0) === 0);
-                            const inCombat = w.threat && ((w.threat.actionable || 0) > 0 || w.threat.takingDamage === true);
-                            // ★DEPTH GATE (T-0110 refine — live death: escape fired on a barren branchMine
-                            // @y18 → migrate marched UP through terrain → SUFFOCATION @y52 + lost the shaft +
-                            // respawned at spawn). At mid/deep the bot is actively mining; a barren branchMine
-                            // stretch is NORMAL and migrate would path dangerously upward. Down here mineDown
-                            // owns relocation (branchMine stallRounds → returns → GO_UNDERGROUND re-dispatches a
-                            // fresh branch). Only escape at/near the surface, where a true no-op-pin (coastal
-                            // prepNether / mineDown-can't-descend) needs a horizontal migrate.
-                            const db = w.pos && w.pos.depthBand;
-                            const deepMining = db === 'mid' || db === 'deep';
-                            if (!legitNightHold && !inCombat && !deepMining) {
+                            const escape = noopEscapePlan(w);
+                            const isDay = escape === 'migrate';
+                            if (escape) {
                                 prog(`★NO-OP-SPIN escape: ${c.skill} churned ${Math.round((Date.now() - noopAnchorAt) / 1000)}s (no >8b hop / no descent / no ore) @${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)} → force ${isDay ? 'migrate(escape bad spot)' : 'nightShelter seal'}`);
                                 noopLastEscapeAt = Date.now();
                                 noopSkill = null; noopAnchor = null;
