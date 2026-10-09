@@ -417,7 +417,7 @@ export const actionsList = [
     },
     {
         name: '!collectBlocks',
-        description: 'Collect the nearest blocks of a given type.',
+        description: 'Collect the nearest blocks of a given type. For ores, even num=1 exhausts the whole connected vein (including temporarily occluded tail blocks). For a general request like "mine coal/iron/diamonds", use !mineOres instead so mining continues to a useful stockpile.',
         params: {
             'type': { type: 'BlockName', description: 'The block type to collect.' },
             'num': { type: 'int', description: 'The number of blocks to collect.', domain: [1, Number.MAX_SAFE_INTEGER] }
@@ -431,7 +431,7 @@ export const actionsList = [
     //   走 customSkill(=run_skill 同一入口), 由 runAsAction 纳入 ActionManager, admin 回合独占期内运行。
     {
         name: '!mineOres',
-        description: 'Mine a target ore to a healthy STOCKPILE — automatically descends to the correct depth band, tunnels, and collects until it has a useful buffer (NOT just one). ALWAYS prefer this over !collectBlocks for "mine iron/coal/gold/copper/diamonds": !collectBlocks only grabs a fixed count and will not go find the ore underground.',
+        description: 'Mine a target ore to a healthy STOCKPILE (default gain target: 8) — automatically descends to the correct depth band, tunnels, exhausts connected veins, and keeps searching after the first drop. ALWAYS prefer this over !collectBlocks for general "mine iron/coal/gold/copper/diamonds" requests.',
         params: {
             'ore': { type: 'string', description: 'one of: iron, coal, gold, copper, diamonds' }
         },
@@ -550,13 +550,13 @@ export const actionsList = [
     },
     {
         name: '!craftRecipe',
-        description: 'Craft the given recipe a given number of times.',
+        description: 'Craft the given recipe a given number of times at the current location. For recipes needing a crafting table, reuse one within reach or place the carried table beside the bot; do not walk to a distant table.',
         params: {
             'recipe_name': { type: 'ItemName', description: 'The name of the output item to craft.' },
             'num': { type: 'int', description: 'The number of times to craft the recipe. This is NOT the number of output items, as it may craft many more items depending on the recipe.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, recipe_name, num) => {
-            await skills.craftRecipe(agent.bot, recipe_name, num);
+            await skills.craftRecipeLocal(agent.bot, recipe_name, num);
         })
     },
     {
@@ -583,11 +583,16 @@ export const actionsList = [
     },
         {
         name: '!placeHere',
-        description: 'Place a given block in the current location. Do NOT use to build structures, only use for single blocks/torches.',
+        description: 'Place one block beside the bot without walking away or pillaring. May clear at most a two-block niche in a cramped pocket. Use for "place here", "原地放置", crafting tables, furnaces, and other single blocks; do not use for structures.',
         params: {'type': { type: 'BlockOrItemName', description: 'The block type to place.' }},
         perform: runAsAction(async (agent, type) => {
-            let pos = agent.bot.entity.position;
-            await skills.placeBlock(agent.bot, type, pos.x, pos.y, pos.z);
+            await skills.placeBlockNearby(agent.bot, type, {
+                maxTries: 1,
+                relocate: false,
+                pillar: false,
+                positioning: false,
+                maxDigBlocks: 2,
+            });
         })
     },
     {
@@ -798,10 +803,10 @@ export const actionsList = [
     },
     {
         name: '!digDown',
-        description: 'Digs down a specified distance. Will stop if it reaches lava, water, or a fall of >=4 blocks below the bot.',
+        description: 'Digs down a specified distance. On water, lava, or a dangerous drop it keeps the shaft floor sealed and tries a short safe lateral detour.',
         params: {'distance': { type: 'int', description: 'Distance to dig down', domain: [1, Number.MAX_SAFE_INTEGER] }},
         perform: runAsAction(async (agent, distance) => {
-            await skills.digDown(agent.bot, distance)
+            await skills.digDown(agent.bot, distance);
         })
     },
     {

@@ -16,9 +16,40 @@ import { dataPath, resolveSkillFile } from '../../utils/paths.js';
 // (开发机 APP_ROOT === HOME_DIR, 行为不变)。
 const SUP = (...segs) => dataPath('bots', '_supervisor', ...segs);
 const ADVISORY_FILE  = SUP('advisory.json');
-const MINE_DBG_FILE  = SUP('mine_dbg.log');
 const DEATH_LOG_FILE = SUP('death_log.jsonl');
 const PROGRESS_FILE  = SUP('progress.txt');
+import { corridorSafety, orderedMiningDetours, selectMiningDetour } from '../framework/tools/mining_detour.js';
+import { STALL_INTENT, beginStallIntent, touchStallIntent, endStallIntent, recoveryDisplacement } from '../stall_recovery.js';
+import { appendTelemetry } from '../../utils/telemetry.js';
+import {
+    DEFAULT_LIQUID_COST,
+    DESTRUCTIVE_LIQUID_COST,
+    adoptUnderwaterMiningBreathPlan,
+    adoptUnderwaterMiningPathUpdate,
+    beginUnderwaterMiningTask,
+    canMineWaterAdjacentWithBreathing,
+    canPlanWaterAdjacentWithBreathing,
+    clearUnderwaterMiningBreathPlan,
+    releaseUnderwaterMiningBreathPlanForTargetDig,
+    retainUnderwaterMiningBreathPlanForTargetDig,
+    digTimeoutForCurrentEnvironment,
+    ensureWaterAwareDigTime,
+    excludeUnsafeUnderwaterMiningTarget,
+    isBotEyesInWater,
+    isBotInWater,
+    isUnderwaterMiningTask,
+    needsBreathBeforeDig,
+    nextPlannedBreathStation,
+    pathProgressDistance,
+    pathStuckProfile,
+    planUnderwaterMiningBreathing,
+    resolveUnderwaterMiningRouteTarget,
+    serviceUnderwaterMiningBreath,
+    settleForUnderwaterDig,
+    shouldServiceUnderwaterBreath,
+    shouldAccumulatePathStuck,
+    underwaterMiningStepCost,
+} from '../framework/tools/water_navigation.js';
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -94,6 +125,10 @@ class _NoScaffoldMovements extends _PFMovements {
     constructor(...args) {
         super(...args);
         this.scafoldingBlocks = [];
+        // Water is traversable, never free: mineflayer-pathfinder charges liquidCost on
+        // every move whose source cell is liquid (including the final move back to land),
+        // so an N-cell crossing pays N finite penalties and naturally loses to a dry detour.
+        this.liquidCost = DEFAULT_LIQUID_COST;
         // ★防摔硬底 (2026-07-08 用户实拍"寻路很轻易掉坑/垫完塔走一步摔死", 且"跟水无关就是掉下去"):
         // 两条 lib 默认是坠落根源, 且被 maxDropDown 漏掉 —— 在子类里一次性钉死, 所有 `new pf.Movements`
         // 站点(goToGoal/collectBlock/world.isClearPath/热载技能)统一继承防摔:
@@ -111,6 +146,11 @@ class _NoScaffoldMovements extends _PFMovements {
         // to climb; the vine_unstick bot hook clears any that still wedge it.
         try { unclimbVines(this, (args[0] && args[0].registry) || this.registry); } catch (e) {}
         if (Array.isArray(this.exclusionAreasStep)) {
+            const _bot = args[0];
+            // A normal goto still pays the finite per-cell liquidCost. During mining,
+            // coarse A* coverage requires a safe station within three cells; the route
+            // planner then proves the exact ordered chain has no gap above five.
+            this.exclusionAreasStep.push((block) => underwaterMiningStepCost(_bot, block));
             this.exclusionAreasStep.push((block) => {
                 const z = _pathDangerZone();
                 if (!z || !block.position) return 0;
@@ -154,6 +194,17 @@ class _NoScaffoldMovements extends _PFMovements {
         // (they hot-import after this rebinding, so they get this subclass too) — same
         // one-hook-covers-all pattern as the scaffold/vine/kill-box guards above.
         try { hardenMovements(args[0], this); } catch (e) {}
+    }
+
+    safeToBreak(block) {
+        if (super.safeToBreak(block)) return true;
+        if (!this.dontCreateFlow || !canPlanWaterAdjacentWithBreathing(this.bot, block)) return false;
+        // Re-run the upstream checks without its all-liquid veto. The helper above has
+        // already required an active miner, a future breathing station, enough oxygen
+        // capacity for this block, and no lava. All other upstream checks remain.
+        this.dontCreateFlow = false;
+        try { return super.safeToBreak(block); }
+        finally { this.dontCreateFlow = true; }
     }
 }
 pf.Movements = _NoScaffoldMovements;
@@ -231,34 +282,11 @@ function motionPathLen(pathResult) {
     return null;
 }
 
-// ★2026-08-07 体积封顶: mine_motion.jsonl 是无上限 append 的动作审计流, 开发机上已经涨到
-// 1.9 GB —— 长跑几天就能把用户硬盘吃光, 分发给普通玩家更不能这样。超过 32 MB 就把当前文件
-// 改名成 .1 再重开 (只留一代, 排障要的永远是"最近发生了什么"), 等价于最小版 logrotate。
-// 尺寸用内存计数器维护而不是每次 statSync: motionAudit 在寻路热路径上每拍都可能打点,
-// 每次都摸盘会把磁盘 IO 拖进物理 tick (sync-fs 收口那一轮拆掉的正是这种东西)。
-const MOTION_FILE = SUP('mine_motion.jsonl');
-const MOTION_MAX_BYTES = 32 * 1024 * 1024;
-let _motionBytes = null;        // null = 未知, 下一次写入前 stat 一次
-
-function motionRoll(addBytes) {
-    if (_motionBytes === null) {
-        try { _motionBytes = fs_dz.statSync(MOTION_FILE).size; }
-        catch (e) { _motionBytes = 0; }                  // 文件还不存在 = 0
-    }
-    if (_motionBytes + addBytes <= MOTION_MAX_BYTES) { _motionBytes += addBytes; return; }
-    try {
-        const bak = MOTION_FILE + '.1';
-        try { fs_dz.unlinkSync(bak); } catch (e) {}      // Windows 上目标已存在时 rename 不保证覆盖, 先删
-        fs_dz.renameSync(MOTION_FILE, bak);
-        _motionBytes = addBytes;                          // 新文件从这条记录起算
-    } catch (e) {
-        _motionBytes = null;                              // 滚动失败(文件被占用等) → 下次重新 stat, 别硬撑计数
-    }
-}
+// mine_motion.jsonl 的体积封顶已交给 utils/telemetry.js 的 worker（单文件/总量双预算）。
 
 function motionAudit(bot, event, data = {}) {
     try {
-        const line = JSON.stringify({
+        appendTelemetry('mine_motion.jsonl', {
             ts: new Date().toISOString(),
             event,
             pos: motionPos(bot),
@@ -268,9 +296,7 @@ function motionAudit(bot, event, data = {}) {
             skill: bot ? (bot._currentSkill || null) : null,
             mob: bot && bot._mobility ? bot._mobility.state : null,
             data,
-        }) + '\n';
-        motionRoll(Buffer.byteLength(line));
-        fs_dz.appendFileSync(MOTION_FILE, line);
+        });
     } catch (e) {}
 }
 
@@ -337,8 +363,15 @@ export async function craftRecipe(bot, itemName, num=1) {
         recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, true);
         if(!recipes || recipes.length === 0) break placeTable; //Don't bother going to the table if we don't have the required resources.
 
+        // A carried table makes this a local workstation operation. Previously
+        // the 64-block search ran first, making "craft an iron pickaxe" walk
+        // toward an obsolete table despite having a table in inventory.
+        if ((world.getInventoryCounts(bot)['crafting_table'] || 0) > 0) {
+            return await craftRecipeLocal(bot, itemName, num);
+        }
+
         // Look for crafting table
-        craftingTable = await world.getNearestBlockAsync(bot, 'crafting_table', 64);   // ★B定点16→64(0714): 找现有台走过去用(下方308"刚放的台"仍用craftingTableRange紧邻,别扩)
+        craftingTable = await world.getNearestBlockAsync(bot, 'crafting_table', craftingTableRange);
         if (craftingTable === null){
 
             // Try to place crafting table
@@ -1241,16 +1274,42 @@ async function _stepBackForDig(bot, target) {
     } catch (e) { try { bot.clearControlStates(); } catch (_) {} return false; }
 }
 
-async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = true, pickup = false, requireLOS = false } = {}) {
+export async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = true, pickup = false, requireLOS = false } = {}) {
+    ensureWaterAwareDigTime(bot);
     const dead = (b) => !b || b.boundingBox === 'empty' || b.name === 'air';
-    if (dead(block)) return 'gone';
-    const reachOf = () => bot.entity.position.offset(0, 1.62, 0).distanceTo(block.position.offset(0.5, 0.5, 0.5));
+    const reachTo = (target) => bot.entity.position.offset(0, 1.62, 0)
+        .distanceTo(target.position.offset(0.5, 0.5, 0.5));
+    const ensureBreathFor = async (target) => {
+        if (!needsBreathBeforeDig(bot, target)) return true;
+        const refill = await serviceUnderwaterMiningBreath(bot);
+        if (!refill || !refill.ok) return false;
+        // A planned station may be several blocks away. Re-approach the exact
+        // block after refilling, then prove live reach again before any dig.
+        if (approach && reachTo(target) > 4.4)
+            await goToPosition(bot, target.position.x, target.position.y, target.position.z, 2);
+        // Re-evaluate after a full refill: an extremely slow block can exceed one
+        // whole oxygen bar and must remain forbidden even beside a breathing hole.
+        return reachTo(target) <= 4.6 && !needsBreathBeforeDig(bot, target);
+    };
+    if (dead(block)) {
+        releaseUnderwaterMiningBreathPlanForTargetDig(bot, block);
+        return 'gone';
+    }
+    const reachOf = () => reachTo(block);
     try {
         if (approach && reachOf() > 4.4)
             await goToPosition(bot, block.position.x, block.position.y, block.position.z, 2);
         if (reachOf() > 4.6) return 'unreachable';
-        const cur = bot.blockAt(block.position);
+        let cur = bot.blockAt(block.position);
         if (dead(cur)) return 'gone';
+        if (equip) await equipForDig(bot, cur);
+        if (!await ensureBreathFor(cur)) return 'underwater-unsafe';
+        cur = bot.blockAt(block.position);
+        if (dead(cur)) return 'gone';
+        if (isUnderwaterMiningTask(bot)) {
+            await settleForUnderwaterDig(bot);
+            if (isBotEyesInWater(bot) && !bot.entity.onGround) return 'underwater-unsafe';
+        }
         // ★#1 (用户 2026-07-07: 挖仅 1 格外的矿要站在当前脚下方块正中——否则贴边/侧身站着挖, 挖完
         //   身子迈不进空出来的坑, 或够矿的姿势别扭). 目标水平相邻(≤1.6b)且自己明显偏离脚下方块中心
         //   (>0.33b)时, 先滑到方块正中再挖。只近距+ORE(requireLOS)触发(远处 approach 已定位), 手动
@@ -1292,7 +1351,7 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
                 const _losNow = (() => { try { return bot.canSeeBlock(cur); } catch (e) { return true; } })();
                 if (!_losNow && reachOf() < 2.2 && bot.entity.onGround) {
                     if (await _stepBackForDig(bot, cur)) {
-                        try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★STEP-BACK dig ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — 贴墙太近, 本格内后退取视角\n`); } catch (e) {}
+                        appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★STEP-BACK dig ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — 贴墙太近, 本格内后退取视角\n`, { json: false });
                     }
                 }
             }
@@ -1324,16 +1383,18 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
                 if (process.env.MC_DIG_FLUID_GUARD !== '0') {
                     const _og = safeToDigBlock(bot, _ob);
                     if (_og && _og.ok === false) {
-                        try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★FLUIDGUARD skip occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} — ${_og.reason}\n`); } catch (e) {}
+                        appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★FLUIDGUARD skip occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} — ${_og.reason}\n`, { json: false });
                         return 'fluidguard';
                     }
                 }
+                if (!await ensureBreathFor(_ob)) return 'underwater-unsafe';
                 try {
+                    const _occluderDigMs = digTimeoutForCurrentEnvironment(bot, _ob, 6000);
                     await Promise.race([
                         gazeHold(bot, _ob, bot.dig(_ob)),
-                        new Promise((_, rej) => setTimeout(() => rej(new Error('occluder-dig-timeout')), 6000)),
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('occluder-dig-timeout')), _occluderDigMs)),
                     ]);
-                    try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★C337-C carved occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} → expose ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z}\n`); } catch (e) {}
+                    appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★C337-C carved occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} → expose ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z}\n`, { json: false });
                 } catch (e) { return 'occluded'; }
             }
             const _losF = (() => { try { return bot.canSeeBlock(cur); } catch (e) { return true; } })();
@@ -1350,11 +1411,11 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
         if (process.env.MC_DIG_FLUID_GUARD !== '0') {
             const _fg = safeToDigBlock(bot, cur);
             if (_fg && _fg.ok === false) {
-                try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★FLUIDGUARD skip ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — ${_fg.reason}\n`); } catch (e) {}
+                appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★FLUIDGUARD skip ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — ${_fg.reason}\n`, { json: false });
                 return 'fluidguard';
             }
         }
-        if (equip) await equipForDig(bot, cur);
+        if (!await ensureBreathFor(cur)) return 'underwater-unsafe';
         // ★2026-07-14 ORE-WASTE GUARD (mirror of breakBlockAt; 用户: "偶发性用石镐挖钻石"): safeDig has no
         // canHarvest gate, and equipForDig downgrades to the best-by-speed pick (a stone pick) when no iron+ is
         // owned. Breaking an ORE the held pick can't harvest drops NOTHING — refuse. This protects the vein
@@ -1372,7 +1433,8 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
         // (obsidian ~9.4s w/ diamond pick, for the nether portal) keep the long backstop. We can't
         // use canSeeBlock to pre-skip — x-ray ore is buried (6 faces hidden) and would all be skipped.
         const _hard = /obsidian|ancient_debris|reinforced/.test(cur.name || '');
-        const _digMs = _hard ? maxMs : Math.min(maxMs, 8000);
+        const _baseDigMs = _hard ? maxMs : Math.min(maxMs, 8000);
+        const _digMs = digTimeoutForCurrentEnvironment(bot, cur, _baseDigMs);
         // ★Interrupt-aware (same fix as breakBlockAt): abort within ~200ms on cancel/preempt
         // instead of flailing out the full backstop — collectBlock's vein digs go through here.
         let _sdIv = null;
@@ -1383,12 +1445,21 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
                 new Promise((_, rej) => { _sdIv = setInterval(() => { try { if (bot.interrupt_code) rej(new Error('interrupted')); } catch (e) {} }, 200); }),
             ]);
         } finally { if (_sdIv) clearInterval(_sdIv); }
-        if (pickup) { try { await pickupNearbyItems(bot); } catch (e) {} }
+        if (pickup) {
+            let picked = false;
+            // The block-change acknowledgement can arrive one tick before the item entity.
+            // Give the drop a brief spawn window before deciding that nothing landed here.
+            await new Promise(r => setTimeout(r, 150));
+            try { picked = await ensurePickupAt(bot, cur.position, { radius: 6, maxDescend: 3, timeoutMs: 6000 }); } catch (e) {}
+            if (!picked) { try { await pickupNearbyItems(bot); } catch (e) {} }
+        }
         return 'ok';
     } catch (e) {
         try { bot.stopDigging(); } catch (_) {}
         if (e && e.message === 'interrupted') return 'error';
         return (e && e.message === 'dig-timeout') ? 'timeout' : 'error';
+    } finally {
+        releaseUnderwaterMiningBreathPlanForTargetDig(bot, block);
     }
 }
 
@@ -1400,10 +1471,12 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
 //  每轮首选路径)没有。本原语补上缺失的一环: 朝埋铁凿一条 1×2 密封隧道, 逐格步进, 直到矿进臂展+可见,
 //  交回 safeDig 正常采(vein-follow 收尾)。安全闸(与 mineDown/reach-gate/C360-XR 同源, 缺一即安全停手
 //  返 false 让调用方按旧逻辑 exclude, 绝不制造新险):
-//   · 防坠: 下一站位格【脚下必须实心地板】, 否则=隔空/溶洞 → 停(不搭桥, 守住 reach-gate "不跨空隙"语义)。
-//   · 防淹: 每块 corridor 走 safeToDigBlock 岩浆/水裁判(safeDig 内建), 破面会淹 → 停(留密封)。
+//   · 防坠: 下一站位格【脚下必须实心地板】, 否则=隔空/溶洞 → 先探同层狗腿绕路; 无安全格才停
+//     (不搭桥, 守住 reach-gate "不跨空隙"语义)。
+//   · 防淹: 每块 corridor 走 safeToDigBlock 岩浆/水裁判(safeDig 内建), 破面会淹 → 同样先绕路,
+//     无安全格才停并保持密封。
 //   · 防 x-ray: corridor 块只在臂展 ≤4.6 内破(safeDig approach:false 自带 reach 守卫); 矿块从不当渣土挖,
-//     前方一旦是矿即返 true 交 safeDig(其 requireLOS + C360-XR 仍锁真实采矿, 隔厚墙 x-ray 仍不可能)。
+//     目标矿在安全前方才返 true 交 safeDig(其 requireLOS + C360-XR 仍锁真实采矿, 隔厚墙 x-ray 仍不可能)。
 //   · 有界: maxSteps + budgetMs + interrupt/death 感知; 凿不开或步进不动累计 3 次即停。
 //  off-switch: 环境变量 MC_ORE_TUNNEL=0 关闭(默认开)。
 async function tunnelToOre(bot, oreBlock, { maxSteps = 30, budgetMs = 25000, maxD3 = 24 } = {}) {
@@ -1417,10 +1490,60 @@ async function tunnelToOre(bot, oreBlock, { maxSteps = 30, budgetMs = 25000, max
         const isOreName = (n) => /_ore$/.test(n || '');
         const solidAt = (p) => { const b = bot.blockAt(p); return !!(b && b.boundingBox === 'block'); };
         const eyeReach = () => bot.entity.position.offset(0, 1.62, 0).distanceTo(oreCtr);
-        const _dbg = (m) => { try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} };
+        const _dbg = (m) => appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ${m}\n`, { json: false });
         if (eyeReach() > maxD3 + 1.5) return false;             // 太远, 不承诺(与 C304 同上限)
         const t0 = Date.now();
-        let stuck = 0, carved = 0;
+        let stuck = 0, carved = 0, detours = 0;
+        const _MAX_DETOURS = 12;                                // 有界狗腿, 防大空腔里无限游走
+        const _FLUID = /lava|water/;
+        const _UNBREAKABLE = /^(bedrock|barrier|reinforced_deepslate)$/;
+        const _key = (p) => `${p.x},${p.y},${p.z}`;
+        const visited = new Set([_key(bot.entity.position.floored())]);
+        const _corridor = (feet, sx, sy, sz) => {
+            const nf = feet.offset(sx, sy, sz);      // 下一站位(脚)
+            const nh = nf.offset(0, 1, 0);           // 下一站位(头)
+            const floor = nf.offset(0, -1, 0);       // 下一站位脚下地板
+            const carveList = [nf, nh];
+            if (sy < 0 && (sx !== 0 || sz !== 0)) carveList.push(feet.offset(sx, 1, sz));
+            return { sx, sy, sz, nf, nh, floor, carveList };
+        };
+        const _probeCorridor = (plan) => {
+            const floorBlock = bot.blockAt(plan.floor);
+            let fluidInCorridor = !!(floorBlock && _FLUID.test(floorBlock.name || ''));
+            let fluidWouldEnter = false;
+            let unbreakable = false;
+            let targetAhead = false;
+            let otherOreAhead = false;
+            for (const p of plan.carveList) {
+                const b = bot.blockAt(p);
+                if (!b) continue;
+                if (_FLUID.test(b.name || '')) fluidInCorridor = true;
+                if (isOreName(b.name)) {
+                    if (_key(p) === _key(orePos)) targetAhead = true;
+                    else otherOreAhead = true;       // 不把另一条矿脉当隧道渣土挖掉
+                }
+                if (_UNBREAKABLE.test(b.name || '')) unbreakable = true;
+                if (!isDead(b)) {
+                    const guard = safeToDigBlock(bot, b);
+                    if (guard && guard.ok === false) fluidWouldEnter = true;
+                }
+            }
+            const safety = corridorSafety({
+                floorSolid: solidAt(plan.floor),
+                fluidInCorridor,
+                fluidWouldEnter,
+                unbreakable,
+                visited: visited.has(_key(plan.nf)),
+                targetAhead,
+                otherOreAhead,
+            });
+            return {
+                ...safety,
+                targetAhead,
+                score: Math.abs(orePos.x - plan.nf.x) + Math.abs(orePos.y - plan.nf.y) + Math.abs(orePos.z - plan.nf.z),
+                plan,
+            };
+        };
         for (let step = 0; step < maxSteps; step++) {
             if (bot.interrupt_code || bot.death_abort || bot.health <= 0) return false;
             if (Date.now() - t0 > budgetMs) { _dbg(`★C304-T timeout ore@${orePos.x},${orePos.y},${orePos.z} carved=${carved} step=${step}`); return false; }
@@ -1440,20 +1563,44 @@ async function tunnelToOre(bot, oreBlock, { maxSteps = 30, budgetMs = 25000, max
             if (sx === 0 && sz === 0 && sy === 0) return false;      // 已同格却未 reach/LOS → 交 safeDig
             if (sx === 0 && sz === 0 && sy > 0) return false;        // 纯竖直上矿需 pillar(越 reach-gate)→ 交 exclude
 
-            const nf = feet.offset(sx, sy, sz);      // 下一站位(脚)
-            const nh = nf.offset(0, 1, 0);           // 下一站位(头)
-            const floor = nf.offset(0, -1, 0);       // 下一站位脚下地板(升/平/降通式: nf 正下方)
-
-            // 本步要清开的 cells = 前向身位(nf 脚 + nh 头); 台阶【下】另加过渡头顶净空 feet+(sx,1,sz),
-            // 否则平移到落点前会头撞前上方石头卡死。台阶【上】只破身位, 绝不碰 floor(=承重台阶)。
-            const carveList = [nf, nh];
-            if (sy < 0 && (sx !== 0 || sz !== 0)) carveList.push(feet.offset(sx, 1, sz));
-
-            // 前方任一清开格正是矿 → 矿在正前臂展, 交 safeDig(绝不把矿当渣挖穿)
-            for (const p of carveList) { const b = bot.blockAt(p); if (b && isOreName(b.name)) { _dbg(`★C304-T ore-ahead @${p.x},${p.y},${p.z} carved=${carved} step=${step}`); return true; } }
-
-            // 防坠: 站位脚下必须实心(否则=隔空/溶洞 → 停, 不搭桥/不 pillar, 守 reach-gate 语义)
-            if (!solidAt(floor)) { _dbg(`★C304-T stop no-floor ahead @${nf.x},${nf.y},${nf.z} (gap/cave) — 不搭桥`); return false; }
+            // 先读、后动: 主方向遇水/流体开面/坑道落差时，不再原地 return false。探测左右和后方
+            // 三个同层狗腿格，挑【安全 + 未走过 + 仍最靠近目标】的一格立即绕行；下一轮重新朝矿，
+            // 自然形成绕过局部障碍后回正的折线。仍不搭桥/不 pillar，四向都危险才安全停手。
+            let plan = _corridor(feet, sx, sy, sz);
+            let probe = _probeCorridor(plan);
+            if (probe.targetAhead && probe.safe) { _dbg(`★C304-T ore-ahead @${plan.nf.x},${plan.nf.y},${plan.nf.z} carved=${carved} step=${step}`); return true; }
+            if (!probe.safe) {
+                if (detours >= _MAX_DETOURS) {
+                    _dbg(`★C304-T stop ${probe.reason} @${plan.nf.x},${plan.nf.y},${plan.nf.z} — detour budget ${detours}/${_MAX_DETOURS}`);
+                    return false;
+                }
+                // 纯竖直逼近没有水平 heading，按当前朝向取一个基准再探四周。
+                let hx = sx, hz = sz;
+                if (hx === 0 && hz === 0) {
+                    hx = -Math.sin(bot.entity.yaw || 0); hz = Math.cos(bot.entity.yaw || 0);
+                    if (Math.abs(hx) >= Math.abs(hz)) { hx = Math.sign(hx) || 1; hz = 0; }
+                    else { hz = Math.sign(hz) || 1; hx = 0; }
+                }
+                const verticalOnly = sx === 0 && sz === 0;
+                const detourDirs = orderedMiningDetours(hx, hz);
+                if (verticalOnly) detourDirs.unshift({ dx: hx, dz: hz, turn: 'forward' }); // 竖直无主方向, 四向都探
+                const alternatives = detourDirs.map(d => {
+                    const altPlan = _corridor(feet, d.dx, 0, d.dz);  // 绕路保持同层, 不盲跳/盲爬
+                    const altProbe = _probeCorridor(altPlan);
+                    return { ...d, ...altProbe };
+                });
+                const picked = verticalOnly
+                    ? alternatives.filter(a => a.safe).sort((a, b) => a.score - b.score)[0] || null
+                    : selectMiningDetour(hx, hz, alternatives);
+                if (!picked) {
+                    _dbg(`★C304-T stop ${probe.reason} @${plan.nf.x},${plan.nf.y},${plan.nf.z} — no-safe-detour ${alternatives.map(a => `${a.turn}:${a.reason}`).join(',')}`);
+                    return false;
+                }
+                detours++;
+                _dbg(`★C304-T DETOUR ${probe.reason} @${plan.nf.x},${plan.nf.y},${plan.nf.z} → ${picked.turn} ${picked.dx},${picked.dz} via ${picked.plan.nf.x},${picked.plan.nf.y},${picked.plan.nf.z} remain=${picked.score} (${detours}/${_MAX_DETOURS})`);
+                plan = picked.plan;
+            }
+            const { nf, carveList } = plan;
 
             // 逐块凿开 corridor — safeDig(approach:false)自带 ≤4.6 臂展守卫 + 岩浆/水裁判 + equip
             let opened = true;
@@ -1477,12 +1624,12 @@ async function tunnelToOre(bot, oreBlock, { maxSteps = 30, budgetMs = 25000, max
                     if (here.x === nf.x && here.z === nf.z && Math.abs(m.y - nf.y) < 0.6) { moved = true; break; }
                     try { await bot.lookAt(new Vec3(ctr.x, m.y + 1.0, ctr.z), true); } catch (e) {}
                     try { bot.setControlState('forward', true); } catch (e) {}
-                    try { bot.setControlState('jump', sy > 0); } catch (e) {}
+                    try { bot.setControlState('jump', plan.sy > 0); } catch (e) {}
                     await new Promise(r => setTimeout(r, 90));
                 }
             } finally { try { bot.clearControlStates(); } catch (e) {} }
             if (!moved) { if (++stuck >= 3) { _dbg(`★C304-T stuck move → ${nf.x},${nf.y},${nf.z} carved=${carved}`); return false; } }
-            else stuck = 0;
+            else { stuck = 0; visited.add(_key(bot.entity.position.floored())); }
         }
         _dbg(`★C304-T maxSteps ore@${orePos.x},${orePos.y},${orePos.z} carved=${carved}`);
         return false;
@@ -1506,6 +1653,33 @@ function _deathLinesCached(bot) {
     } catch (e) { return []; }
 }
 
+const ORE_COLLECT_SPECS = Object.freeze({
+    coal: { targets: ['coal'], blocks: ['coal_ore', 'deepslate_coal_ore'], drop: 'coal' },
+    diamond: { targets: ['diamond', 'diamonds'], blocks: ['diamond_ore', 'deepslate_diamond_ore'], drop: 'diamond' },
+    emerald: { targets: ['emerald'], blocks: ['emerald_ore', 'deepslate_emerald_ore'], drop: 'emerald' },
+    iron: { targets: ['iron'], blocks: ['iron_ore', 'deepslate_iron_ore'], drop: 'raw_iron' },
+    gold: { targets: ['gold'], blocks: ['gold_ore', 'deepslate_gold_ore'], drop: 'raw_gold' },
+    lapis: { targets: ['lapis', 'lapis_lazuli'], blocks: ['lapis_ore', 'deepslate_lapis_ore'], drop: 'lapis_lazuli' },
+    redstone: { targets: ['redstone'], blocks: ['redstone_ore', 'deepslate_redstone_ore'], drop: 'redstone' },
+    copper: { targets: ['copper'], blocks: ['copper_ore', 'deepslate_copper_ore'], drop: 'raw_copper' },
+    quartz: { targets: ['quartz'], blocks: ['nether_quartz_ore'], drop: 'quartz' },
+});
+
+function oreCollectSpec(blockType) {
+    const requested = String(blockType || '');
+    return Object.values(ORE_COLLECT_SPECS).find((spec) =>
+        spec.targets.includes(requested) || spec.blocks.includes(requested)) || null;
+}
+
+export function collectDropItemName(blockType) {
+    return oreCollectSpec(blockType)?.drop || blockType;
+}
+
+export function collectOreBlockTypes(blockType) {
+    const spec = oreCollectSpec(blockType);
+    return spec ? [...spec.blocks] : [blockType];
+}
+
 export async function collectBlock(bot, blockType, num=1, exclude=null, veinFollow='auto') {
     /**
      * Collect one of the given block type.
@@ -1521,18 +1695,16 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
      * @example
      * await skills.collectBlock(bot, "oak_log");
      **/
+    const underwaterMiningTarget = !!oreCollectSpec(blockType)
+        || collectOreBlockTypes(blockType).some(name => /(?:_ore$|ancient_debris$|obsidian$)/.test(String(name)));
+    const endUnderwaterMiningTask = beginUnderwaterMiningTask(bot, underwaterMiningTarget);
+    try {
     if (num < 1) {
         log(bot, `Invalid number of blocks to collect: ${num}.`);
         return false;
     }
-    let blocktypes = [blockType];
-    const oreDrops = ['coal','diamond','emerald','iron','gold','lapis_lazuli','redstone','copper'];
-    if (oreDrops.includes(blockType)) {
-        blocktypes.push(blockType+'_ore');
-        blocktypes.push('deepslate_'+blockType+'_ore'); // diamond/iron/etc at deepslate depth
-    }
-    if (blockType.endsWith('ore'))
-        blocktypes.push('deepslate_'+blockType);
+    const oreSpec = oreCollectSpec(blockType);
+    let blocktypes = collectOreBlockTypes(blockType);
     if (blockType === 'dirt')
         blocktypes.push('grass_block');
     if (blockType === 'cobblestone')
@@ -1554,8 +1726,10 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
         return false;
     }
     // Vein-follow only makes sense for ores (you don't want to chain-mine every
-    // nearby stone/dirt/log). 'auto' = on iff the search set contains an ore block.
-    const veinActive = !isLiquid && (veinFollow === true || (veinFollow === 'auto' && blocktypes.some(n => n.endsWith('_ore'))));
+    // nearby stone/dirt/log). Keep the generic *_ore fallback for modded/unlisted
+    // ores while the known specs above supply exact block-family/drop mappings.
+    const veinActive = !isLiquid && (veinFollow === true
+        || (veinFollow === 'auto' && (!!oreSpec || blocktypes.some(n => n.endsWith('_ore')))));
 
     // ★TRUTHFUL COUNT (root fix for "Collected 4 oak_log 但空包"): `collected` below counts
     // blocks BROKEN, not drops actually vacuumed. A log broken over water floats off and
@@ -1564,8 +1738,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     // also track the real inventory delta of the drop item and report/return on THAT.
     // Ores that pick up as a differently-named item drop need the mapping (iron→raw_iron …);
     // everything else drops as its own block name.
-    const DROP_NAME = { iron: 'raw_iron', gold: 'raw_gold', copper: 'raw_copper' };
-    const dropItem = DROP_NAME[blockType] || blockType;
+    const dropItem = collectDropItemName(blockType);
     const gainOf = () => bot.inventory.items()
         .filter(i => i.name === dropItem || i.name === blockType)
         .reduce((a, i) => a + i.count, 0);
@@ -1615,14 +1788,12 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     // discipline (4-hop chains still blocked) while honoring "落差不大就该允许跳下".
     movements.maxDropDown = 3;
 
-    // Enable water movement for collectBlock — but ONLY near the surface. Underground
-    // (y<55) the pathfinder happily routes through flooded aquifer tunnels; with a sealed
-    // ceiling overhead the drowning-escape reflex can't chew through rock in time (death
-    // 200: drowning y47, coveredAbove 8, no mobs — the recurring deep-water bucket).
-    // Surface swims (rivers/shores) stay enabled: open air above, the swim reflex works.
-    if (bot.entity.position.y >= 55) {
-        movements.liquids.add(mc.getBlockId('water'));
-        movements.liquids.add(mc.getBlockId('flowing_water'));
+    // Water always pays the normal per-cell liquid cost. The global movement subclass
+    // adds the mining-only contract: sealed intermediate cells are usable only inside
+    // an explicit safe breathing chain whose path gaps are at most five blocks.
+    for (const n of ['water', 'flowing_water']) {
+        const id = mc.getBlockId(n);
+        if (id != null) movements.liquids.add(id);
     }
 
     // Blocks to ignore safety for, usually next to lava/water
@@ -1648,7 +1819,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     reachMoves.maxDropDown = 3;
     // ★C304 DBG: persistent one-liner per ore reach-decision so the gate is observable in-game
     // (mirrors chopDBG — bot.output only reaches the LLM, never a file). Cheap: ore-only.
-    const _mineDBG = (m) => { try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} };
+    const _mineDBG = (m) => appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ${m}\n`, { json: false });
     // ★C304-V (2026-07-08 途径铁不挖根治): the partial/no-path REJECTs below are the false-reject
     // engine — a buried-through-stone vein makes the 2000ms canDig A* time out as 'partial' with
     // little progress (or occasionally noPath), so the timed-A* verdict is a coin-flip on server
@@ -1761,12 +1932,12 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
         const _inDeathZone = (p) => _dzones.some(z => Math.hypot(z.x - p.x, z.z - p.z) < 14
             && Math.abs((typeof z.y === 'number' ? z.y : p.y) - p.y) <= 12);
         // ★C304-S (2026-07-08 用户定调"周围有怪房间最好别挖"): 刷怪笼 10 格内的矿候选直接不可见 —
-        // 主动绕开地牢/废弃矿井刷怪房, 不再只靠死后 _inDeathZone 事后学。findBlocks 按稀有方块
-        // palette 快扫, 每 pass 一次, 便宜; 扫描失败 fail-open (照旧, 交给实时威胁本能兜底)。
+        // 主动绕开地牢/废弃矿井刷怪房, 不再只靠死后 _inDeathZone 事后学。稀有方块扫描由
+        // block-scan Worker 执行；扫描失败 fail-open (照旧, 交给实时威胁本能兜底)。
         let _spawners = [];
         try {
             const _spId = mc.getBlockId('spawner');
-            if (_spId != null) { await new Promise(r => setImmediate(r)); _spawners = bot.findBlocks({ matching: _spId, maxDistance: 128, count: 8 }) || []; }   // ★SPECIAL(0714): 48→128 覆盖新128采集半径(否则48-128b刷怪笼漏检破坏C304-S)+让路
+            if (_spId != null) _spawners = (await world.getNearestBlocksWhereAsync(bot, _spId, 128, 8)).map(b => b.position);
         } catch (e) { _spawners = []; }
         const _nearSpawner = (p) => _spawners.some(s => Math.hypot(s.x - p.x, s.y - p.y, s.z - p.z) < 10);
 
@@ -1781,7 +1952,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             //   命中格跑昂贵谓词(safeToBreak 要走邻块检查 + _inDeathZone + exclude), 且外层 maxAttempts
             //   每轮重扫 — 探针实录 act=chopWood other≈670ms(视距相关: 满视距下 64b 内加载 section 多 →
             //   全扫 + 每格 safeToBreak = 事件循环长冻)。
-            //   修: 两段扫。① 先用 findBlocks 按方块类型 ID 数组快扫(仅 palette+indexOf, 无 safeToBreak)
+            //   修: 两段扫。① 先在 Worker 按方块 state ID 快扫(无 safeToBreak)
             //   拿最近的一批候选位置(取 count 的宽松倍数, 保证过滤后仍够); ② 只对这一小批候选跑昂贵谓词
             //   (safeToBreak/deathzone/exclude/液体源)。语义等价(同 64b 半径、同最终判据、同排序), 但把
             //   O(八面体×safeToBreak) 降成 O(八面体×廉价类型判) + O(少量候选×safeToBreak)。
@@ -1791,10 +1962,11 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             // ① 廉价类型快扫(候选取 max(64, want*8), 给 ② 的过滤留足冗余; 稀有目标时上限自然收敛)。
             let _cands = [];
             if (_ids.length) {
-                try { await new Promise(r => setImmediate(r)); _cands = bot.findBlocks({ matching: _ids, maxDistance: 128, count: Math.max(64, _want * 8) }) || []; } catch (e) { _cands = []; }   // ★C资源型(0714): 64→128+让路(collectBlock主扫描,禁同步阻塞ws)
+                try { _cands = (await world.getNearestBlocksWhereAsync(bot, _ids, 128, Math.max(64, _want * 8))).map(b => b.position); } catch (e) { _cands = []; }
             }
             // ② 对候选(已按距排序)跑昂贵谓词, 收满 want 即停 — safeToBreak 只在少量候选上求值。
             for (const _pos of _cands) {
+                await new Promise(resolve => setImmediate(resolve));
                 if (blocks.length >= _want) break;
                 const block = bot.blockAt(_pos);
                 try {
@@ -1991,26 +2163,28 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 // through a wall (the C304 path-exists gate selected it, but distToBlock<=4.6 alone
                 // let it reach through solid rock). Non-ore (logs/stone/dirt) dig as before.
                 const _isOre = /_ore$/.test(block.name || '');
-                let r = await safeDig(bot, block, { maxMs: 15000, equip: false, requireLOS: _isOre });
+                const gainBeforeDig = gainOf();
+                let r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: _isOre, requireLOS: _isOre });
                 // ★C304-T (2026-07-09 "凿隧道直达"): 埋铁被 safeDig 判 unreachable/occluded 时不再直接
                 //  exclude 放弃整条矿脉 — 先朝它凿一条密封隧道(防坠/防淹/防x-ray, 任一不安全即停),
                 //  逼近到臂展再重试一次 safeDig(requireLOS 仍锁, 绝不 x-ray)。隧道失败=旧行为 exclude。
                 if (_isOre && (r === 'unreachable' || r === 'occluded') && _tunnelTries < _TUNNEL_MAX_TRIES) {
                     _tunnelTries++;
                     if (await tunnelToOre(bot, block))
-                        r = await safeDig(bot, block, { maxMs: 15000, equip: false, requireLOS: true });
+                        r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: true, requireLOS: true });
                 }
                 if (r === 'ok') {
                     // ★Actually COLLECT the drop (fixes "挖了树不捡木头"): step ONTO the broken
                     // block's spot via a dig-capable path so mineflayer auto-vacuums the item,
                     // THEN sweep any stragglers (drops land a couple blocks off through leaves/vines).
-                    try { await goToPosition(bot, block.position.x, block.position.y, block.position.z, 1); } catch (e) {}
-                    const preSweep = gainOf();
-                    await pickupNearbyItems(bot);
+                    if (gainOf() === gainBeforeDig) {
+                        try { await goToPosition(bot, block.position.x, block.position.y, block.position.z, 1); } catch (e) {}
+                        try { await ensurePickupAt(bot, block.position, { radius: 6, maxDescend: 3, timeoutMs: 6000 }); } catch (e) {}
+                    }
                     // ★WATER-DRIFT SWEEP: a drop broken next to water floats and drifts out of the
                     // first pickup's reach (root cause of the -79,168 lakeside chop that logged 4
                     // logs but banked 0). If the drop item still didn't land, chase once wider.
-                    if (gainOf() === preSweep) {
+                    if (gainOf() === gainBeforeDig) {
                         try { await pickupNearbyItems(bot, 12); } catch (e) {}
                     }
                     success = true;
@@ -2039,6 +2213,11 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 log(bot, `Failed to collect ${blockType}: Inventory full, no place to deposit.`);
                 break;
             }
+            else if (err.name === 'UnderwaterMiningUnsafe') {
+                exclude = excludeUnsafeUnderwaterMiningTarget(bot, block, exclude);
+                log(bot, `⚠️ ${block && block.name ? block.name : blockType} has no safe underwater mining route — excluded; trying next.`);
+                continue;
+            }
             else if (err.name === 'PathfindingFailed' || (err.message && err.message.includes('path'))) {
                 log(bot, `⚠️ Cannot reach ${blockType} - pathfinding failed. Trying next block or consider changing target.`);
                 continue;
@@ -2063,45 +2242,59 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     else
         log(bot, `Collected ${gained} ${blockType}.`);
     return gained > 0;
+    } finally {
+        endUnderwaterMiningTask();
+    }
 }
 
 // Flood-fill mine a connected ore vein starting from a just-mined block position.
-// MC ore blobs often touch only diagonally, so we expand over face- AND
-// diagonal-adjacent cells. Digs each reachable block of `blocktypes`, equipping
-// the right pickaxe per block (so it actually drops) and pathing close so the
-// pathfinder doesn't thrash. Bounded by `max`. Returns how many blocks it mined.
-async function harvestConnectedVein(bot, startPos, blocktypes, max=64) {
-    const NB = [
-        [1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1],
-        [1,1,0],[1,-1,0],[-1,1,0],[-1,-1,0],[0,1,1],[0,1,-1],[0,-1,1],[0,-1,-1],
-        [1,0,1],[1,0,-1],[-1,0,1],[-1,0,-1],
-    ];
+// MC ore blobs can touch on faces, edges, or corners, so use all 26 neighbours.
+// A block that is temporarily occluded/unreachable is retried after another vein
+// block is mined: removing its neighbour can expose a safe LOS/stand cell. Fluid
+// and wrong-tool refusals remain terminal, preserving the safety contract.
+export async function harvestConnectedVein(bot, startPos, blocktypes, max=64, opts={}) {
+    const NB = [];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+        if (dx || dy || dz) NB.push([dx, dy, dz]);
+    }
     const isTarget = (b) => b && blocktypes.includes(b.name);
-    const seen = new Set();
-    const queue = [];
-    // Seed with the neighbours of the already-mined start block.
-    for (const [dx,dy,dz] of NB) queue.push(startPos.offset(dx,dy,dz));
-    let mined = 0;
-    while (queue.length && mined < max) {
-        if (bot.interrupt_code) break;
-        const p = queue.shift();
-        const k = `${p.x},${p.y},${p.z}`;
-        if (seen.has(k)) continue;
-        seen.add(k);
+    const keyOf = (p) => `${p.x},${p.y},${p.z}`;
+    const discovered = new Set();
+    const scan = [];
+    const component = [];
+    const enqueue = (p) => {
+        const key = keyOf(p);
+        if (discovered.has(key)) return;
+        discovered.add(key);
+        scan.push(p);
+    };
+    for (const [dx,dy,dz] of NB) enqueue(startPos.offset(dx,dy,dz));
+    while (scan.length && component.length < max) {
+        const p = scan.shift();
         const b = bot.blockAt(p);
         if (!isTarget(b)) continue;
-        // ★Break via the same safeDig primitive as the main path — reach-guard prevents the
-        // "抬头空挥" on a tall tree's high logs, the equip step keeps a sword off wood, and the
-        // 8s backstop bounds each log. Expand neighbours regardless of outcome (a leaning/bent
-        // trunk unreachable from here may be reachable from an adjacent cell).
-        // ★requireLOS: this flood-fill only ever runs on ORE veins (collectBlock veinActive), so
-        // apply the SAME anti-x-ray LOS gate as the main dig — never reach a vein block through a
-        // wall. safeDig approaches (repositions) blocks >4.4b first, so a wrapping vein still gets
-        // exhausted from reachable angles; a genuinely walled-off tail is left for the next scan
-        // (recoverable) rather than x-ray-grabbed.
-        const r = await safeDig(bot, b, { maxMs: 8000, pickup: true, requireLOS: true });
-        if (r === 'ok') mined++;
-        for (const [dx,dy,dz] of NB) queue.push(p.offset(dx,dy,dz));
+        component.push(p);
+        for (const [dx,dy,dz] of NB) enqueue(p.offset(dx,dy,dz));
+    }
+
+    const dig = typeof opts.dig === 'function'
+        ? opts.dig
+        : (b) => safeDig(bot, b, { maxMs: 8000, pickup: true, requireLOS: true });
+    let mined = 0;
+    let pending = component;
+    while (pending.length && mined < max) {
+        let passMined = 0;
+        const retry = [];
+        for (const p of pending) {
+            if (bot.interrupt_code || mined >= max) break;
+            const b = bot.blockAt(p);
+            if (!isTarget(b)) continue;
+            const r = await dig(b);
+            if (r === 'ok') { mined++; passMined++; }
+            else if (r === 'occluded' || r === 'unreachable') retry.push(p);
+        }
+        if (passMined === 0) break;
+        pending = retry;
     }
     return mined;
 }
@@ -2124,8 +2317,7 @@ export async function pickupNearbyItems(bot, distance = 8) {
             return it && it.name ? it.name : '';
         } catch (e) { return ''; }
     };
-    // ★2026-07-09 用户令: 双闸全 OFF 时不因低血/饥饿改变拾取行为 (不再只捡食物/贴身近物); 任一闸开恢复。
-    const faminePickup = () => (process.env.MC_FOOD_INSTINCTS === '1' || process.env.MC_HP_INSTINCTS === '1') && (bot.food <= 2 || (bot.food <= 3 && bot.health <= 8));
+    const faminePickup = () => process.env.MC_FOOD_INSTINCTS === '1' && bot.food <= 2;
     const miningPickup = () => {
         const skill = bot._currentSkill || '';
         const mob = bot._mobility || {};
@@ -2275,7 +2467,7 @@ export async function ensurePickupAt(bot, pos, opts = {}) {
     const HAZARD = /lava|fire|magma|cactus|campfire|wither_rose|sweet_berry|powder_snow/;
     // ★T-0004 DBG: persistent one-liner per ensure-pickup outcome (bot.output never reaches a
     // file, so the in-game effect was unobservable). Shares mine_dbg.log; ★PICKUP prefix.
-    const _pkDBG = (m) => { try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★PICKUP ${m}\n`); } catch (e) {} };
+    const _pkDBG = (m) => appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★PICKUP ${m}\n`, { json: false });
     const totalItems = () => { try { return Object.values(world.getInventoryCounts(bot)).reduce((a, b) => a + b, 0); } catch (e) { return 0; } };
     try {
         if (!bot || !bot.entity || !bot.entity.position || !pos) return false;
@@ -2438,7 +2630,7 @@ export async function breakBlockAt(bot, x, y, z) {
 }
 
 
-export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dontCheat=false) {
+export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dontCheat=false, opts={}) {
     /**
      * Place the given block type at the given position. It will build off from any adjacent blocks. Will fail if there is a block in the way or nothing to build off of.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
@@ -2448,12 +2640,15 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
      * @param {number} z, the z coordinate of the block to place.
      * @param {string} placeOn, the preferred side of the block to place on. Can be 'top', 'bottom', 'north', 'south', 'east', 'west', or 'side'. Defaults to bottom. Will place on first available side if not possible.
      * @param {boolean} dontCheat, overrides cheat mode to place the block normally. Defaults to false.
+     * @param {object} opts, placement policy. positioning:false forbids pathfinder movement.
      * @returns {Promise<boolean>} true if the block was placed, false otherwise.
      * @example
      * let p = world.getPosition(bot);
      * await skills.placeBlock(bot, "oak_log", p.x + 2, p.y, p.x);
      * await skills.placeBlock(bot, "torch", p.x + 1, p.y, p.x, 'side');
     **/
+    opts = opts && typeof opts === 'object' ? opts : {};
+    const allowPositioning = opts.positioning !== false;
     const target_dest = new Vec3(Math.floor(x), Math.floor(y), Math.floor(z));
     const placeCtx = (extra = {}) => ({
         blockType,
@@ -2461,6 +2656,7 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         target: motionVecObj(target_dest),
         placeOn,
         dontCheat,
+        allowPositioning,
         env: motionEnvSnap(bot),
         ...extra,
     });
@@ -2626,7 +2822,7 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         motionAudit(bot, 'place_skill.end', placeCtx({ ok: false, item: item_name, reason: 'intersects-body' }));
         return false;
     }
-    if (!dont_move_for.includes(item_name) && (pos.distanceTo(targetBlock.position) < 1.1 || pos_above.distanceTo(targetBlock.position) < 1.1)) {
+    if (allowPositioning && !dont_move_for.includes(item_name) && (pos.distanceTo(targetBlock.position) < 1.1 || pos_above.distanceTo(targetBlock.position) < 1.1)) {
         // too close
         motionAudit(bot, 'place_skill.positioning.begin', placeCtx({ item: item_name, reason: 'too-close', distance: +pos.distanceTo(targetBlock.position).toFixed(3) }));
         let goal = new pf.goals.GoalNear(targetBlock.position.x, targetBlock.position.y, targetBlock.position.z, 2);
@@ -2642,6 +2838,11 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
     }
     
     if (bot.entity.position.distanceTo(targetBlock.position) > 4.5) {
+        if (!allowPositioning) {
+            log(bot, `Cannot place ${blockType} at ${target_dest} without moving: target is out of reach.`);
+            motionAudit(bot, 'place_skill.end', placeCtx({ ok: false, item: item_name, reason: 'positioning-disabled-out-of-reach' }));
+            return false;
+        }
         // too far
         let pos = targetBlock.position;
         let movements = new pf.Movements(bot);
@@ -2819,7 +3020,7 @@ export async function placeBlockUnderFeet(bot, blockType, opts = {}) {
     return false;
 }
 
-export async function placeBlockNearby(bot, blockName, maxTries=4) {
+export async function placeBlockNearby(bot, blockName, maxTries=4, opts={}) {
     /**
      * Robustly place a block somewhere reachable next to the bot, on solid footing,
      * WITHOUT cheating. Finds an adjacent floor cell that has a solid block beneath
@@ -2830,14 +3031,48 @@ export async function placeBlockNearby(bot, blockName, maxTries=4) {
      * so we never fall back to the cheat command.
      * @param {MinecraftBot} bot
      * @param {string} blockName, e.g. 'crafting_table' or 'furnace' (must be in inventory).
-     * @param {number} maxTries, relocate-and-retry rounds. Defaults to 4.
+     * @param {number|object} maxTries, relocate-and-retry rounds, or an options object.
+     * @param {object} opts recovery policy. relocate:false,pillar:false keeps the bot
+     *        in its current pocket; positioning:false also disables placeBlock pathfinding;
+     *        maxDigBlocks bounds destructive preparation.
      * @returns {Promise<boolean>} true if the block ended up placed.
      **/
+    if (maxTries && typeof maxTries === 'object') {
+        opts = maxTries;
+        maxTries = opts.maxTries == null ? 4 : opts.maxTries;
+    }
+    maxTries = Math.max(1, Math.floor(Number(maxTries) || 1));
+    opts = opts && typeof opts === 'object' ? opts : {};
+    const allowDig = opts.allowDig !== false;
+    const allowRelocate = opts.relocate !== false;
+    const allowPillar = opts.pillar !== false;
+    const allowPositioning = opts.positioning !== false;
+    const maxDigBlocks = Math.max(0, Math.floor(Number(opts.maxDigBlocks == null ? 8 : opts.maxDigBlocks) || 0));
+    let dugBlocks = 0;
+
+    // Never prepare terrain for an item that cannot be placed. Previously the
+    // inventory check lived inside placeBlock, after the niche had been cleared,
+    // so a missing furnace caused repeated digging, relocation, and pillaring.
+    const itemName = blockName === 'redstone_wire' ? 'redstone'
+        : blockName === 'water' ? 'water_bucket'
+        : blockName === 'lava' ? 'lava_bucket'
+        : blockName;
+    const hasPlaceItem = () => {
+        try {
+            if (bot.inventory && bot.inventory.findInventoryItem(itemName)) return true;
+            return bot.game && bot.game.gameMode === 'creative' && !bot.restrict_to_inventory;
+        } catch (e) { return false; }
+    };
+    if (!hasPlaceItem()) {
+        log(bot, `Don't have any ${itemName} to place nearby; no blocks were cleared.`);
+        return false;
+    }
+
     const empty = new Set(['air','cave_air','void_air','water','flowing_water','grass','short_grass','tall_grass','snow','dead_bush','fern','large_fern','vine','seagrass']);
     const noBuild = new Set(['lava','flowing_lava','water','flowing_water','bedrock']);
     const isSolidFloor = (b) => b && !empty.has(b.name) && !noBuild.has(b.name) && b.boundingBox === 'block';
     const tryCell = async (cell) => {
-        if (bot.interrupt_code) return false;
+        if (bot.interrupt_code || !hasPlaceItem() || botAabbIntersectsBlock(bot, cell)) return false;
         const below = bot.blockAt(cell.offset(0, -1, 0));
         if (!isSolidFloor(below)) return false; // need something solid to build off
         // Clear the target cell and the headroom above it (dig a niche if cramped).
@@ -2846,11 +3081,16 @@ export async function placeBlockNearby(bot, blockName, maxTries=4) {
             if (!b) return false;
             if (noBuild.has(b.name)) return false; // don't dig into lava/water/bedrock
             if (!empty.has(b.name)) {
+                if (!allowDig || dugBlocks >= maxDigBlocks || !hasPlaceItem()) return false;
                 try { const ok = await breakBlockAt(bot, c.x, c.y, c.z); if (!ok) return false; await new Promise(r => setTimeout(r, 150)); }
                 catch (e) { return false; }
+                dugBlocks++;
             }
         }
-        return await placeBlock(bot, blockName, cell.x, cell.y, cell.z, 'bottom', true);
+        if (!hasPlaceItem()) return false;
+        return await placeBlock(bot, blockName, cell.x, cell.y, cell.z, 'bottom', true, {
+            positioning: allowPositioning,
+        });
     };
     // ★PRE-ESCAPE if sealed/cramped (THE "place table" deadlock deep underground). If NO
     // horizontal neighbor is open air, the offset loop below would try to DIG each stone cell —
@@ -2868,10 +3108,13 @@ export async function placeBlockNearby(bot, blockName, maxTries=4) {
             || ['sand','red_sand'].find(has);
     };
     const _crampedNow = () => ![[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]].some(o => { const bl = bot.blockAt(bot.entity.position.offset(o[0],o[1],o[2])); return bl && empty.has(bl.name); });
-    for (let up = 0; up < 8 && _crampedNow() && Math.floor(bot.entity.position.y) < 70 && !bot.interrupt_code; up++) {
+    for (let up = 0; allowPillar && up < 8 && _crampedNow() && Math.floor(bot.entity.position.y) < 70 && !bot.interrupt_code; up++) {
         const f = _fill2(); if (!f) break;
         const h = bot.blockAt(bot.entity.position.offset(0, 2, 0));
-        if (h && h.boundingBox === 'block' && !noBuild.has(h.name)) { try { await breakBlockAt(bot, h.x, h.y, h.z); } catch (e) {} }
+        if (h && h.boundingBox === 'block' && !noBuild.has(h.name)) {
+            if (!allowDig || dugBlocks >= maxDigBlocks || !hasPlaceItem()) break;
+            try { if (await breakBlockAt(bot, h.x, h.y, h.z)) dugBlocks++; } catch (e) {}
+        }
         try { await placeBlockUnderFeet(bot, f, { retries: 1, settleMs: 150 }); }
         catch (e) { try { bot.setControlState('jump', false); } catch (e2) {} }
     }
@@ -2894,6 +3137,7 @@ export async function placeBlockNearby(bot, blockName, maxTries=4) {
         // Couldn't place at this level — step to opener ground and retry. (A sealed/cramped
         // pocket is already handled by the FAST pre-escape pillar-up above; no slow barehanded
         // stone-carving here, which would blow the timebox.)
+        if (!allowRelocate) break;
         try { await moveAway(bot, 3); } catch (e) {}
     }
     // ★STUCK ESCAPE (用户: "原地垫石头就能上去"). Couldn't place after carving — we're sealed in
@@ -2913,8 +3157,12 @@ export async function placeBlockNearby(bot, blockName, maxTries=4) {
             || ['gravel', 'sand', 'red_sand'].find(n => (c[n] || 0) > 0);
     };
     const headOpen = () => { const h = bot.blockAt(bot.entity.position.offset(0, 2, 0)); return !h || /^(air|cave_air|void_air|short_grass|tall_grass|snow)$/.test(h.name || ''); };
-    for (let up = 0; up < 6 && filler2() && !bot.interrupt_code; up++) {
-        if (!headOpen()) { const h = bot.blockAt(bot.entity.position.offset(0, 2, 0)); try { if (h) await breakBlockAt(bot, h.x, h.y, h.z); } catch (e) {} }
+    for (let up = 0; allowPillar && up < 6 && filler2() && !bot.interrupt_code; up++) {
+        if (!headOpen()) {
+            if (!allowDig || dugBlocks >= maxDigBlocks || !hasPlaceItem()) break;
+            const h = bot.blockAt(bot.entity.position.offset(0, 2, 0));
+            try { if (h && await breakBlockAt(bot, h.x, h.y, h.z)) dugBlocks++; } catch (e) {}
+        }
         const f = filler2(); if (!f) break;
         try {
             await placeBlockUnderFeet(bot, f, { retries: 1, settleMs: 160 });
@@ -2922,7 +3170,8 @@ export async function placeBlockNearby(bot, blockName, maxTries=4) {
         } catch (e) { try { bot.setControlState('jump', false); } catch (e2) {} }
         if (Math.floor(bot.entity.position.y) >= 63) break;   // surfaced
     }
-    log(bot, `Could not place ${blockName} nearby after ${maxTries} tries (pillared up to retry).`);
+    const recovery = `${allowRelocate ? 'relocation allowed' : 'stayed in place'}, ${allowPillar ? 'pillar allowed' : 'no pillar'}, cleared ${dugBlocks}/${maxDigBlocks}`;
+    log(bot, `Could not place ${blockName} nearby after ${maxTries} tries (${recovery}).`);
     return false;
 }
 
@@ -3525,7 +3774,10 @@ export async function consume(bot, itemName="") {
 
 async function _consumeOnce(bot, itemName="") {
     let item, name;
-    if (itemName) {
+    if (itemName && typeof itemName === 'object') {
+        item = itemName;
+        name = item.name;
+    } else if (itemName) {
         item = bot.inventory.findInventoryItem(itemName);
         name = itemName;
     }
@@ -3533,7 +3785,7 @@ async function _consumeOnce(bot, itemName="") {
         log(bot, `You do not have any ${name} to eat.`);
         return false;
     }
-    const equipRes = await tickConfirm.equipConfirmed(bot, item.name, 'hand');
+    const equipRes = await tickConfirm.equipConfirmed(bot, item, 'hand');
     if (!equipRes.ok) {
         log(bot, `Failed to equip ${item.name} to consume: ${equipRes.reason}.`);
         return false;
@@ -4129,8 +4381,7 @@ function randomUnstickSkipMode(bot, goalInfo = null) {
             i && i.name &&
             /beef|porkchop|chicken|mutton|rabbit|cod|salmon|bread|apple|berries|potato|carrot|melon|cookie|pumpkin_pie|beetroot|mushroom_stew|rabbit_stew|suspicious_stew/i.test(i.name) &&
             i.name !== 'rotten_flesh');
-        // ★2026-07-09 用户令: 双闸全 OFF 时不因低血限制取物目标; 任一闸开恢复。
-        if ((process.env.MC_HP_INSTINCTS === '1' || process.env.MC_FOOD_INSTINCTS === '1') && isItemGoal && bot && bot.health <= 8 && bot.food < 18 && !normalFood) return 'lowhp-item-pickup';
+        if (process.env.MC_FOOD_INSTINCTS === '1' && isItemGoal && bot && bot.food <= 3 && !normalFood) return 'famine-item-pickup';
     } catch (e) {}
     return null;
 }
@@ -4141,14 +4392,15 @@ function shouldAvoidRandomUnstick(bot, goalInfo = null) {
 
 /**
  * Execute pathfinding with a specific movement set and stuck timeout.
- * @returns {Promise<{success: boolean, stuckDetected: boolean}>}
+ * @returns {Promise<{success: boolean, stuckDetected: boolean, breathNeeded?: boolean}>}
  */
 async function executePathfindingPhase(bot, goal, movements, stuckTimeoutMs, doorCheckInterval, audit = {}) {
     let stuckCheckInterval;
+    let plannedBreathStation = null;
+    let actualWaterPlanFailure = null;
     let lastPosition = bot.entity.position.clone();
     let stuckTime = 0;
     let lastCheckTime = Date.now();
-    const stuckRadius = 1.5; // Tighter radius for faster stuck detection
     const phaseStartedAt = Date.now();
     
     bot.pathfinder.setMovements(movements);
@@ -4160,6 +4412,41 @@ async function executePathfindingPhase(bot, goal, movements, stuckTimeoutMs, doo
         allowParkour: movements.allowParkour,
         maxDropDown: movements.maxDropDown,
     });
+
+    let rejectActualWaterPlan;
+    const actualWaterPlanPromise = new Promise((_, reject) => { rejectActualWaterPlan = reject; });
+    const validateActualWaterPath = (results) => {
+        if (!isUnderwaterMiningTask(bot)) return;
+        const fallback = (typeof goal.x === 'number' && typeof goal.y === 'number' && typeof goal.z === 'number')
+            ? { x: goal.x, y: goal.y, z: goal.z }
+            : null;
+        const miningTarget = resolveUnderwaterMiningRouteTarget(bot, fallback);
+        const plan = adoptUnderwaterMiningPathUpdate(bot, results, miningTarget);
+        if (!plan) return;
+        if (!plan.ok) {
+            actualWaterPlanFailure = plan;
+            // path_update is synchronous and fires before the pathfinder stores
+            // results.path. Empty it so no unvalidated node executes this tick.
+            results.path.length = 0;
+            rejectActualWaterPlan(new Error('UnderwaterActualPathUnsafe'));
+            return;
+        }
+        motionAudit(bot, 'path.water_plan_actual', {
+            seq: audit.seq,
+            ok: true,
+            generation: plan.generation,
+            required: plan.required,
+            status: results.status,
+            stations: plan.stations.map(station => ({
+                id: station.id,
+                kind: station.kind,
+                pathIndex: station.pathIndex,
+                serviced: station.serviced,
+            })),
+            goal: audit.goal,
+        });
+    };
+    bot.on('path_update', validateActualWaterPath);
     
     const stuckCheckPromise = new Promise((_, reject) => {
         stuckCheckInterval = setInterval(() => {
@@ -4168,20 +4455,42 @@ async function executePathfindingPhase(bot, goal, movements, stuckTimeoutMs, doo
                 reject(new Error('Interrupted'));
                 return;
             }
+            const underwaterMiningActive = isUnderwaterMiningTask(bot);
+            plannedBreathStation = underwaterMiningActive
+                ? nextPlannedBreathStation(bot, bot._underwaterMiningBreathPlan)
+                : null;
+            if (plannedBreathStation) {
+                clearInterval(stuckCheckInterval);
+                reject(new Error('UnderwaterPlannedBreath'));
+                return;
+            }
+            if (!underwaterMiningActive) bot._underwaterMiningBreathBlocked = false;
+            if (underwaterMiningActive && bot._underwaterMiningBreathBlocked) {
+                clearInterval(stuckCheckInterval);
+                reject(new Error('UnderwaterBreathNeeded'));
+                return;
+            }
+            if (shouldServiceUnderwaterBreath(bot)) {
+                clearInterval(stuckCheckInterval);
+                reject(new Error('UnderwaterBreathNeeded'));
+                return;
+            }
             
             const currentPos = bot.entity.position;
-            const distance = currentPos.distanceTo(lastPosition);
+            const profile = pathStuckProfile(bot, stuckTimeoutMs);
+            const distance = pathProgressDistance(lastPosition, currentPos, profile.medium);
             const now = Date.now();
             const elapsed = now - lastCheckTime;
             
-            if (distance < stuckRadius) {
+            if (shouldAccumulatePathStuck(bot, distance, profile)) {
                 stuckTime += elapsed;
-                if (stuckTime >= stuckTimeoutMs) {
+                if (stuckTime >= profile.timeoutMs) {
                     motionAudit(bot, 'path.phase.stuck', {
                         seq: audit.seq,
                         phase: audit.phase,
                         stuckMs: Math.round(stuckTime),
                         moved: +distance.toFixed(3),
+                        medium: profile.medium,
                         from: {
                             x: +lastPosition.x.toFixed(3),
                             y: +lastPosition.y.toFixed(3),
@@ -4203,7 +4512,8 @@ async function executePathfindingPhase(bot, goal, movements, stuckTimeoutMs, doo
     try {
         await Promise.race([
             bot.pathfinder.goto(goal),
-            stuckCheckPromise
+            stuckCheckPromise,
+            actualWaterPlanPromise,
         ]);
         clearInterval(stuckCheckInterval);
         motionAudit(bot, 'path.phase.end', {
@@ -4221,6 +4531,50 @@ async function executePathfindingPhase(bot, goal, movements, stuckTimeoutMs, doo
         const errorMsg = err.message || err.toString();
         if (errorMsg.includes('Interrupted') || bot.interrupt_code) {
             throw new Error('Navigation interrupted');
+        }
+        if (errorMsg.includes('UnderwaterActualPathUnsafe')) {
+            motionAudit(bot, 'path.phase.end', {
+                seq: audit.seq,
+                phase: audit.phase,
+                ok: false,
+                waterPlanUnsafe: true,
+                reason: actualWaterPlanFailure && actualWaterPlanFailure.reason,
+                ms: Date.now() - phaseStartedAt,
+                goal: audit.goal,
+            });
+            return {
+                success: false,
+                stuckDetected: false,
+                waterPlanUnsafe: true,
+                reason: actualWaterPlanFailure && actualWaterPlanFailure.reason,
+            };
+        }
+        if (errorMsg.includes('UnderwaterPlannedBreath')) {
+            motionAudit(bot, 'path.phase.end', {
+                seq: audit.seq,
+                phase: audit.phase,
+                ok: false,
+                breathNeeded: true,
+                planned: true,
+                station: plannedBreathStation && plannedBreathStation.id,
+                missed: !!(plannedBreathStation && plannedBreathStation.missed),
+                oxygen: bot.oxygenLevel,
+                ms: Date.now() - phaseStartedAt,
+                goal: audit.goal,
+            });
+            return { success: false, stuckDetected: false, breathNeeded: true, plannedBreathStation };
+        }
+        if (errorMsg.includes('UnderwaterBreathNeeded')) {
+            motionAudit(bot, 'path.phase.end', {
+                seq: audit.seq,
+                phase: audit.phase,
+                ok: false,
+                breathNeeded: true,
+                oxygen: bot.oxygenLevel,
+                ms: Date.now() - phaseStartedAt,
+                goal: audit.goal,
+            });
+            return { success: false, stuckDetected: false, breathNeeded: true };
         }
         if (errorMsg.includes('PhaseStuck')) {
             motionAudit(bot, 'path.phase.end', {
@@ -4256,6 +4610,9 @@ async function executePathfindingPhase(bot, goal, movements, stuckTimeoutMs, doo
             goal: audit.goal,
         });
         return { success: false, stuckDetected: false };
+    } finally {
+        clearInterval(stuckCheckInterval);
+        bot.removeListener('path_update', validateActualWaterPath);
     }
 }
 
@@ -4300,6 +4657,10 @@ export async function goToGoal(bot, goal) {
     // parkour/scaffold shortcuts are brittle in caves and on one-block lips. Dedicated
     // skills may still place/pillar explicitly, but generic navigation should walk or
     // dig a known route, not improvise block placement while moving.
+    ensureWaterAwareDigTime(bot);
+    // A schedule is local to one navigation attempt. Rebuild it from the bot's
+    // current cell while preserving the sticky ore target and serviced holes.
+    clearUnderwaterMiningBreathPlan(bot);
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
     for (let block of dontBreakBlocks) {
@@ -4320,7 +4681,7 @@ export async function goToGoal(bot, goal) {
     // ★避水路 (2026-07-08 用户实拍"寻路各种跌落到水里"): lib 默认 liquidCost=1, A* 把水潭当"几乎免费的
     // 平地"直接斜穿过去(每格水 base1+liquid1≈2, 跟绕路一格差不多)→ 老往水里钻。调高 liquidCost 让规划器
     // 【优先绕开】水: 有旱路就走旱路, 但水是唯一/更短通路时仍会过(加价不是禁行, 过河可达性不受损)。
-    nonDestructiveMovements.liquidCost = 12;
+    nonDestructiveMovements.liquidCost = DEFAULT_LIQUID_COST;
 
     nonDestructiveMovements.liquids.add(mc.getBlockId('water'));
     nonDestructiveMovements.liquids.add(mc.getBlockId('flowing_water'));
@@ -4331,7 +4692,7 @@ export async function goToGoal(bot, goal) {
     destructiveMovements.canDig = true;
     destructiveMovements.allowParkour = false; // ★同上防摔回归修: 破坏式也关 parkour, 跨缺口靠 canDig 挖路(不摔)
     destructiveMovements.maxDropDown = 2;
-    destructiveMovements.liquidCost = 8;   // ★同上避水路(破坏式稍低: 挖路本就更贵, 别把过河逼成绕远大坑)
+    destructiveMovements.liquidCost = DESTRUCTIVE_LIQUID_COST;   // ★同上避水路(破坏式稍低: 挖路本就更贵, 别把过河逼成绕远大坑)
     // ★C319 (T-0053): let the DESTRUCTIVE fallback BUILD its way out, not just dig. A pocket /
     // mesa-terrace imprisonment (T-0052) is escapable ONLY by PLACING blocks (pillar up / bridge a
     // gap) — canDig alone can't rise out of a pit (digging up just lengthens the shaft you're stuck
@@ -4368,6 +4729,7 @@ export async function goToGoal(bot, goal) {
 
     const doorCheckInterval = startDoorInterval(bot);
     const totalStartTime = Date.now();
+    let retainBreathPlanForTargetDig = false;
     // ★进度感知长途修 (用户令 2026-07-09 "这么普通的越野也吃 3 次 unstick 就 bail"): 老逻辑两处硬墙 —
     //   (a) maxUnstickAttempts=3 是【整趟终身计数】: bot.pathfinder.goto 一次走到底, 山地每物理楔住 3s 耗
     //       一次 unstick, 累计 3 次就抛"到不了" —— 哪怕两次楔住之间已走了上百格(成功脱困也从不清零)。
@@ -4500,12 +4862,108 @@ export async function goToGoal(bot, goal) {
             }
             markProgress();   // ★朝目标有推进 → 清零 unstick 预算 + 续命 no-progress 计时 (长途越野不再累计误 bail)
 
+            if (isUnderwaterMiningTask(bot)) {
+                const preview = await bot.pathfinder.getPathTo(currentMovements, goal, pathfind_timeout);
+                if (_usable(preview.status)) {
+                    const miningTarget = resolveUnderwaterMiningRouteTarget(bot, _goalPos);
+                    const breathPlan = planUnderwaterMiningBreathing(bot, preview.path, miningTarget, {
+                        complete: preview.status === 'success',
+                    });
+                    if (!breathPlan.ok) {
+                        clearUnderwaterMiningBreathPlan(bot);
+                        motionAudit(bot, 'path.water_plan', {
+                            seq: navSeq,
+                            ok: false,
+                            reason: breathPlan.reason,
+                            failedAt: breathPlan.failedAt,
+                            goal: goalInfo,
+                        });
+                        if (!isDestructive) {
+                            currentMovements = destructiveMovements;
+                            isDestructive = true;
+                            continue;
+                        }
+                        const unsafe = new Error(`Underwater mining route has no safe five-block breathing chain: ${breathPlan.reason}`);
+                        unsafe.name = 'UnderwaterMiningUnsafe';
+                        throw unsafe;
+                    }
+                    adoptUnderwaterMiningBreathPlan(bot, breathPlan, miningTarget);
+                    motionAudit(bot, 'path.water_plan', {
+                        seq: navSeq,
+                        ok: true,
+                        generation: breathPlan.generation,
+                        required: breathPlan.required,
+                        stations: breathPlan.stations.map(station => ({
+                            id: station.id,
+                            kind: station.kind,
+                            pathIndex: station.pathIndex,
+                            serviced: station.serviced,
+                        })),
+                        policy: breathPlan.policy,
+                        goal: goalInfo,
+                    });
+                } else {
+                    clearUnderwaterMiningBreathPlan(bot);
+                }
+            }
+
             const result = await executePathfindingPhase(
                 bot, goal, currentMovements, phaseStuckTimeout, doorCheckInterval,
                 { seq: navSeq, phase: isDestructive ? 'destructive' : 'non-destructive', goal: goalInfo }
             );
 
+            if (result.waterPlanUnsafe) {
+                clearUnderwaterMiningBreathPlan(bot);
+                if (!isDestructive) {
+                    currentMovements = destructiveMovements;
+                    isDestructive = true;
+                    continue;
+                }
+                const unsafe = new Error(`Executed underwater path has no safe five-block breathing chain: ${result.reason || 'unknown'}`);
+                unsafe.name = 'UnderwaterMiningUnsafe';
+                throw unsafe;
+            }
+
+            if (result.breathNeeded) {
+                if (result.plannedBreathStation && result.plannedBreathStation.missed) {
+                    // Never turn back toward a missed hole. Drop only the route schedule;
+                    // the sticky ore target and already-open hole registry survive, so the
+                    // next loop plans a fresh forward-only chain from this water cell.
+                    bot._underwaterMiningBreathPlan = null;
+                    motionAudit(bot, 'path.water_plan_rebuild', {
+                        seq: navSeq,
+                        reason: 'planned-station-passed',
+                        station: result.plannedBreathStation.id,
+                        goal: goalInfo,
+                    });
+                    continue;
+                }
+                const refill = await serviceUnderwaterMiningBreath(bot, {
+                    station: result.plannedBreathStation || null,
+                });
+                motionAudit(bot, 'path.water_breath', {
+                    seq: navSeq,
+                    ok: !!(refill && refill.ok),
+                    reason: refill && refill.reason,
+                    planned: !!result.plannedBreathStation,
+                    station: result.plannedBreathStation && result.plannedBreathStation.id,
+                    oxygen: bot.oxygenLevel,
+                    goal: goalInfo,
+                });
+                if (!refill || !refill.ok) {
+                    const unsafe = new Error(`Underwater mining route has no safe breathing continuation: ${(refill && refill.reason) || 'unknown'}`);
+                    unsafe.name = 'UnderwaterMiningUnsafe';
+                    throw unsafe;
+                }
+                // Oxygen service is not an unstick and must not abandon the selected
+                // ore/goal. Resume the same movement set from the breathing station.
+                lastProgressAt = Date.now();
+                unstickAttempts = 0;
+                continue;
+            }
+
             if (result.success) {
+                retainBreathPlanForTargetDig = retainUnderwaterMiningBreathPlanForTargetDig(bot);
                 clearInterval(doorCheckInterval);
                 motionAudit(bot, 'path.end', {
                     seq: navSeq,
@@ -4517,37 +4975,33 @@ export async function goToGoal(bot, goal) {
                 return true;
             }
 
+            // A partial non-destructive route can end at an underwater rock face. Any
+            // non-destructive failure (not only the outer stuck timer) must hand the same
+            // goal to the dig-capable planner; otherwise the bot retries a walk-only prefix
+            // forever and the finite water cost becomes an execution-time infinity.
+            if (!result.success && !isDestructive) {
+                const reason = result.stuckDetected ? 'stuck' : 'path-failed';
+                log(bot, `⚠️ Non-destructive path ${reason}, switching to destructive...`);
+                motionAudit(bot, 'path.switch', { seq: navSeq, from: 'non-destructive', to: 'destructive', reason, goal: goalInfo });
+                currentMovements = destructiveMovements;
+                isDestructive = true;
+                continue;
+            }
+
             if (result.stuckDetected) {
-                // Phase 1: Non-destructive stuck → switch to destructive
-                if (!isDestructive) {
-                    // ★不因"泡在水里晃不动"就切破坏式乱挖 (2026-07-08 用户实拍"移动中莫名其妙挖土", S1 的水域facet):
-                    // 站在水里被浮力晃住 → 3s 内挪不出 1.5b → 触发 PhaseStuck → 老逻辑立刻切 destructive(canDig)
-                    // 朝目标挖泥开路 = "莫名其妙挖土"。水里晃不动是【游泳假象】不是【墙】, 挖土解决不了。改: 脚/头
-                    // 泡水时先 stepEdgeAssist 推一把、留在 non-destructive 继续游, 最多跳过 2 次; 2 次后仍卡(真被水
-                    // 里箱死)才落到下面正常 destructive 促升(C319 口袋自救保留)。只在"站水里"生效, 干地脱困不变。
-                    const _fb = bot.blockAt(bot.entity.position);
-                    const _hb = bot.blockAt(bot.entity.position.offset(0, 1, 0));
-                    const _inWater = /(flowing_)?water$/.test((_fb && _fb.name) || '') || /(flowing_)?water$/.test((_hb && _hb.name) || '');
-                    const _wkey = `${Math.round(bot.entity.position.x)},${Math.round(bot.entity.position.z)}`;
-                    const _wskips = (bot._ndWaterSkipKey === _wkey) ? (bot._ndWaterSkips || 0) : 0;
-                    if (_inWater && _wskips < 2) {
-                        bot._ndWaterSkips = _wskips + 1; bot._ndWaterSkipKey = _wkey;
-                        motionAudit(bot, 'path.water_skip', { seq: navSeq, skips: bot._ndWaterSkips, goal: goalInfo });
-                        await stepEdgeAssist(bot, { why: `path-water-skip-${bot._ndWaterSkips}`, goal: goalInfo, owner: `path:${navSeq}:water-skip` });
-                        await new Promise(r => setTimeout(r, 300));
-                        continue;   // 留在 non-destructive 继续游, 不切挖土
-                    }
-                    bot._ndWaterSkips = 0; bot._ndWaterSkipKey = null;
-                    log(bot, `⚠️ Stuck with non-destructive path, switching to destructive...`);
-                    motionAudit(bot, 'path.switch', { seq: navSeq, from: 'non-destructive', to: 'destructive', reason: 'stuck', goal: goalInfo });
-                    currentMovements = destructiveMovements;
-                    isDestructive = true;
-                    continue;
-                }
 
                 // Phase 2: Destructive also stuck → manual unstick
                 if (unstickAttempts < maxUnstickAttempts) {
                     unstickAttempts++;
+                    if (isBotInWater(bot)) {
+                        // Land step-edge recovery cancels the pathfinder and fights buoyancy.
+                        // In water, keep jump for air and let the next loop replan the same
+                        // finite-cost destructive route from the new fluid cell.
+                        try { bot.setControlState('jump', true); } catch (e) {}
+                        motionAudit(bot, 'path.water_replan', { seq: navSeq, attempt: unstickAttempts, reason: 'stuck', goal: goalInfo });
+                        await new Promise(r => setTimeout(r, 300));
+                        continue;
+                    }
                     const stepped = await stepEdgeAssist(bot, {
                         why: `path-${isDestructive ? 'destructive' : 'non-destructive'}-stuck-${unstickAttempts}`,
                         goal: goalInfo,
@@ -4578,6 +5032,12 @@ export async function goToGoal(bot, goal) {
             // Non-stuck failure (path blocked, etc.) - try unstick anyway
             if (unstickAttempts < maxUnstickAttempts) {
                 unstickAttempts++;
+                if (isBotInWater(bot)) {
+                    try { bot.setControlState('jump', true); } catch (e) {}
+                    motionAudit(bot, 'path.water_replan', { seq: navSeq, attempt: unstickAttempts, reason: 'path-failed', goal: goalInfo });
+                    await new Promise(r => setTimeout(r, 300));
+                    continue;
+                }
                 const stepped = await stepEdgeAssist(bot, {
                     why: `path-failed-${unstickAttempts}`,
                     goal: goalInfo,
@@ -4649,6 +5109,8 @@ export async function goToGoal(bot, goal) {
             goal: goalInfo,
         });
         throw err;
+    } finally {
+        if (!retainBreathPlanForTargetDig) clearUnderwaterMiningBreathPlan(bot);
     }
 }
 
@@ -4995,28 +5457,40 @@ export async function moveAway(bot, distance) {
      * @example
      * await skills.moveAway(bot, 8);
      **/
-    const pos = bot.entity.position;
-    let goal = new pf.goals.GoalNear(pos.x, pos.y, pos.z, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
-    bot.pathfinder.setMovements(new pf.Movements(bot));
+    const pos = bot.entity.position.clone();
+    const intent = beginStallIntent(bot, STALL_INTENT.MOVE, 'skills.moveAway', { timeoutMs: 70000 });
+    try {
+        let goal = new pf.goals.GoalNear(pos.x, pos.y, pos.z, distance);
+        let inverted_goal = new pf.goals.GoalInvert(goal);
+        bot.pathfinder.setMovements(new pf.Movements(bot));
 
-    if (bot.modes.isOn('cheat')) {
-        const move = new pf.Movements(bot);
-        const path = await bot.pathfinder.getPathTo(move, inverted_goal, 10000);
-        let last_move = path.path[path.path.length-1];
-        if (last_move) {
-            let x = Math.floor(last_move.x);
-            let y = Math.floor(last_move.y);
-            let z = Math.floor(last_move.z);
-            bot.chat('/tp @s ' + x + ' ' + y + ' ' + z);
-            return true;
+        if (bot.modes.isOn('cheat')) {
+            const move = new pf.Movements(bot);
+            const path = await bot.pathfinder.getPathTo(move, inverted_goal, 10000);
+            let last_move = path.path[path.path.length-1];
+            if (last_move) {
+                let x = Math.floor(last_move.x);
+                let y = Math.floor(last_move.y);
+                let z = Math.floor(last_move.z);
+                bot.chat('/tp @s ' + x + ' ' + y + ' ' + z);
+                return true;
+            }
         }
-    }
 
-    await goToGoal(bot, inverted_goal);
-    let new_pos = bot.entity.position;
-    log(bot, `Moved away from ${pos.floored()} to ${new_pos.floored()}.`);
-    return true;
+        await goToGoal(bot, inverted_goal);
+        const newPos = bot.entity.position.clone();
+        const moved = recoveryDisplacement(pos, newPos);
+        const required = Math.min(1.5, Math.max(0.5, distance * 0.75));
+        touchStallIntent(bot, intent, `moved:${moved.toFixed(2)}`);
+        if (moved < required) {
+            log(bot, `Could not move away from ${pos.floored()} (advanced only ${moved.toFixed(1)} blocks).`);
+            return false;
+        }
+        log(bot, `Moved away from ${pos.floored()} to ${newPos.floored()} (${moved.toFixed(1)} blocks).`);
+        return true;
+    } finally {
+        endStallIntent(bot, intent);
+    }
 }
 
 export async function moveAwayFromEntity(bot, entity, distance=16) {
@@ -5187,13 +5661,7 @@ export async function goToBed(bot) {
      * @example
      * await skills.goToBed(bot);
      **/
-    const beds = bot.findBlocks({
-        matching: (block) => {
-            return block.name.includes('bed');
-        },
-        maxDistance: 64,   // ★B定点32→64(0714)
-        count: 1
-    });
+    const beds = (await world.getNearestBlocksWhereAsync(bot, (block) => block.name.includes('bed'), 64, 1)).map(b => b.position);
     if (beds.length === 0) {
         log(bot, `Could not find a bed to sleep in.`);
         return false;
@@ -5551,79 +6019,214 @@ function stringifyItem(bot, item) {
     return text;
 }
 
-export async function digDown(bot, distance = 10) {
+const SHAFT_FLUIDS = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
+const SHAFT_PROTECTED_RE = /bedrock|barrier|spawner|chest|barrel|furnace|crafting_table|bed$|portal|end_gateway|command_block|structure_block/;
+
+function shaftBlockSafeToOpen(block) {
+    if (!block || block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air') return true;
+    if (SHAFT_FLUIDS.has(block.name) || SHAFT_PROTECTED_RE.test(block.name || '')) return false;
+    return block.boundingBox === 'block';
+}
+
+/**
+ * Rank two-block lateral pockets that keep the dangerous shaft floor intact.
+ * Directions with solid floors, no adjacent fluid and fewer blocks to break win;
+ * when hostiles are visible we prefer tunnelling away from their horizontal bearing.
+ */
+export function planShaftDetours(bot, options = {}) {
+    const length = Math.max(1, Math.min(3, options.length ?? 2));
+    const start = bot.blockAt(bot.entity.position)?.position || bot.entity.position.floored();
+    let threat = null;
+    try {
+        threat = Object.values(bot.entities || {})
+            .filter(entity => entity && entity !== bot.entity && entity.position && mc.isHostile(entity))
+            .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0] || null;
+    } catch (e) { /* entity snapshots may change while being scanned */ }
+    const threatDx = threat ? threat.position.x - bot.entity.position.x : 0;
+    const threatDz = threat ? threat.position.z - bot.entity.position.z : 0;
+    const threatLen = Math.hypot(threatDx, threatDz) || 1;
+
+    const candidates = [];
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const cells = [];
+        let valid = true;
+        let breaks = 0;
+        for (let step = 1; step <= length && valid; step++) {
+            const feetPos = start.offset(dx * step, 0, dz * step);
+            const headPos = feetPos.offset(0, 1, 0);
+            const floor = bot.blockAt(feetPos.offset(0, -1, 0));
+            const feet = bot.blockAt(feetPos);
+            const head = bot.blockAt(headPos);
+            if (!floor || floor.boundingBox !== 'block' || SHAFT_FLUIDS.has(floor.name)
+                || !shaftBlockSafeToOpen(feet) || !shaftBlockSafeToOpen(head)) {
+                valid = false;
+                break;
+            }
+            const fluidBeside = [feetPos, headPos].some(pos =>
+                [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]
+                    .some(([ox, oy, oz]) => SHAFT_FLUIDS.has(bot.blockAt(pos.offset(ox, oy, oz))?.name)));
+            if (fluidBeside) {
+                valid = false;
+                break;
+            }
+            if (feet?.boundingBox === 'block') breaks++;
+            if (head?.boundingBox === 'block') breaks++;
+            cells.push({ feetPos, headPos });
+        }
+        if (!valid || cells.length !== length) continue;
+        const towardThreat = threat ? (dx * threatDx + dz * threatDz) / threatLen : 0;
+        candidates.push({ dx, dz, cells, breaks, threat: threat?.name || null, score: -breaks - towardThreat * 4 });
+    }
+    return candidates.sort((a, b) => b.score - a.score);
+}
+
+export async function createSafeShaftDetour(bot, options = {}) {
+    const start = bot.entity.position.clone();
+    const intent = beginStallIntent(bot, STALL_INTENT.MOVE, 'digDown:shaft-detour', { timeoutMs: 8000 });
+    const dig = options.dig || (block => breakBlockAt(bot, block.position.x, block.position.y, block.position.z));
+    try {
+        const candidates = planShaftDetours(bot, options);
+        for (const candidate of candidates) {
+            if (bot.interrupt_code) break;
+            let opened = true;
+            for (const cell of candidate.cells) {
+                // Head first: never walk under a one-block ceiling and take suffocation damage.
+                for (const position of [cell.headPos, cell.feetPos]) {
+                    const block = bot.blockAt(position);
+                    if (!block || block.boundingBox !== 'block') continue;
+                    const ok = await dig(block);
+                    if (ok === false) { opened = false; break; }
+                    touchStallIntent(bot, intent, `opened:${position.x},${position.y},${position.z}`);
+                }
+                if (!opened) break;
+            }
+            if (!opened) continue;
+
+            if (options.step) {
+                await options.step(candidate);
+            } else {
+                const target = candidate.cells[candidate.cells.length - 1].feetPos;
+                try {
+                    await bot.lookAt(new Vec3(target.x + 0.5, target.y + 0.8, target.z + 0.5), true);
+                    bot.setControlState('forward', true);
+                    const deadline = Date.now() + 1800;
+                    while (!bot.interrupt_code && Date.now() < deadline
+                        && Math.hypot(bot.entity.position.x - start.x, bot.entity.position.z - start.z) < 1.1) {
+                        await new Promise(resolve => setTimeout(resolve, 80));
+                    }
+                } finally {
+                    try { bot.setControlState('forward', false); } catch (e) { /* bot disconnected during recovery */ }
+                }
+            }
+            const moved = Math.hypot(bot.entity.position.x - start.x, bot.entity.position.z - start.z);
+            touchStallIntent(bot, intent, `sidestep:${moved.toFixed(2)}`);
+            if (moved >= 0.75) {
+                return { moved: true, distance: moved, dx: candidate.dx, dz: candidate.dz, threat: candidate.threat };
+            }
+        }
+        return { moved: false, distance: Math.hypot(bot.entity.position.x - start.x, bot.entity.position.z - start.z) };
+    } finally {
+        try { bot.setControlState('forward', false); } catch (e) { /* bot disconnected during recovery */ }
+        endStallIntent(bot, intent);
+    }
+}
+
+export async function digDown(bot, distance = 10, options = {}) {
     /**
-     * Digs down a specified distance. Will stop if it reaches lava, water, or a fall of >=4 blocks below the bot.
+     * Digs down a specified distance. A fluid or dangerous drop keeps the shaft
+     * floor sealed and triggers a bounded lateral safety-pocket detour.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {int} distance, distance to dig down.
+     * @param {object} options, injectable recovery hooks for simulations.
      * @returns {Promise<boolean>} true if successfully dug all the way down.
      * @example
      * await skills.digDown(bot, 10);
      **/
 
+    const requestedDistance = distance;
+    const detourFromHazard = options.detour || createSafeShaftDetour;
     const startY = Math.floor(bot.entity.position.y);
-    if (distance > 2 && startY <= 16) {
-        log(bot, `Refusing blind multi-block digDown at y=${startY}; use a staircase or branch mine instead.`);
-        return false;
-    }
-    if (distance > 2 && startY <= 32) {
-        log(bot, `Clamping blind digDown from ${distance} to 2 at y=${startY}.`);
-        distance = 2;
-    }
-
-    let start_block_pos = bot.blockAt(bot.entity.position).position;
-    for (let i = 1; i <= distance; i++) {
-        const targetBlock = bot.blockAt(start_block_pos.offset(0, -i, 0));
-        let belowBlock = bot.blockAt(start_block_pos.offset(0, -i-1, 0));
-
-        if (!targetBlock || !belowBlock) {
-            log(bot, `Dug down ${i-1} blocks, but reached the end of the world.`);
-            return true;
+    const intent = beginStallIntent(bot, STALL_INTENT.DIG, 'skills.digDown', { timeoutMs: 20000 });
+    let dugBlocks = 0;
+    const finish = (ok, reason, extra = {}) => {
+        const outcome = { ok, reason, dug: dugBlocks, requested: requestedDistance, startY, endY: Math.floor(bot.entity.position.y), at: Date.now(), ...extra };
+        bot._lastDigDownOutcome = outcome;
+        touchStallIntent(bot, intent, `${reason}:${dugBlocks}`);
+        return ok;
+    };
+    try {
+        if (distance > 2 && startY <= 16) {
+            log(bot, `Refusing blind multi-block digDown at y=${startY}; use a staircase or branch mine instead.`);
+            return finish(false, 'too-deep-for-blind-shaft');
+        }
+        if (distance > 2 && startY <= 32) {
+            log(bot, `Clamping blind digDown from ${distance} to 2 at y=${startY}.`);
+            distance = 2;
         }
 
-        // Check for lava/water in target, below, AND the 4 HORIZONTAL neighbours + block above.
-        // An aquifer floods the shaft from the SIDE (the old check only looked straight down) —
-        // that's the recurring y~45 underground drowning that掉装备→ignites the death spiral.
-        // Include flowing_water/flowing_lava (aquifers flow). Stop BEFORE breaking into the pocket.
-        const _WL = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
-        const _around = [targetBlock, belowBlock,
-            bot.blockAt(targetBlock.position.offset(1, 0, 0)), bot.blockAt(targetBlock.position.offset(-1, 0, 0)),
-            bot.blockAt(targetBlock.position.offset(0, 0, 1)), bot.blockAt(targetBlock.position.offset(0, 0, -1)),
-            bot.blockAt(targetBlock.position.offset(0, 1, 0))];
-        if (_around.some(b => b && _WL.has(b.name))) {
-            log(bot, `Dug down ${i - 1} blocks, stopping — water/lava adjacent (don't flood the shaft).`);
-            return false;
-        }
+        let start_block_pos = bot.blockAt(bot.entity.position).position;
+        for (let i = 1; i <= distance; i++) {
+            const targetBlock = bot.blockAt(start_block_pos.offset(0, -i, 0));
+            let belowBlock = bot.blockAt(start_block_pos.offset(0, -i-1, 0));
 
-        const MAX_FALL_BLOCKS = 2;
-        let num_fall_blocks = 0;
-        for (let j = 0; j <= MAX_FALL_BLOCKS; j++) {
-            if (!belowBlock || (belowBlock.name !== 'air' && belowBlock.name !== 'cave_air')) {
-                break;
+            if (!targetBlock || !belowBlock) {
+                log(bot, `Dug down ${i-1} blocks, but reached the end of the world.`);
+                return finish(true, 'world-end');
             }
-            num_fall_blocks++;
-            belowBlock = bot.blockAt(belowBlock.position.offset(0, -1, 0));
-        }
-        if (num_fall_blocks > MAX_FALL_BLOCKS) {
-            log(bot, `Dug down ${i-1} blocks, but reached a drop below the next block.`);
-            return false;
-        }
 
-        if (targetBlock.name === 'air' || targetBlock.name === 'cave_air') {
-            // 上游遗留的裸 console.log(targetBlock.position) 已并进这行 ——
-            // digDown 每跳过一格空气就刷一行 "Vec3 { x, y, z }"，玩家日志被灌满。
-            log(bot, `Skipping air block at (${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z})`);
-            continue;
-        }
+            // Check for lava/water in target, below, AND the 4 HORIZONTAL neighbours + block above.
+            // An aquifer floods the shaft from the SIDE (the old check only looked straight down) —
+            // that's the recurring y~45 underground drowning that掉装备→ignites the death spiral.
+            // Include flowing_water/flowing_lava (aquifers flow). Stop BEFORE breaking into the pocket.
+            const _around = [targetBlock, belowBlock,
+                bot.blockAt(targetBlock.position.offset(1, 0, 0)), bot.blockAt(targetBlock.position.offset(-1, 0, 0)),
+                bot.blockAt(targetBlock.position.offset(0, 0, 1)), bot.blockAt(targetBlock.position.offset(0, 0, -1)),
+                bot.blockAt(targetBlock.position.offset(0, 1, 0))];
+            if (_around.some(b => b && SHAFT_FLUIDS.has(b.name))) {
+                const detour = bot.interrupt_code ? { moved: false, interrupted: true } : await detourFromHazard(bot);
+                log(bot, detour.moved
+                    ? `Dug down ${dugBlocks} blocks, stopping before water/lava; kept the shaft sealed and moved ${detour.distance.toFixed(1)} blocks into a dry lateral pocket.`
+                    : `Dug down ${dugBlocks} blocks, stopping — water/lava adjacent and no safe lateral pocket was reachable.`);
+                return finish(false, 'adjacent-fluid', { detour });
+            }
 
-        let dug = await breakBlockAt(bot, targetBlock.position.x, targetBlock.position.y, targetBlock.position.z);
-        if (!dug) {
-            log(bot, 'Failed to dig block at position:' + targetBlock.position);
-            return false;
+            const MAX_FALL_BLOCKS = 2;
+            let num_fall_blocks = 0;
+            for (let j = 0; j <= MAX_FALL_BLOCKS; j++) {
+                if (!belowBlock || (belowBlock.name !== 'air' && belowBlock.name !== 'cave_air')) {
+                    break;
+                }
+                num_fall_blocks++;
+                belowBlock = bot.blockAt(belowBlock.position.offset(0, -1, 0));
+            }
+            if (num_fall_blocks > MAX_FALL_BLOCKS) {
+                const detour = bot.interrupt_code ? { moved: false, interrupted: true } : await detourFromHazard(bot);
+                log(bot, detour.moved
+                    ? `Dug down ${dugBlocks} blocks and detected a dangerous drop; left the floor sealed and moved ${detour.distance.toFixed(1)} blocks into a lateral safety pocket.`
+                    : `Dug down ${dugBlocks} blocks, but reached a dangerous drop and could not open a safe lateral pocket.`);
+                return finish(false, 'dangerous-drop', { fallBlocks: num_fall_blocks, detour });
+            }
+
+            if (targetBlock.name === 'air' || targetBlock.name === 'cave_air') {
+                // 上游遗留的裸 console.log(targetBlock.position) 已并进这行 ——
+                // digDown 每跳过一格空气就刷一行 "Vec3 { x, y, z }"，玩家日志被灌满。
+                log(bot, `Skipping air block at (${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z})`);
+                continue;
+            }
+
+            let dug = await breakBlockAt(bot, targetBlock.position.x, targetBlock.position.y, targetBlock.position.z);
+            if (!dug) {
+                log(bot, 'Failed to dig block at position:' + targetBlock.position);
+                return finish(false, 'dig-failed', { block: targetBlock.name, position: targetBlock.position });
+            }
+            dugBlocks++;
+            touchStallIntent(bot, intent, `dug:${dugBlocks}`);
         }
+        log(bot, `Dug down ${distance} blocks.`);
+        return finish(true, 'completed');
+    } finally {
+        endStallIntent(bot, intent);
     }
-    log(bot, `Dug down ${distance} blocks.`);
-    return true;
 }
 
 export async function digOneCapOne(bot) {

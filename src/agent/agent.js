@@ -326,11 +326,10 @@ export class Agent {
     // v2 只发不带值的 /gamerule keepInventory —— 纯只读查询(信息级, 与 RCON /seed /locate 同类,
     // 已授权), 服务器回 translate key commands.gamerule.query ("Gamerule keepInventory is currently
     // set to: true/false")。查询同样需要 cheats 权限, 权限不足/静默拒 → 告警, 由用户在世界层处置。
-    //   • 查到 true → 写 keepinv.json (surviveNow 求死分支的硬前置, 24h TTL) — 合法接替旧 RCON
-    //     复验职责, 每次 spawn 自动刷新。
+    //   • 查到 true → 写 keepinv.json (供死亡报告、跑坟和装备管理判断, 24h TTL), 每次 spawn 自动刷新。
     //   • 查到 false → 告警(每次死亡掉光全部物品), 明确指引: 是否开 keepInventory 是用户的决定,
-    //     bot 绝不自行 set; keepinv.json 写 value:false (诚实缓存, 求死分支自禁用)。
-    //   • 拒绝/6s 静默 → 告警, keepinv.json 不动(缺失/过期 = 求死分支自禁用, 安全默认)。
+    //     bot 绝不自行 set; keepinv.json 写 value:false (诚实缓存)。
+    //   • 拒绝/6s 静默 → 告警, keepinv.json 不动。
     // 幂等: 旧探针未结束就先拆掉再挂新的。
     _assertKeepInventory() {
         const b = this.bot;
@@ -339,7 +338,7 @@ export class Agent {
         const writeKeepinv = (val, why) => {
             try {
                 fs.writeFileSync(SUP('keepinv.json'), JSON.stringify({
-                    _comment: 'keepInventory verification cache - hard precondition for surviveNow deliberate-death branch. Written by C344v2 read-only in-game query on every spawn (no RCON on user LAN world). Branch self-disables when stale >24h or value!=true.',
+                    _comment: 'keepInventory verification cache for death reporting, corpse-run, and gear-management semantics. Written by C344v2 read-only in-game query on every spawn (no RCON on user LAN world).',
                     value: val,
                     verifiedVia: `in-game read-only query /gamerule keepInventory -> ${why}`,
                     ts: Date.now(),
@@ -365,7 +364,7 @@ export class Agent {
                 writeKeepinv(false, why);
             } else {
                 console.warn('★C344v2 keepInventory UNVERIFIED:', why);
-                evt(`KEEPINV UNVERIFIED — read-only query got no usable answer (${why}). Bot likely lacks cheats permission on this LAN world. keepinv.json untouched → surviveNow death-branch stays disabled (safe default). USER ACTION if desired: re-open to LAN with "Allow Cheats: ON".`);
+                evt(`KEEPINV UNVERIFIED — read-only query got no usable answer (${why}). Bot likely lacks cheats permission on this LAN world. keepinv.json untouched; corpse-run/gear logic will use its conservative fallback. USER ACTION if desired: re-open to LAN with "Allow Cheats: ON".`);
             }
         };
         probe.onMsg = (message, _pos, jsonMsg) => {
@@ -451,7 +450,7 @@ export class Agent {
         // action_manager, vision, websocket server, prismarine-viewer, and various plugins
         this.bot.setMaxListeners(50);
         
-        this.setupBotEventHandlers();
+        this.setupBotEventHandlers(this.bot);
     }
 
     /**
@@ -521,8 +520,10 @@ export class Agent {
         bot.on('message', onMsg);
     }
 
-    setupBotEventHandlers() {
-        this.bot.on('login', () => {
+    setupBotEventHandlers(bot = this.bot) {
+        const isCurrentBot = () => this.bot === bot && !bot._disposed;
+        bot.on('login', () => {
+            if (!isCurrentBot()) return;
             console.log(this.name, 'logged in!');
             serverProxy.login();
             
@@ -576,14 +577,21 @@ export class Agent {
         const spawnTimeoutDuration = settings.spawn_timeout || 30;
         if (this._spawnTimeout) { clearTimeout(this._spawnTimeout); this._spawnTimeout = null; }
         this._spawnTimeout = setTimeout(() => {
+            if (!isCurrentBot()) return;
             this._spawnTimeout = null;
             log(this.name, `Bot has not spawned after ${spawnTimeoutDuration}s (server slow/refusing) — reconnecting, NOT exiting.`);
-            void this.handleBotDisconnection('spawn-timeout');
+            void this.handleBotDisconnection('spawn-timeout', bot);
         }, spawnTimeoutDuration * 1000);
         
-        this.bot.once('spawn', async () => {
+        bot.once('spawn', async () => {
             try {
+                if (!isCurrentBot()) return;
                 if (this._spawnTimeout) { clearTimeout(this._spawnTimeout); this._spawnTimeout = null; }
+                const reconnectAttempt = bot._reconnectAttempt || 0;
+                this.reconnectAttempts = 0;
+                this._disconnectHandled = false;
+                this._reconnectNowInFlight = false;
+                if (reconnectAttempt > 0) console.log(`✅ Bot reconnected successfully (attempt ${reconnectAttempt}, spawn confirmed)`);
                 // HARD-DISABLED (unconditional): the prismarine-viewer browser renderer
                 // crashes the agent subprocess (exit 1) → auto-restart → ~15s offline → bot
                 // dies AFK. Env-gating didn't survive subprocess restarts, so the viewer (and
@@ -596,6 +604,7 @@ export class Agent {
 
                 // wait for a bit so stats are not undefined
                 await new Promise((resolve) => setTimeout(resolve, 1000));
+                if (!isCurrentBot()) return;
                 
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
@@ -631,6 +640,7 @@ export class Agent {
                 // right before restart — skip reset when the newest death is fresh(<10min)+near(<24b),
                 // that log is still relevant. Archive (rename .oldworld), don't delete — forensics.
                 try { await this._archiveStaleWorldStateOnSwitch(); } catch (e) { console.warn('world-scope reset failed:', e && e.message); }
+                if (!isCurrentBot()) return;
 
                 // Start WebSocket server and connect this agent
                 if (this.count_id === 0) { // Only start server for the first agent
@@ -654,28 +664,31 @@ export class Agent {
                 }
 
                 await new Promise((resolve) => setTimeout(resolve, 10000));
-                this.checkAllPlayersPresent();
+                if (isCurrentBot()) this.checkAllPlayersPresent();
 
             } catch (error) {
                 console.error('Error in spawn event:', error);
-                process.exit(0);
+                if (isCurrentBot()) void this.handleBotDisconnection(error, bot);
             }
         });
 
         // Bot event handlers
-        this.bot.on('error', (err) => {
+        bot.on('error', (err) => {
+            if (!isCurrentBot()) return;
             if (String(err).includes('Duplicate') || String(err).includes('ECONNREFUSED')) {
-                void this.handleBotDisconnection(err);
+                void this.handleBotDisconnection(err, bot);
             } else {
                 log(this.name, `[LoginGuard] Connection Error: ${String(err)}`);
             }
         });
 
-        this.bot.on('end', async (reason) => {
-            await this.handleBotDisconnection(reason);
+        bot.on('end', async (reason) => {
+            if (!isCurrentBot()) return;
+            await this.handleBotDisconnection(reason, bot);
         });
 
-        this.bot.on('death', () => {
+        bot.on('death', () => {
+            if (!isCurrentBot()) return;
             console.log(`${this.name} died, stopping current actions...`);
             // ★death stamp (read by kernel's busy-stuck watchdog post-death fast path —
             // NOT by skills; the NOTE below about death-abort flags still governs those).
@@ -773,11 +786,13 @@ export class Agent {
             this.monitorRespawn();
         });
 
-        this.bot.on('kicked', async (reason) => {
-            await this.handleBotDisconnection(reason);
+        bot.on('kicked', async (reason) => {
+            if (!isCurrentBot()) return;
+            await this.handleBotDisconnection(reason, bot);
         });
 
-        this.bot.on('messagestr', async (message, _, jsonMsg) => {
+        bot.on('messagestr', async (message, _, jsonMsg) => {
+            if (!isCurrentBot()) return;
             if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
                 console.log('Agent died: ', message);
                 let death_pos = this.bot.entity.position;
@@ -875,7 +890,10 @@ export class Agent {
         });
     }
 
-    async handleBotDisconnection(reason) {
+    async handleBotDisconnection(reason, sourceBot = this.bot) {
+        // An old socket can emit end/error after a replacement has already started.
+        // It must never tear down the current generation or schedule another retry.
+        if (sourceBot !== this.bot || sourceBot?._disposed) return;
         if (this._disconnectHandled) return;
         this._disconnectHandled = true;
 
@@ -964,8 +982,12 @@ export class Agent {
 
         console.log(`Waiting ${Math.round(delay / 1000)} seconds before reconnection...`);
         
-        setTimeout(async () => {
+        const disconnectedEpoch = this._botEpoch || 0;
+        if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(async () => {
+            this._reconnectTimer = null;
             try {
+                if ((this._botEpoch || 0) !== disconnectedEpoch || this.bot !== sourceBot) return;
                 // Create new bot instance
                 const deadBot = this.bot;
                 // 重探：用户中途把世界从 Fabric 换成 Forge（或反过来）时缓存会过期。
@@ -973,22 +995,28 @@ export class Agent {
                 await probeForge({ host: settings.host, port: settings.port });
                 this.bot = initBot(this.name);
                 this._stampBotEpoch();
+                this.bot._reconnectAttempt = this.reconnectAttempts;
                 this._disconnectHandled = false;
+                this.bot.setMaxListeners(50);
+                this._disposeDeadBot(deadBot);
 
                 // Re-initialize modes for the new bot instance
                 initModes(this);
 
-                this.setupBotEventHandlers();
+                this.setupBotEventHandlers(this.bot);
                 // ★2026-07-09 GHOST-STACK KILL: 上一代 bot 对象上仍在跑的技能/内核循环 (实录: 重连后
                 //   prepNether→chopWood 幽灵在柱顶坐标冻结狂刷 6 小时, 还把真 bot 身边的树拉黑) —
                 //   毒化尸体, 让任何残留 await 链一碰就 STALE-BOT 退出。
-                this._poisonDeadBot(deadBot);
-                console.log(`✅ Bot reconnected successfully (attempt ${this.reconnectAttempts})`);
             } catch (error) {
                 console.error(`❌ Reconnection attempt ${this.reconnectAttempts} failed:`, error);
                 if (this.reconnectAttempts >= this.maxReconnectAttempts) {
                     console.error('Max reconnection attempts reached. Killing agent process.');
                     this.cleanKill('Max reconnection attempts reached. Killing agent process.');
+                } else {
+                    // A synchronous create/setup failure does not emit an `end` event.
+                    // Drive the next backoff explicitly so retries cannot silently stop.
+                    this._disconnectHandled = false;
+                    void this.handleBotDisconnection(error, this.bot);
                 }
             }
         }, delay);
@@ -1025,6 +1053,25 @@ export class Agent {
     _stampBotEpoch() {
         this._botEpoch = (this._botEpoch || 0) + 1;
         try { this.bot._instanceEpoch = this._botEpoch; } catch (e) {}
+    }
+
+    _disposeDeadBot(deadBot) {
+        if (!deadBot || deadBot === this.bot || deadBot._disposed) return;
+        deadBot._disposed = true;
+        try { deadBot.physicsEnabled = false; } catch (e) {}
+        try { deadBot.interrupt_code = true; } catch (e) {}
+        try { deadBot.pathfinder?.stop?.(); } catch (e) {}
+        try { deadBot.pvp?.stop?.(); } catch (e) {}
+        try { deadBot.collectBlock?.cancelTask?.(); } catch (e) {}
+        try { deadBot.clearControlStates?.(); } catch (e) {}
+        try { deadBot.viewer?.close?.(); } catch (e) {}
+        try { deadBot._client?.end?.('superseded by reconnect'); } catch (e) {}
+        try { deadBot._client?.socket?.destroy?.(); } catch (e) {}
+        try { deadBot.removeAllListeners?.(); } catch (e) {}
+        try { deadBot.world?.removeAllListeners?.(); } catch (e) {}
+        try { deadBot._client?.removeAllListeners?.(); } catch (e) {}
+        try { deadBot._client?.socket?.removeAllListeners?.(); } catch (e) {}
+        this._poisonDeadBot(deadBot);
     }
 
     // ★2026-07-09 GHOST-STACK KILL (实录 01:07 重连后 prepNether/chopWood 幽灵栈在旧 bot 上跑了

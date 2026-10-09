@@ -5,15 +5,22 @@ import settings from './settings.js'
 import convoManager from './conversation.js';
 import fs from 'fs';
 import Vec3 from 'vec3';
+import { appendTelemetry } from '../utils/telemetry.js';
 // Framework v2 lava_guard — pure read predicate (no lane, no flag), safe to call
 // from a reflex. Wires the blueprint §E.2 "never clutch over lava" guard into the
 // live MLG reflex below (the inline floor-scan skipped lava: boundingBox 'empty'≠'block').
 import { canClutchWater } from './framework/tools/lava_guard.js';
+import {
+    isUnderwaterMiningTask,
+    shouldSuppressSwimJumpForUnderwaterDig,
+} from './framework/tools/water_navigation.js';
 // 身体所有权仲裁 (Phase 1, 设计稿 bots/_supervisor/arbitration-design.md): execute() 是
 // 反射抢身体的唯一入口, 在这里挂接入点 A + 所有权令牌。
 import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as arbiterCurrentOwner, vitalNow as arbiterVitalNow } from './framework/arbiter.js';
 // ★2026-07-08 用户令: auto_eat 的「补血 vs 补体力」开关 (临时禁用饥饿/食物本能)。见 contracts.foodInstinctsEnabled。
-import { foodInstinctsEnabled, hpInstinctsEnabled } from './framework/contracts.js';
+import { foodInstinctsEnabled } from './framework/contracts.js';
+import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
+import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -88,27 +95,17 @@ async function say(agent, message) {
     agent.openChat(message);
 }
 
-// ★2026-07-05 灰区指挥官 (session#4 大修): surviveNow 技能激活期间(滚动 30s 心跳戳,
-// 技能主循环刷新; 技能楔死/退出后 ≤30s 自动失效)挂起绕过 execute() 仲裁的软压制路径 —
-// 灰区(中低血粮+中威胁)的每个僵局都是 2-4 个局部合理否决闸的合取, 唯一决策人收敛到
-// surviveNow 的确定性树(吃>打>床>觅食>挖墙转移>求死重置)。走 execute() 的 hold 由
-// arbitration.json 的 kernel:surviveNow 精确行统一挡下, 不经此旗。真·保命地板
-// (arbiter.vitalNow: 溺水/着火/hp<=4 掉血/岩浆)不受此旗影响。
-function surviveNowActive(bot) {
-    try { return !!(bot && bot._surviveNowUntil && Date.now() < bot._surviveNowUntil); } catch (e) { return false; }
-}
-
 // ★2026-07-07 命令战斗覆盖 (用户令): 外部指令驱动战斗时置滚动戳 bot._commandedFightUntil
 // (ws_server.runSkill 对战斗技能置/finally 清)。self_preservation.shouldFlee 据此 override "胆怯档"
-// 逃跑(hp<7 / 无盾被远程 / 无盾打不过), 但仍对真死局逃: 苦力怕8格内(贴脸爆炸秒杀) 或 ≥3围殴(被磨死)。
-// 硬地板(arbiter.vitalNow: hp≤4掉血/溺水/着火)独立生效、不受此旗影响=顶着恐惧打但不自杀。
+// 常规逃跑让位，但仍对现实死局逃: 苦力怕8格内(贴脸爆炸秒杀) 或 ≥3围殴。
+// 环境地板(arbiter.vitalNow: 溺水/着火/岩浆)独立生效、不受此旗影响。
 function commandedFightActive(bot) {
     try { return !!(bot && bot._commandedFightUntil && Date.now() < bot._commandedFightUntil); } catch (e) { return false; }
 }
 
 // ★2026-07-08 用户令 (admin 意志 = 独占 / 绝对): 当一条 admin 指令/任务正在驱动 (bot._extIntentUntil 新鲜)
 //   且【当前不是致命态】时 → 处于"admin 独占期"。此时除【致命/保命】外, 一切非致命本能、蓝图 (kernel)、
-//   觅食 (feedUp/getFood) 全部冻结让位 admin。唯一放行的打断是 arbiter.vitalNow (溺水/着火/岩浆/hp≤4)。
+//   觅食 (feedUp/getFood) 全部冻结让位 admin。唯一放行的打断是 arbiter.vitalNow (溺水/着火/岩浆)。
 //   调用方 (execute() 的本能门 + reflex_watchdog 的强制转移升级) 据此让位。饥饿已退环境, 永不作为让位条件。
 function adminExclusiveActive(bot) {
     try {
@@ -142,23 +139,22 @@ function hasLineOfSight(bot, ent) {
 function famineBodyFreeze(agent, owner) {
     const bot = agent && agent.bot;
     if (!bot || !bot.entity) return false;
-    if (surviveNowActive(bot)) return false;   // ★灰区指挥官持体: 树自带觅食/求死出口, 冻结即死锁
     // ★C228: yield to an explicitly-dispatched recovery VENTURE (③ missionNether's FAMINE
     // backoff dispatches forageExplore to walk OUT of a food desert). The skill-name allowlist
     // below CANNOT see it — a nested customSkill leaves bot._currentSkill = the sticky
     // ('missionNether'), so the freeze pinned the body and the dispatched forage couldn't move
     // → permanent absorbing-state freeze at food0/hp10 (the multi-hour lock). While the venture
     // flag is fresh the mover owns the body (forageExplore carries its own night/hostile/hp-abort
-    // gates — proper exit, not a hole). Same flag-yield mechanism as C225's noRegenSafeAirHold.
+    // gates — proper exit, not a hole).
     if (Date.now() < (bot._recoveryVentureUntil || 0)) return false;
-    if (bot.food > 0 && !(bot.food <= 2 && bot.health <= 8)) return false;
+    if (bot.food > 0) return false;
     const skill = bot._currentSkill || '';
     // Food-acquisition / escape skills MUST be allowed to move the body even at food=0 — else
     // the freeze has no exit and the bot soft-locks forever (C210). forage carries its own
     // travel-budget safety gate (won't march into deep water / far targets at low food), so
     // whitelisting it here is the freeze's proper exit, not a hole. escapePlan likewise owns
     // movement authority when breaking a trap.
-    if (/feedUp|surfaceUp|consume|auto_eat|forage|forageExplore|migrate|escapePlan|digReset/i.test(skill)) return false;
+    if (/feedUp|surfaceUp|consume|auto_eat|forage|forageExplore|migrate|escapePlan/i.test(skill)) return false;
     const edible = bot.inventory && bot.inventory.items().some(i => i && i.name && FAMINE_FOOD_RE.test(i.name));
     if (edible) return false;
     const p = bot.entity.position;
@@ -195,7 +191,6 @@ function famineBodyFreeze(agent, owner) {
 function combatHasPriority(bot) {
     try {
         if (!bot || !bot.entity) return false;
-        if (bot.health <= 6) return false;                                   // 危血 — 让 flee/seal 赢, 别站撸
         const hasWeapon = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name) && !/pickaxe/.test(i.name));
         if (!hasWeapon) return false;                                        // 裸手 — 别站撸送命
         const p = bot.entity.position;
@@ -219,12 +214,12 @@ function combatHasPriority(bot) {
 // 逃跑反被同速怪背刺)。
 // 与既有 self_preservation.armoredZombieBrawl 的分工: 那门是"穿甲 + 僵尸类【贴脸】(可成群)站撸";
 // 本门是"穿甲 + 武器 + 全场【仅一只】怪(含骷髅远射, 不要求贴脸)死战" — 专补"甲兵 vs 单只小白"这一被
-// 漏掉的场景(骷髅在 4.5b 外远射 → 贴脸例外/僵尸门都不触发 → 落到盾牌 flee, 却又低血被 self_defense
-// minHp 门拒战 = 用户实录的"既不逃也不打")。模块级函数: self_preservation.shouldFlee 与 self_defense
+// 漏掉的场景(骷髅在 4.5b 外远射 → 贴脸例外/僵尸门都不触发 → 落到盾牌 flee)。
+// 模块级函数: self_preservation.shouldFlee 与 self_defense
 // 两处共用同一判据 (前者放行不逃, 后者放行开打, 缺一则又卡回原僵局)。
 // 硬边界 (绝不越, 与全项目安全铁律一致):
 //   · 8格内有苦力怕 → 不适用 (甲挡不住贴脸爆炸, 交常规逃跑分支拉开距离);
-//   · hp≤4掉血 / 溺水 / 着火 由 arbiter.vitalNow 独立夺体逃命 — 本门只裁"该不该怂", 不碰致命环境急症;
+//   · 溺水 / 着火 / 岩浆由 arbiter.vitalNow 独立处理 — 本门只裁"该不该怂", 不碰环境急症;
 //   · "单只" = 16格内非苦力怕敌对怪恰为 1 (成群仍逃 — 甲扛不住多怪 DPS 叠加, 用户也只说"单只怪");
 //   · 必须【穿戴】护甲(slot 5-8)且【持/有】剑或斧 — 背包里的甲不减伤、裸手站撸都是送死, 不适用。
 function armoredSoloBrawl(bot) {
@@ -452,98 +447,13 @@ function detectSealedRoom(bot) {
     } catch (e) { return { sealed: false }; }
 }
 
-// ★2026-07-05 家族级预算包装器 (unstuck 侧预算落地后 self_preservation flee-hold 同病
-// 复发, 15min 墨西哥僵局)。预算下沉到共享谓词, 一处覆盖全部消费者: hold 真实成立期间
-// 连续 >4min 且 food 无增 → 自答 null (全家失效, 正常行为接管); food 上升或 hold 条件
-// 消失即重置计时。LETHAL 情形 raw 本就返回 null, 不受影响。
-function lowHpNoRegenContainedHold(bot) {
-    const held = _lowHpNoRegenContainedHoldRaw(bot);
-    if (!held) {
-        // ★闪抖防重置 (21:36 实录: raw 条件的怪距/覆盖项瞬时翻假一次就清计时, 骷髅在阈值
-        // 附近晃 = 4min 永远凑不满)。连续非 hold >30s 才真正重置计时。
-        try {
-            if (bot) {
-                if (!bot._nrpNotHeldSince) bot._nrpNotHeldSince = Date.now();
-                else if (Date.now() - bot._nrpNotHeldSince > 30000) { bot._nrpHoldSince = 0; }
-            }
-        } catch (e) {}
-        return null;
-    }
-    try {
-        bot._nrpNotHeldSince = 0;
-        if (!bot._nrpHoldSince || bot.food > (bot._nrpHoldFood ?? -1)) {
-            bot._nrpHoldSince = Date.now(); bot._nrpHoldFood = bot.food;
-        } else if (Date.now() - bot._nrpHoldSince > 240000) {
-            if (Date.now() - (bot._nrpHoldSpentLogAt || 0) > 30000) {
-                bot._nrpHoldSpentLogAt = Date.now();
-                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [hold-budget] no-regen hold 家族预算耗尽 (>4min food 无增) — 谓词自答 null, 放行一切\n`); } catch (e) {}
-            }
-            return null;
-        }
-    } catch (e) {}
-    return held;
-}
-function _lowHpNoRegenContainedHoldRaw(bot) {
-    if (!bot || !bot.entity) return null;
-    // ★2026-07-09 用户令 (低血/饥饿全熔断): 低血无回血冻身 hold 整族熔断 — 低血不冻任何行动,
-    //   死了拉倒。恢复: MC_HP_INSTINCTS=1 重启。见 contracts.hpInstinctsEnabled。
-    if (!hpInstinctsEnabled()) return null;
-    // ★RECOVERY-SKILL EXIT: a deliberately-dispatched escape/relocate/forage skill MUST be able
-    // to move even at low hp — otherwise this hold vetoes ALL supervisor-skill movement (incl.
-    // the very food-seeking that would save the bot), and a food-starved bot FAMINE-holds to a
-    // permanent stall (the multi-hour hp7/food4 lock). These skills carry their own per-step
-    // hp-abort / safety gates, so this is the hold's proper exit, not a hole.
-    // ★T-0101/T-0083 FROZEN-ALIVE 互锁破除 (worker-frozen): feedUp/villageHarvest 加入放行白名单。
-    //   旧注释自相矛盾("feedUp keep their low-hp conservatism")——但 feedUp/villageHarvest 正是
-    //   解 food=0 的唯一觅食路径,被这个 hold 挡住移动 = 死锁的核心(9h 实锤)。决策层(world_model
-    //   isFamineStall)已改派它们去 village 觅食,这里必须放行让它们移动。它们自带 hostileNear/
-    //   hp gate + villageHarvest hard-defers on hostiles>2/hp<=4,不会无脑冲怪堆(C32 安全约束保留)。
-    //   且本函数 149-151/174 行已对 water/lava/fire/坠落/被弹/贴脸 creeper 返回 null(那些 LETHAL
-    //   情形不进入此 hold)→ 放行觅食只发生在"封箱安全但食料切れ"的正确场景。
-    if (/forageExplore|escapePlan|digReset|feedUp|villageHarvest|surviveNow/i.test(bot._currentSkill || '')) return null;
-    if (surviveNowActive(bot)) return null;   // ★灰区指挥官激活(嵌套技能期间名单看不见外层, 旗兜底)
-    if (!(bot.health <= 8 && bot.food < 18)) return null;
-    const hasNormalFood = bot.inventory && bot.inventory.items().some(i => i && i.name && NORMAL_FOOD_RE.test(i.name));
-    if (hasNormalFood) return null;
-    const p = bot.entity.position;
-    const feet = bot.blockAt(p) || { name: 'air' };
-    const head = bot.blockAt(p.offset(0, 1, 0)) || { name: 'air' };
-    if (/water|lava|fire/.test(feet.name || '') || /water|lava|fire/.test(head.name || '')) return null;
-    if (!bot.entity.onGround && bot.entity.velocity && bot.entity.velocity.y < -0.25) return null;
-    if (Date.now() - (bot.lastDamageTime || 0) < 4000) return null;
-
-    let covered = false;
-    try {
-        for (let dy = 2; dy <= 6; dy++) {
-            const b = bot.blockAt(p.offset(0, dy, 0));
-            if (b && b.boundingBox === 'block') { covered = true; break; }
-        }
-    } catch (e) {}
-    const mob = bot._mobility ? (bot._mobility.state || '') : '';
-    const enclosed = !!(bot._mobility && bot._mobility.enclosed);
-    if (!(/MAROONED|POCKET|ENTOMBED/.test(mob) || enclosed || covered)) return null;
-
-    let closest = Infinity;
-    let closestName = null;
-    for (const e of Object.values(bot.entities || {})) {
-        if (!(e && e !== bot.entity && e.position && mc.isHostile(e))) continue;
-        const d = e.position.distanceTo(p);
-        if (d < closest) {
-            closest = d;
-            closestName = e.name || 'hostile';
-        }
-    }
-    if (closestName && (closest < 4.25 || (/creeper/i.test(closestName) && closest < 5.5))) return null;
-    return { mob, enclosed, covered, closest, closestName };
-}
-
 // ★T-0101/T-0083 FROZEN-ALIVE 互锁破除 (worker-frozen) — 反射层这一端。
 //   决策层(world_model.js isFamineStall)已破 HOLD@95 与 villageClose 否决,改派 GET_FOOD/
 //   villageHarvest 去 village 觅食;kernelDriver reflexBusy 也已放行。但 self_preservation 反射
 //   仍会每拍 execute 一个 hold(wait)抢占身体 → 派发的觅食 skill 跑不动(worker-food 9h 实锤:
 //   "打破日志疯刷但 bot 从不真走")。所以反射层也必须在饥饿僵局+觅食 skill 运行时让位。
-//   判据与 world_model.js / kernelDriver.js 同口径(单一真相):低血纯因 food 见底(<=2)不回血
-//   + 无 LETHAL 急症(贴脸 creeper<4.5 / 正在挨打 / hp 极危<=4 / swarm 围殴贴脸)。
+//   判据与 world_model.js / kernelDriver.js 同口径: food 见底(<=2)
+//   + 无现实急症(贴脸 creeper<4.5 / 正在挨打 / swarm 围殴贴脸)。
 //   ★安全约束(C32): LETHAL 急症一律压制——不放行,仍守 hold/backoff(出洞撞 creeper 送死)。
 //   ★只在觅食 skill(feedUp/villageHarvest/forageExplore)真在跑时让位,空 commitment 不让位
 //   (否则 bot 干站着,反射该接管避险)。
@@ -552,13 +462,11 @@ function famineForageActive(bot) {
         if (!bot || !bot.entity) return false;
         const cur = bot._currentSkill || '';
         if (!/feedUp|villageHarvest|forageExplore/i.test(cur)) return false;
-        const hp = bot.health != null ? bot.health : 20;
         const food = bot.food != null ? bot.food : 20;
-        if (!(food <= 2 && hp < 10)) return false;
+        if (food > 2) return false;
         // food<18 = 无自然回血(canRegen=false 的近似:这里直接用 food<18)。food<=2 已远低于此。
         // LETHAL 环境急症检测(就近实测,不依赖 bot._world 新鲜度)。
         if (Date.now() - (bot.lastDamageTime || 0) < 2500) return false;       // 正在挨打
-        if (hp <= 4) return false;                                             // hp 极危
         const p = bot.entity.position;
         let creeperD = Infinity, actionable = 0;
         for (const e of Object.values(bot.entities || {})) {
@@ -576,13 +484,12 @@ function famineForageActive(bot) {
 
 function tableRecoveryHold(bot) {
     if (!bot || !bot.entity) return null;
-    if (surviveNowActive(bot)) return null;   // ★灰区指挥官持体期间不 hold
     let isNight = false;
     try {
         const t = bot.time && bot.time.timeOfDay;
         isNight = t >= 13000 && t <= 23000;
     } catch (e) {}
-    if (bot.health < 14 || bot.food < 14) return null;
+    if (bot.food < 14) return null;
     const mob = bot._mobility ? (bot._mobility.state || '') : '';
     const enclosed = !!(bot._mobility && bot._mobility.enclosed);
     if (!(/POCKET|ENTOMBED/.test(mob) || enclosed)) return null;
@@ -653,7 +560,7 @@ function tableRecoveryHold(bot) {
 const modes_list = [
     {
         name: 'self_preservation',
-        description: 'Respond to drowning, burning, and damage at low health. Interrupts all actions.',
+        description: 'Respond to drowning, burning, falls, and concrete threats. Interrupts all actions.',
         interrupts: ['all'],
         on: true,
         active: false,
@@ -712,7 +619,7 @@ const modes_list = [
             if (this.isDay(bot)) {
                 // Hysteresis: the backoff loop exits at >9m, so re-entering at 11m
                 // produces day-long body theft around harmless distant creepers.
-                return d <= (bot.health < 12 || swarmClose ? 10 : 8.25) ? cr : null;
+                return d <= (swarmClose ? 10 : 8.25) ? cr : null;
             }
             return d <= (swarmClose ? 11 : 9.5) ? cr : null;
         },
@@ -766,7 +673,6 @@ const modes_list = [
             };
             try {
                 if (!bot || !bot.entity || this.isDay(bot)) return status;
-                if (surviveNowActive(bot)) return status;   // ★灰区指挥官持体: 夜 hold 让位给树
                 const p = bot.entity.position;
                 const feet = bot.blockAt(p) || { name: 'air' };
                 const head = bot.blockAt(p.offset(0, 1, 0)) || { name: 'air' };
@@ -937,8 +843,8 @@ const modes_list = [
         shouldFlee: function (bot) {
             const hostiles = this.nearbyHostiles(bot);
             // ★2026-07-07 命令战斗覆盖 (见 commandedFightActive): 外部指令死战时, 只在真死局才逃
-            // (苦力怕8格内 或 ≥3围殴), 其余胆怯档(hp<7/无盾被远程/无盾打不过)全顶过去继续打。
-            // hp≤4掉血/溺水/着火 硬地板由 arbiter.vitalNow 独立处理, 不受此分支影响。
+            // (苦力怕8格内 或 ≥3围殴), 其余常规退避判断全顶过去继续打。
+            // 溺水/着火/岩浆由 arbiter.vitalNow 独立处理, 不受此分支影响。
             if (commandedFightActive(bot)) {
                 return hostiles.some(e => /creeper/i.test(e.name || '') && e.position.distanceTo(bot.entity.position) < 8)
                     || hostiles.length >= 3;
@@ -969,10 +875,10 @@ const modes_list = [
                     && bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name))) return false;
             }
             // ★ARMORED ZOMBIE BRAWL (见 armoredZombieBrawl): 穿甲 + 僵尸类贴脸 → 死战不逃, 越过下方所有
-            // 胆怯档(无盾被远程 / hp<7 / 无盾打不过 / 僵尸群围殴)。仅贴脸生效, creeper/vitalNow 硬地板不越。
+            // 常规退避档(无盾被远程 / 无盾打不过 / 僵尸群围殴)。仅贴脸生效, creeper/vitalNow 硬地板不越。
             if (this.armoredZombieBrawl(bot)) return false;
             // ★ARMORED SOLO BRAWL (见模块级 armoredSoloBrawl): 穿甲 + 有武器 + 全场仅一只非苦力怕怪 →
-            // 死战不逃, 越过下方所有胆怯档(无盾被远程 / hp<7 / 无盾打不过)。含骷髅远射。creeper/vitalNow 不越。
+            // 死战不逃, 越过下方所有常规退避档(无盾被远程 / 无盾打不过)。含骷髅远射。creeper/vitalNow 不越。
             if (armoredSoloBrawl(bot)) return false;
             if (!_shield0 && _hurt && Object.values(bot.entities).some(e => e && e.position && /skeleton|stray/i.test(e.name || '') && e.position.distanceTo(bot.entity.position) < 16)) return true;
             if (hostiles.length === 0) return false;
@@ -987,20 +893,20 @@ const modes_list = [
             // A fresh respawn carries no weapon. Fleeing / "digging in" forever vs a single melee
             // mob at full hp means the bot can NEVER chop wood and craft a sword — it just spams
             // "Outmatched — digging in!" ~3x/second, gets anchored→MAROONED, and stays locked until
-            // it dies, respawns unarmed, and repeats (the whole multi-hour stall). At hp>=16 facing
-            // exactly ONE non-ranged, non-creeper mob, do NOT flee: let the bot move and bootstrap
+            // it dies, respawns unarmed, and repeats (the whole multi-hour stall). Facing exactly
+            // ONE non-ranged, non-creeper mob, do NOT flee: let the bot move and bootstrap
             // (or punch it). One melee mob can't kill a full-hp bot before it acts. Ranged/creeper/
-            // swarm/low-hp/recently-hurt-by-skeleton are all handled above and still flee.
-            if (!hasWeapon && bot.health >= 16 && hostiles.length === 1
+            // swarm/recently-hurt-by-skeleton are all handled above and still flee.
+            if (!hasWeapon && hostiles.length === 1
                 && !/skeleton|stray|creeper|witch|ghast|blaze|pillager/i.test(hostiles[0].name || '')) return false;
             // With a sword AND shield we can actually WIN (block arrows/hits, close,
             // strike) — don't flee, let self_defense's shieldFight take it. Only flee
             // when truly outmatched: critically low, or genuinely swarmed (3+).
-            if (hasWeapon && hasShield) return bot.health < 7 || hostiles.length >= 3;
+            if (hasWeapon && hasShield) return hostiles.length >= 3;
             // No shield: stay conservative (can't block arrows) — flee if can't win.
-            const cantWin = !hasWeapon || bot.health < 14 || hostiles.length >= 2;
+            const cantWin = !hasWeapon || hostiles.length >= 2;
             const closest = Math.min(...hostiles.map(e => e.position.distanceTo(bot.entity.position)));
-            return cantWin && (recentlyHurt || bot.health < 14 || closest < 5);
+            return cantWin && (recentlyHurt || closest < 5);
         },
         isDay: function (bot) { try { return !bot.time || bot.time.timeOfDay < 13000 || bot.time.timeOfDay > 23000; } catch (e) { return true; } },
         // ★SMART FLEE MOVE (fixes "逃跑乱跳卡台阶/树"): the old raw flee held jump=true every tick
@@ -1210,15 +1116,12 @@ const modes_list = [
             //   覆盖夜间保命本能"): while an admin command/mission is driving (bot._extIntentUntil — set
             //   ONLY for source==='admin' + AdminMission, NOT random player chat), the PROACTIVE night
             //   shelter instinct YIELDS — the bot keeps doing what admin asked (e.g. mine at night)
-            //   instead of preventively bunkering. Mirror the kernel's exact mission yield-floor
-            //   (kernel.js:243-258) so modes ↔ kernel agree: yield only while NOT critical
-            //   (hp>11/food>7 in a mission, hp>6/food>2 for a one-shot admin turn); below that the
-            //   reflex reasserts and shelters. Hard floor (vitalNow: 溺水/着火/岩浆/hp≤4) + REACTIVE
+            //   instead of preventively bunkering. Mirror the kernel's admin-exclusive window.
+            //   Environment floor (vitalNow: 溺水/着火/岩浆) + REACTIVE
             //   defenses (shouldFlee / creeper dodge) are UNAFFECTED — they fire regardless of admin.
             if (bot._extIntentUntil && Date.now() < bot._extIntentUntil) {
                 // ★2026-07-08 用户令 (admin 独占/绝对 · 冻结所有非致命本能): 主动夜宿是【非致命预防本能】,
-                //   admin 任务期间一律让位 —— 不再看 hp/food floor (饥饿已退环境; 旧 floor 让饿到 food≤7 就
-                //   恢复夜宿把 admin 拽去封箱)。真·致命自救 (vitalNow: 溺水/着火/岩浆/hp≤4) 走 self_preservation
+                //   admin 任务期间一律让位 —— 不再看 hp/food floor。环境自救 (vitalNow: 溺水/着火/岩浆) 走 self_preservation
                 //   的硬地板分支、反应式 shouldFlee/creeper 死战防御独立生效, 均不受本让位影响 (它们不经此门)。
                 return false;
             }
@@ -1236,7 +1139,7 @@ const modes_list = [
             // self_preservation bunker/flee EVERY night → self_defense (lower priority) never got
             // to fight → an EQUIPPED bot never used its sword+shield, just fled, and when the
             // bunker couldn't seal (water edge) it got caught by the swarm and died. Now mirror
-            // shouldFlee's win-condition: if we can WIN (sword + shield + decent HP, not a 3+
+            // shouldFlee's win-condition: if we can WIN (sword + shield, not a 3+
             // swarm) DON'T shelter — let self_defense stand and kill the mobs (a human with iron
             // sword+shield drops 1-2 zombies trivially). Only bunker when NAKED/weak/swarmed
             // (the early-game case the night instinct was actually for).
@@ -1249,18 +1152,17 @@ const modes_list = [
             // 有盾,但 bot 无铁→无盾,于是每晚面对一个僵尸都去 BUNKER 而不是砍死它——挖洞比"木剑
             // 4 下"更慢更脆,封不住时手握填充块(非剑)被打死(=那 80% 空手). 单个僵尸/尸壳/蜘蛛贴脸
             // 根本不需要盾(盾是防箭/防群的): 木剑几下解决. 所以当恰好 1 个可达、非苦力怕、非远程
-            // 的怪已经 point-blank(<4.5格)、我们有剑且非危血时, 别 shelter——让位给 self_defense 的
+            // 的怪已经 point-blank(<4.5格)、我们有剑时, 别 shelter——让位给 self_defense 的
             // point-blank 路径(任何血量在<4.5格都开打)去收尾. 砍死后下一拍正常 shelter(不抖动: 击杀
-            // 是决定性的、直接移除威胁). 苦力怕/远程/成群/极低血 仍照常 bunker.
+            // 是决定性的、直接移除威胁). 苦力怕/远程/成群仍照常 bunker.
             const _RANGED = /skeleton|stray|witch|ghast|blaze|pillager/i;
             const _me = bot.entity.position;
             const _closest = swarm ? Math.min(...hostiles.map(e => e.position.distanceTo(_me))) : 99;
             const soloMeleeFinisher = hasSword && swarm === 1 && _closest < 4.5
                 && !/creeper/i.test(hostiles[0].name || '')
-                && !_RANGED.test(hostiles[0].name || '')
-                && bot.health >= 8;
+                && !_RANGED.test(hostiles[0].name || '');
             if (soloMeleeFinisher) return false;
-            const canWin = hasSword && hasShield && bot.health >= 8 && swarm < 3;
+            const canWin = hasSword && hasShield && swarm < 3;
             return !canWin;
         },
         // ★CREEPER PUNCH-BACK (P0 enclosed-pocket creeper death — proactive primitive #1).
@@ -2001,10 +1903,11 @@ const modes_list = [
                 // ★2026-07-09 修 (挖黑曜石站水边被反复拽出): 与 goto 让位同策 —— 正在挖/采集 (admin 任务
                 //   或 mineflayer 正在 dig 一块) 且没在真淹血时, 不因站在水/岩浆边就 hijack 去"游上岸"。
                 //   黑曜石 ~9.4s/块, 每个无打断窗口远短于此, [C] surface get-out 反复抢身 → collectBlocks
-                //   全程返回 undefined、一块都挖不完 (实录 2026-07-09)。只按住 jump 骑水面 (不下沉、头出水面
-                //   回氧), 挖矿交给动作本身; 氧≤0 真扣血 (drowningDamage) 或深水将溺 (上面 [A] 分支) 照常抢身。
-                const miningActive = !!bot.targetDigBlock
-                    || !!(bot._adminMission && bot._adminMission.active);
+                //   全程返回 undefined、一块都挖不完 (实录 2026-07-09)。水面/悬浮时按 jump 保持呼吸，已落底
+                //   则松 jump 站稳以免叠加悬空挖掘惩罚；挖矿交给动作本身。氧≤0 真扣血 (drowningDamage)
+                //   或深水将溺 (上面 [A] 分支) 照常抢身。
+                const underwaterMiningActive = isUnderwaterMiningTask(bot);
+                const miningActive = !!bot.targetDigBlock || underwaterMiningActive;
                 if (drowning && y0 < 55) {
                     // DEEP & out of air (flooded tunnel / aquifer): no shore to swim to.
                     // The OLD code only towered straight UP toward the distant surface —
@@ -2076,7 +1979,7 @@ const modes_list = [
                         try { bot.clearControlStates(); } catch (e) {}
                     });
                 }
-                else if (gotoActive && !drowningDamage && !_jumpFutile && _swimCrossing) {
+                else if (gotoActive && !miningActive && !drowningDamage && !_jumpFutile && _swimCrossing) {
                     // ★用户令 + 进度阀门 _swimCrossing (见上): 寻路在驱动、没在淹血、hold-jump 能自救、【且确在过水
                     // 前进】 → 绝不 hijack 去 get-out("In water — getting out")。只按住 jump 骑水面(不下沉、头出水面持续回氧),
                     // 方向/路径全交给 pathfinder。氧气真见底扣血(drowningDamage)、或 hold-jump 被实测顶
@@ -2089,10 +1992,13 @@ const modes_list = [
                     bot.setControlState('jump', true);
                 }
                 else if (miningActive && !drowningDamage && !combatHasPriority(bot)) {
-                    // ★挖矿/采集让位 (见上 miningActive): 只按住 jump 骑水面, 绝不 hijack 去游岸 —— 与
-                    //   gotoActive 分支同策。战斗有优先 (combatHasPriority) 或真淹血 (drowningDamage) 时本
-                    //   分支失效, 落到 [C] surface get-out / 下方 self_defense。
-                    bot.setControlState('jump', true);
+                    // 水下矿务有自己的氧气控制器。赶往下一矿格时仍可像 goto 一样浮水移动；真正开始
+                    // 挖掘/沉底时不再被本能反复按 jump（否则悬空惩罚与水下惩罚叠成 25×）。氧气阈值
+                    // 到达后，执行器暂停同一个 goal，置 _underwaterMiningBreathing 并在呼吸孔换满气。
+                    if (shouldSuppressSwimJumpForUnderwaterDig(bot)) bot.setControlState('jump', false);
+                    else if (bot._underwaterMiningBreathing) bot.setControlState('jump', true);
+                    else if (gotoActive && !_jumpFutile && _swimCrossing) bot.setControlState('jump', true);
+                    else bot.setControlState('jump', true);
                 }
                 else if (y0 >= 55 && !combatHasPriority(bot)) {
                     // ★C332 (T-0063): when a killable non-creeper mob is point-blank and we can win,
@@ -2475,11 +2381,11 @@ const modes_list = [
             // ★T-0101/T-0083 FROZEN-ALIVE 互锁破除 — 反射层让位 gate。放在所有真·物理急症
             //   (MLG水桶/淹水/坠落/suffocation/lava/fire,均在此之上的 if/else-if 分支)之后,
             //   但在所有"避险但非急症"的 hold/backoff/flee(covered night hold / creeper hunger-hold /
-            //   flee,均在此之下)之前。当饥饿僵局(food<=2 不回血 + 无 LETHAL 急症)且决策层已派觅食
+            //   flee,均在此之下)之前。当饥饿僵局(food<=2 + 无现实急症)且决策层已派觅食
             //   skill(feedUp/villageHarvest/forageExplore)在跑时,self_preservation 反射 NOT 抢身体——
             //   不 execute hold,直接 return,把身体让给觅食 skill 走向 village/食物源。这破除 worker-food
             //   实锤的"打破日志疯刷但 bot 从不真走"(反射每拍 hold 抵消觅食移动)。LETHAL 急症仍由
-            //   famineForageActive 内部排除(creeper<4.5/挨打/hp<=4/swarm)→ 那些情形不让位,继续守 hold。
+            //   famineForageActive 内部排除(creeper<4.5/挨打/swarm)→ 那些情形不让位,继续守 hold。
             else if (famineForageActive(bot)) {
                 if (Date.now() - (this._famineForageYieldAt || 0) > 10000) {
                     this._famineForageYieldAt = Date.now();
@@ -2523,10 +2429,9 @@ const modes_list = [
                 const cr0 = this.creeperBackoffTarget(bot) || this.nearestCreeper(bot);
                 const cr0Dist = cr0 && cr0.position ? cr0.position.distanceTo(bot.entity.position) : Infinity;
                 const hasNormalFood = bot.inventory.items().some(i => i && i.name && NORMAL_FOOD_RE.test(i.name));
-                const lowHpNoRegenNoFood = bot.health <= 8 && bot.food < 18 && !hasNormalFood;
                 const coveredOrEnclosed = (bot._mobility && bot._mobility.enclosed) || this.hasOverheadCover(bot, 2, 6);
                 const hungryNoFoodCovered = bot.food <= 8 && !hasNormalFood && coveredOrEnclosed;
-                if ((lowHpNoRegenNoFood || hungryNoFoodCovered) && coveredOrEnclosed && cr0Dist > 5.5 && !surviveNowActive(bot)) {
+                if (hungryNoFoodCovered && cr0Dist > 5.5) {
                     // ★停滞打破 (worker-death 06-26 实锤: bot 在此 hold 冻 150min @91,159 food=0 hp7,
                     //   苦力怕 6.2格静止不动). "no-calorie-burning hold" 假设威胁会过去/食物会来,但 food=0
                     //   永不回血 + 静止远苦力怕(>5.5格)不走 = 永久停滞(进度归零本身即罪). 修: 白天连续
@@ -2539,11 +2444,11 @@ const modes_list = [
                     } else { this._creeperHungerHoldSince = 0; }   // 夜间重置,只累计白天连续 hold
                     const _hungerHoldStuck = this._creeperHungerHoldSince && (Date.now() - this._creeperHungerHoldSince > 90000);
                     if (!_hungerHoldStuck) {
-                        if (Date.now() - (this._creeperCoveredLowHpHoldAt || 0) > 5000) {
-                            this._creeperCoveredLowHpHoldAt = Date.now();
+                        if (Date.now() - (this._creeperCoveredHungerHoldAt || 0) > 5000) {
+                            this._creeperCoveredHungerHoldAt = Date.now();
                             try {
                                 fs.appendFileSync('bots/_supervisor/progress.txt',
-                                    `[${new Date().toISOString()}] [self_preservation] creeper covered hunger hold: cdist=${cr0Dist.toFixed(1)} hp=${Math.round(bot.health)} food=${bot.food} enclosed=${!!(bot._mobility && bot._mobility.enclosed)} covered=${this.hasOverheadCover(bot, 2, 6)} lowHp=${lowHpNoRegenNoFood} — no calorie-burning backoff\n`);
+                                    `[${new Date().toISOString()}] [self_preservation] creeper covered hunger hold: cdist=${cr0Dist.toFixed(1)} food=${bot.food} enclosed=${!!(bot._mobility && bot._mobility.enclosed)} covered=${this.hasOverheadCover(bot, 2, 6)} — no calorie-burning backoff\n`);
                             } catch (e) {}
                         }
                         execute(this, agent, async () => {
@@ -2764,7 +2669,7 @@ const modes_list = [
                             const ca = Math.cos(a), sa = Math.sin(a);
                             return [rx * ca - rz * sa, rx * sa + rz * ca];
                         };
-                        const maxDrop = bot.health <= 8 ? 1 : 2;
+                        const maxDrop = 2;
                         let runDir = null;
                         let runInfo = null;
                         let runRisk = null;
@@ -2807,7 +2712,7 @@ const modes_list = [
                     try { bot.clearControlStates(); } catch (e) {}
                 });
             }
-            else if ((Date.now() - (bot.lastDamageTime || 0) < 4000) && this.shouldFlee(bot) && !surviveNowActive(bot)) {
+            else if ((Date.now() - (bot.lastDamageTime || 0) < 4000) && this.shouldFlee(bot)) {
                 // ★用户令 2026-07-09 "被攻击后不要停下来，加速逃跑": 正在挨打 (≤4s) 且已决定逃跑 (shouldFlee — 见 Q2
                 //   只在已决定逃跑时生效, 已排除反击/死战/能打赢) → 压过下方【预防夜宿 bunkerDown】与【outmatched dig-in】,
                 //   改为持续 sprint 逃离 (有移动目标继续冲向它, 否则离威胁跑; 永不停顿)。creeper 专属规避 (creeperBackoffTarget)
@@ -2818,7 +2723,7 @@ const modes_list = [
                 }
                 execute(this, agent, () => this.sprintFlee(agent));
             }
-            else if (this.shouldNightShelter(bot) && !this.shouldFlee(bot) && !surviveNowActive(bot)) {
+            else if (this.shouldNightShelter(bot) && !this.shouldFlee(bot)) {
                 // ★用户令 2026-07-09 "遇怪要 flee 就优先逃跑, 不允许就地 bunkerDown": 预防夜宿 bunkerDown
                 //   现在附加 !shouldFlee 门 —— 只有【没有够得到的、该逃的怪】时才主动蹲坑 (=用户的"周围暂时
                 //   没怪"). 一旦出现够得到又打不赢的怪, shouldFlee=true → 本枝被跳过 → 落到下方 shouldFlee 逃跑枝
@@ -2832,7 +2737,7 @@ const modes_list = [
                 }
                 execute(this, agent, () => this.bunkerDown(agent));
             }
-            else if (this.shouldFlee(bot) && !surviveNowActive(bot)) {
+            else if (this.shouldFlee(bot)) {
                 // ★svnActive 压制(评审): 同上 — dig-in 墙封/逃跑枝在灰区指挥官持体时让树拍板
                 // (树的 FIGHT/RELOCATE/DEATH 自会处理), 否则 mexican-standoff 复发。
                 // THREAT RETREAT — "judge you can't win, then run." Count nearby
@@ -2845,10 +2750,9 @@ const modes_list = [
                 // ★用户令 2026-07-09 "遇怪如果要 flee 就【优先逃跑】, 不允许就地 bunkerDown": 地表暴露
                 //   (y≥50 且非封闭) → 直接持续 sprint 逃离, 不再走下方"Outmatched — digging in"就地封坑。
                 //   唯一例外 = 深处/封闭 (无处可逃: 地表逃跑会撞进更多怪/被逼角, 见下方注释) → 沿用地下 dig-in
-                //   (=bunkerDown + 挡箭墙, 这是"只允许 bunkerDown"的地下形态, 非地表封箱 shelter)。低血无回复
-                //   contained-hold 例外 (lowHpNoRegenContainedHold) 保留下方原处理 (跑不动/跑了也不回血)。
+                //   (=bunkerDown + 挡箭墙, 这是"只允许 bunkerDown"的地下形态, 非地表封箱 shelter)。
                 const _exposedFlee = bot.entity.position.y >= 50 && !(bot._mobility && bot._mobility.enclosed);
-                if (_exposedFlee && !lowHpNoRegenContainedHold(bot)) {
+                if (_exposedFlee) {
                     if (Date.now() - (this._sprintFleeSayAt || 0) > 8000) {
                         this._sprintFleeSayAt = Date.now();
                         say(agent, `Outmatched (${this.nearbyHostiles(bot).length} mob, hp ${Math.round(bot.health)}) — fleeing, not bunkering!`);
@@ -2857,24 +2761,6 @@ const modes_list = [
                     return;
                 }
                 const hostiles = this.nearbyHostiles(bot);
-                const noRegenHold = lowHpNoRegenContainedHold(bot);
-                if (noRegenHold) {
-                    if (Date.now() - (this._noRegenFleeHoldAt || 0) > 5000) {
-                        this._noRegenFleeHoldAt = Date.now();
-                        try {
-                            const p = bot.entity.position.floored();
-                            fs.appendFileSync('bots/_supervisor/progress.txt',
-                                `[${new Date().toISOString()}] [self_preservation] no-regen flee hold: food=${bot.food} hp=${Math.round(bot.health || 0)} pos=${p.x},${p.y},${p.z} mob=${noRegenHold.mob || '-'} enclosed=${noRegenHold.enclosed} covered=${noRegenHold.covered} closest=${noRegenHold.closestName || '-'}@${Number.isFinite(noRegenHold.closest) ? noRegenHold.closest.toFixed(1) : '-'} — no bunkerDown/dig\n`);
-                        } catch (e) {}
-                    }
-                    execute(this, agent, async () => {
-                        try { bot.clearControlStates(); } catch (e) {}
-                        try { bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null); } catch (e) {}
-                        try { bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop(); } catch (e) {}
-                        await skills.wait(bot, 2500);
-                    });
-                    return;
-                }
                 say(agent, `Outmatched (${hostiles.length} mob, hp ${Math.round(bot.health)}) — digging in!`);
                 execute(this, agent, async () => {
                     // ★UNDERGROUND RANGED WALL-OFF (deaths 196+197, same shape twice: cave
@@ -2930,7 +2816,7 @@ const modes_list = [
     },
     {
         name: 'unstuck',
-        description: 'Attempt to get unstuck when in the same place for a while. Interrupts some actions.',
+        description: 'Classify stalled body intent and recover only failed movement without stealing deliberate work or holds.',
         interrupts: ['all'],
         on: true,
         active: false,
@@ -2939,7 +2825,7 @@ const modes_list = [
         stuck_time: 0,
         last_time: Date.now(),
         max_stuck_time: 20,
-        prev_dig_block: null,
+        prev_dig_block: null, // legacy reset slot kept for mode-state compatibility
         rb_anchor: null,
         rb_prevPos: null,
         rb_sampleAt: 0,
@@ -2953,20 +2839,14 @@ const modes_list = [
         step_skip_first_at: 0,
         step_skip_count: 0,
         step_skip_last_log_at: 0,
+        prev_stall_key: null,
+        last_report_at: 0,
+        last_report_pos: null,
         update: async function (agent) {
             const bot = agent.bot;
             if (famineBodyFreeze(agent, 'unstuck')) {
                 this.prev_location = null;
                 this.stuck_time = 0;
-                this.step_prev_location = null;
-                return;
-            }
-            if (surviveNowActive(bot)) {
-                // ★灰区指挥官持体: 树内分支(持盾站桩/床边等待/求死站桩)是蓄意驻留, 非楔死 —
-                // moveAway/GoalInvert/65s cleanKill 会拆树。技能楔死时滚动戳 ≤30s 过期, 本安全网自动恢复。
-                this.prev_location = null;
-                this.stuck_time = 0;
-                this.prev_dig_block = null;
                 this.step_prev_location = null;
                 return;
             }
@@ -2982,45 +2862,6 @@ const modes_list = [
                 this.step_prev_location = null;
                 return;
             }
-            const containedHold = lowHpNoRegenContainedHold(bot);
-            if (containedHold) {
-                // ★2026-07-05 hold 预算 (25min 白天冻结实录: 本 hold 每 tick 清 pathfinder goal
-                // = 实际免疫一切 kernel 派发, 各技能内闸又同时挡工作 → '活着但零产出'僵局,
-                // 比死亡重置还贵)。持续 >4min 且 food 无增 → 预算耗尽停止压制 (放行工作/
-                // 脱困); food 上升或脱离 hold 条件即重置预算。
-                if (!bot._nrHoldSince || bot.food > (bot._nrHoldFood ?? -1)) {
-                    bot._nrHoldSince = Date.now(); bot._nrHoldFood = bot.food;
-                }
-                const holdSpent = Date.now() - bot._nrHoldSince > 240000;
-                if (!holdSpent) {
-                    try {
-                        bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null);
-                        bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop();
-                        bot.clearControlStates();
-                    } catch (e) {}
-                    this.prev_location = null;
-                    this.stuck_time = 0;
-                    this.prev_dig_block = null;
-                    this.step_prev_location = null;
-                    if (Date.now() - (bot._lastUnstuckContainedHoldAt || 0) > 15000) {
-                        bot._lastUnstuckContainedHoldAt = Date.now();
-                        const p = bot.entity.position.floored();
-                        try {
-                            fs.appendFileSync('bots/_supervisor/progress.txt',
-                                `[${new Date().toISOString()}] [unstuck] no-regen contained hold: food=${bot.food} hp=${Math.round(bot.health || 0)} pos=${p.x},${p.y},${p.z} mob=${containedHold.mob || '-'} enclosed=${containedHold.enclosed} covered=${containedHold.covered} closest=${containedHold.closestName || '-'}@${Number.isFinite(containedHold.closest) ? containedHold.closest.toFixed(1) : '-'} — suppress moveAway/GoalInvert\n`);
-                        } catch (e) {}
-                    }
-                    return;
-                }
-                if (Date.now() - (bot._nrHoldSpentLogAt || 0) > 30000) {
-                    bot._nrHoldSpentLogAt = Date.now();
-                    try {
-                        fs.appendFileSync('bots/_supervisor/progress.txt',
-                            `[${new Date().toISOString()}] [unstuck] no-regen hold BUDGET SPENT (>4min food 无增) — 停止压制, 放行工作/脱困\n`);
-                    } catch (e) {}
-                }
-                // fall through: 预算耗尽 → 不再压制, unstuck 正常逻辑接管
-            } else { bot._nrHoldSince = 0; }
             const tableHold = tableRecoveryHold(bot);
             if (tableHold) {
                 try {
@@ -3073,11 +2914,18 @@ const modes_list = [
             }
             const pathingNow = !!(bot && bot.pathfinder && bot.pathfinder.isMoving && bot.pathfinder.isMoving());
             const mobilityWorkNow = !!(bot && bot._mobility && /MAROONED|POCKET|ENTOMBED/.test(bot._mobility.state || ''));
-            if (agent.isIdle() && !pathingNow && !mobilityWorkNow) {
+            // The old fallback treated "same position" as proof of a stall. That conflated
+            // deliberate holds, UI waits, slow digs and stopped/idle bots with failed travel.
+            // Only observe a declared or derived MOVE intent here. DIG has pf_dig_watchdog,
+            // interactions have their own timeouts, and HOLD/WORK must retain body ownership.
+            const stallContext = observeStallContext(agent);
+            if (!stallContext.watchMovement) {
                 this.prev_location = null;
                 this.stuck_time = 0;
+                this.prev_dig_block = null;
+                this.prev_stall_key = null;
                 this.step_prev_location = null;
-                return; // don't get stuck when idle
+                return;
             }
             // ★rubber-band / 逆向幻影块探测 (2026-07-07 session#11 实录: 服务器认为 bot 脚位有块 —
             // 用户客户端实拍半身陷在闪长岩里 — bot 本地世界却是 air → pathfinder 每次冲出 2-3 格,
@@ -3261,7 +3109,7 @@ const modes_list = [
                     const blockName = (b) => b ? `${b.name}@${b.position.x},${b.position.y},${b.position.z}` : 'null';
                     const famineCriticalNoStep = (() => {
                         try {
-                            if (!(bot.food <= 2 && bot.health <= 6)) return false;
+                            if (bot.food > 2) return false;
                             const edible = bot.inventory && bot.inventory.items().some(i => i && i.name && FAMINE_FOOD_RE.test(i.name));
                             if (edible) return false;
                             const feetNow = bot.blockAt(cell);
@@ -3301,7 +3149,7 @@ const modes_list = [
                             } catch (e) {}
                         }
                         try {
-                            fs.appendFileSync('bots/_supervisor/mine_motion.jsonl', JSON.stringify({
+                            appendTelemetry('mine_motion.jsonl', {
                                 ts: new Date().toISOString(),
                                 event: 'step_edge.skip',
                                 pos: { x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3) },
@@ -3323,7 +3171,7 @@ const modes_list = [
                                     skipCount: this.step_skip_count,
                                     guardMs,
                                 },
-                            }) + '\n');
+                            });
                         } catch (e) {}
                     }
                     if (wantsForward && stepLike && moved < 0.12 && !hasBodyWork && !famineCriticalNoStep && now > this.step_guard_until) {
@@ -3356,7 +3204,7 @@ const modes_list = [
                             };
                             const motionLog = (event, data = {}) => {
                                 try {
-                                    fs.appendFileSync('bots/_supervisor/mine_motion.jsonl', JSON.stringify({
+                                    appendTelemetry('mine_motion.jsonl', {
                                         ts: new Date().toISOString(),
                                         event,
                                         pos: exact(),
@@ -3364,7 +3212,7 @@ const modes_list = [
                                         mob: bot._mobility ? bot._mobility.state : null,
                                         env: envSnap(),
                                         data,
-                                    }) + '\n');
+                                    });
                                 } catch (e) {}
                             };
                             const centerOnCurrentCell = async () => {
@@ -3601,49 +3449,44 @@ const modes_list = [
                     this.step_prev_time = now;
                 }
             } catch (e) {}
-            const cur_dig_block = bot.targetDigBlock;
-            if (cur_dig_block && !this.prev_dig_block) {
-                this.prev_dig_block = cur_dig_block;
-            }
-            if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) < this.distance && cur_dig_block == this.prev_dig_block) {
+            if (this.prev_location
+                && this.prev_stall_key === stallContext.key
+                && this.prev_location.distanceTo(bot.entity.position) < this.distance) {
                 this.stuck_time += (Date.now() - this.last_time) / 1000;
             }
             else {
                 this.prev_location = bot.entity.position.clone();
+                this.prev_stall_key = stallContext.key;
                 this.stuck_time = 0;
                 this.prev_dig_block = null;
             }
-            const max_stuck_time = cur_dig_block?.name === 'obsidian' ? this.max_stuck_time * 2 : this.max_stuck_time;
-            if (this.stuck_time > max_stuck_time) {
-                say(agent, 'I\'m stuck!');
+            if (this.stuck_time > this.max_stuck_time) {
                 this.stuck_time = 0;
+                const stallPos = bot.entity.position.clone();
+                const recovery = stallContext.recovery;
+                const shouldReport = !this.last_report_pos
+                    || this.last_report_pos.distanceTo(stallPos) > 4
+                    || Date.now() - this.last_report_at > 60000;
+                if (shouldReport) {
+                    this.last_report_at = Date.now();
+                    this.last_report_pos = stallPos.clone();
+                }
                 execute(this, agent, async () => {
-                    // ★2026-07-08 用户令 —— 软卡顿处理阶梯: 先脱困, 15s 还没解决【才重连】(绝不 process.exit)。
-                    //   旧行为: 给 moveAway 65s, 内部楔死就 cleanKill→process.exit, 整个 agent 莫名其妙退出。
-                    //   新行为: 记下卡住点 → 试 moveAway; 15s 后若"仍在原地"(既没脱出也没被别的门救走) →
-                    //   agent.reconnectNow() 掉线重进世界(清客户端楔死), 进程/记忆/任务全活着。
-                    //   moveAway 若在 15s 内成功 → 取消定时器, "I'm free."。若报错(困水/无法通行)不立即
-                    //   重连——留给 15s 定时器按"是否仍卡在原地"裁决(与其它脱困门/存活层留出机会)。
-                    const stuckPos = bot.entity.position.clone();
-                    let freed = false;
-                    const reconnectTimer = setTimeout(() => {
-                        if (freed) return;
-                        let moved = false;
-                        try { moved = !!(bot.entity && bot.entity.position.distanceTo(stuckPos) > 1.5); } catch (e) {}
-                        if (moved) return; // 已经挪开了 = 已脱困, 不重连
-                        try { fs.appendFileSync('bots/_supervisor/progress.txt',
-                            `[${new Date().toISOString()}] [stuck] unstuck failed >15s @${Math.floor(stuckPos.x)},${Math.floor(stuckPos.y)},${Math.floor(stuckPos.z)} — reconnecting (NO process exit)\n`); } catch (e) {}
-                        say(agent, 'Still stuck after 15s — reconnecting to rejoin the world.');
-                        try { agent.reconnectNow('stuck-unrecoverable'); } catch (e) {}
-                    }, 15000); // 15s 脱困窗口, 到点仍卡在原地才重连
                     try {
-                        await skills.moveAway(bot, 5);
-                        freed = true;
-                        clearTimeout(reconnectTimer);
-                        say(agent, 'I\'m free.');
-                    } catch (err) {
-                        // 不立即重连、不 clearTimeout —— 让 15s 定时器按"是否仍卡在原地"裁决。
-                        say(agent, `Failed to get unstuck: ${err.message}. Will reconnect if still stuck at 15s.`);
+                        bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null);
+                        bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop();
+                        bot.clearControlStates();
+                    } catch (e) { /* pathfinder may already be torn down */ }
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                    const moved = recoveryMovedEnough(stallPos, bot.entity?.position, 1.5);
+                    try {
+                        fs.appendFileSync('bots/_supervisor/progress.txt',
+                            `[${new Date().toISOString()}] [stall] intent=${stallContext.intent} owner=${stallContext.owner || '-'} recovery=${recovery} moved=${moved} @${Math.floor(stallPos.x)},${Math.floor(stallPos.y)},${Math.floor(stallPos.z)} — cancelled stale route; task/mobility will replan (no generic moveAway, no reconnect)\n`);
+                    } catch (e) { /* diagnostics must never block recovery */ }
+                    if (shouldReport) {
+                        say(agent, recovery === 'yield-confinement'
+                            ? 'That route is blocked in this confined space; yielding to local escape planning.'
+                            : 'That route stopped making progress; cancelling it and replanning.');
                     }
                 });
             }
@@ -3653,6 +3496,7 @@ const modes_list = [
             this.prev_location = null;
             this.stuck_time = 0;
             this.prev_dig_block = null;
+            this.prev_stall_key = null;
             this.step_prev_location = null;
             this.rb_anchor = null;
             this.rb_prevPos = null;
@@ -3714,32 +3558,13 @@ const modes_list = [
             // handled ONLY by self_pres (sprint to >9 blocks). self_defense never engages them.
             // ★C360: 黑名单(futile-fight 断路器)mob 不 engage — 见 recordFightOutcome 注释。
             const enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity) && !/creeper/i.test(entity.name || '') && !isFutileMob(bot, entity), range);
-            // Only STAND AND FIGHT when we can actually win: a weapon in hand and
-            // health > 12. Otherwise self_preservation (checked first, higher
-            // priority) flees. Never trade blows barehanded or while low — that
-            // "fight to the death" is exactly what got the bot killed repeatedly.
+            // Combat is selected from the live threat and available equipment, never
+            // from an absolute-health gate. Without a weapon we leave the body to the
+            // other threat handlers; a shield only selects the guarded combat path.
             const hasWeapon = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name));
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
             const swarmed = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), 6) &&
                 Object.values(bot.entities).filter(e => e && mc.isHostile(e) && e.position && e.position.distanceTo(bot.entity.position) < 8).length >= 3;
-            // With a shield we can fight even at lower HP (block negates the hits); the
-            // shieldFight skill closes on the enemy under guard then strikes — the real
-            // counter to skeletons. Without a shield, only fight when healthy (>12).
-            // ★2026-07-05 8→6 (90min 树荫骷髅站桩僵局: hp7+有盾差 1 点被拒战, 5.8b 差 1.3b
-            // 不算贴脸 — 远程骚扰者在 4.5-8b 带永远打不着。盾挡箭逼近正是本技能设计用途;
-            // keepInventory 下劣势面=一次重置, 站桩饿死面=无限)。
-            const minHp = hasShield ? 6 : 12;
-            // ★EXCEPTION — point-blank ranged enemy: the hp gate is BACKWARDS for a
-            // skeleton inside melee reach. Death #263 (blackbox): hp4, skeleton at
-            // 1.6-4b in a dug shaft — self_defense refused (4<12), self_preservation
-            // walled (useless point-blank), terrain blocked flight; the bot jittered
-            // in a 1-block box for 20s and was shot dead WITH a sword in the bag.
-            // Point-blank, melee IS the best (often only) move: bow draw has ~0.5s
-            // windup and sword knockback interrupts the firing cycle, so a wooden
-            // sword wins that duel at any hp. Same logic for any non-creeper hostile
-            // already in our face: it's hitting us regardless — hit back.
-            const pointBlank = enemy && enemy.position &&
-                enemy.position.distanceTo(bot.entity.position) < 4.5;
             // ★C353 (T-0063): DISENGAGE the unreachable ranged trap. If we're boxed in a closed pocket
             // and the only threat is a wall-blocked skeleton/stray/pillager we can never melee, stop
             // whiffing at it — return so mobility's POCKET escape (idx 2948, otherwise starved by our
@@ -3755,10 +3580,7 @@ const modes_list = [
                 } catch (e) {}
                 return;
             }
-            // ★ARMORED SOLO BRAWL (见模块级 armoredSoloBrawl, 与 self_preservation.shouldFlee 共用):
-            //   穿甲 + 有武器 + 全场仅一只非苦力怕怪 → 血量门(minHp)作废, 哪怕血不多也开打 (用户令 2026-07-08)。
-            //   shouldFlee 已同步放行不逃, 缺这一半会又卡回"低血被 minHp 拒战 = 既不逃也不打"的原僵局。
-            if (enemy && hasWeapon && !swarmed && (bot.health > minHp || pointBlank || armoredSoloBrawl(bot))) {
+            if (enemy && hasWeapon && !swarmed) {
                 say(agent, `Fighting ${enemy.name}!`);
                 // ★C360: fight-cycle 快照 — cycle 结束时 recordFightOutcome 对照它判"这轮有无进展"。
                 const cycle = { id: enemy.id, name: enemy.name, t0: Date.now(), dist0: enemy.position.distanceTo(bot.entity.position) };
@@ -3885,11 +3707,8 @@ const modes_list = [
             }
             const W = (rec) => {
                 try {
-                    if (this.logSize === 0) { try { this.logSize = fs.statSync('bots/_supervisor/combat_log.jsonl').size; } catch (e) { this.logSize = 1; } }
-                    if (this.logSize > 20 * 1024 * 1024) { try { fs.renameSync('bots/_supervisor/combat_log.jsonl', 'bots/_supervisor/combat_log.jsonl.1'); } catch (e) {} this.logSize = 1; }
                     const line = JSON.stringify(rec) + '\n';
-                    fs.appendFileSync('bots/_supervisor/combat_log.jsonl', line);
-                    this.logSize += line.length;
+                    appendTelemetry('combat_log.jsonl', line, { json: false });
                 } catch (e) {}
             };
             // 雷达: 新接触即记录 (先手知情)
@@ -4073,9 +3892,6 @@ const modes_list = [
                     const enclosedReflex = !!(bot._mobility && bot._mobility.enclosed);
                     if (tP >= 12000 && tP <= 23500 && (coveredNow || enclosedReflex)) nightBunker = true;
                     let lowFoodShelter = false;
-                    let famineHold = false;
-                    let noRegenLowHpHold = false;
-                    let bodyBudgetContainedHold = false;
                     let tableRecoveryHold = false;
                     let nightStandDownHold = false;
                     let killBoxLowFoodHold = false;
@@ -4099,15 +3915,8 @@ const modes_list = [
                         const headNow = bot.blockAt(pNow.offset(0, 1, 0)) || { name: 'air' };
                         const fluidNow = /water|lava|fire/.test(feetNow.name || '') || /water|lava|fire/.test(headNow.name || '');
                         const fallingNow = !bot.entity.onGround && bot.entity.velocity && bot.entity.velocity.y < -0.25;
-                        famineHold = bot.food <= 2 && bot.health <= 6 && !edible && !hostileNear && !fluidNow && !fallingNow;
-                        const prepBackoff = (bot._prepLowHpNoFoodUntil && now < bot._prepLowHpNoFoodUntil)
-                            || (bot._prepNoFoodSurfaceBackoffUntil && now < bot._prepNoFoodSurfaceBackoffUntil);
-                        noRegenLowHpHold = bot.health < 14 && bot.food < 18 && !normalEdible
-                            && !!prepBackoff && !hostileNear && !fluidNow && !fallingNow;
                         const enclosedNow = !!(bot._mobility && bot._mobility.enclosed);
                         const containedMob = !!(bot._mobility && /POCKET|MAROONED|ENTOMBED/.test(bot._mobility.state || ''));
-                        bodyBudgetContainedHold = bot.health <= 8 && bot.food <= 6 && !normalEdible
-                            && (coveredNow || enclosedNow || containedMob) && !pointBlankHostile && !fluidNow && !fallingNow;
                         let progressTail = '';
                         let progressFresh = false;
                         let progressAgeMs = Infinity;
@@ -4135,7 +3944,7 @@ const modes_list = [
                             && !pointBlankHostile
                             && !fluidNow
                             && !fallingNow;
-                        if (bot.health >= 14 && bot.food >= 14 && !fluidNow && !fallingNow) {
+                        if (bot.food >= 14 && !fluidNow && !fallingNow) {
                             const tableProgressHold = progressFresh && /TABLE (gate|recovery) for /.test(progressTail);
                             const progressSaysNoActionable = /TABLE gate for [^\n]*actionable12=0/.test(progressTail)
                                 || /TABLE recovery for [^\n]*daylight safe window/.test(progressTail);
@@ -4159,17 +3968,14 @@ const modes_list = [
                         const nightNoActionable = /actionable12=0|actionable=0|night stand-down/.test(progressTail) || closestHostile >= 12;
                         nightStandDownHold = nightNow && nightHoldSig && nightNoActionable
                             && progressAgeMs < 8 * 60000
-                            && bot.health >= 14 && closestHostile >= 6
+                            && closestHostile >= 6
                             && !fluidNow && !fallingNow;
                     } catch (e) {}
                     const activeBodyWork = !!(bot.targetDigBlock || bot._mineMotionActiveDig || (bot._bodyDigLockUntil && Date.now() < bot._bodyDigLockUntil));
-                    // ★灰区指挥官: surviveNow 激活期间(滚动戳)按逃生作业豁免 pin-kick — 戳楔死
-                    // ≤30s 过期后 watchdog 恢复踢, 与树互为安全网。
-                    const activeEscapeWork = /surfaceUp|feedUp/.test(bot._currentSkill || '') || surviveNowActive(bot);
+                    const activeEscapeWork = /surfaceUp|feedUp/.test(bot._currentSkill || '');
                     // ★2026-07-05 口袋均衡熔断 (2h 沟壑实录: 8 类 hold 轮番豁免 + STUCK 重启原地
                     // 重连 = 谁都不动谁都不死的均衡, 3 次 25min 重启全免疫)。同锚 10b 内豁免
-                    // 累计 >12min → 停止豁免, 放行强制释放链 (低血出门赌命=死亡重生回床=离开
-                    // 口袋; keepInventory 下死亡是出口, 无限驻守才是事故)。
+                    // 累计 >12min → 停止豁免, 放行普通卡死恢复链，避免无限驻守。
                     let pocketFuse = false;
                     try {
                         const pp = bot.entity.position;
@@ -4183,7 +3989,7 @@ const modes_list = [
                             }
                         }
                     } catch (e) {}
-                    if ((nightBunker || lowFoodShelter || famineHold || noRegenLowHpHold || bodyBudgetContainedHold || tableRecoveryHold || nightStandDownHold || killBoxLowFoodHold) && !activeBodyWork && !activeEscapeWork && !pocketFuse) {
+                    if ((nightBunker || lowFoodShelter || tableRecoveryHold || nightStandDownHold || killBoxLowFoodHold) && !activeBodyWork && !activeEscapeWork && !pocketFuse) {
                         // Legit sheltering is deliberate immobility, not a stale stack.
                         // Reset the pin window so dawn/food recovery gets a fresh grace
                         // period instead of being kicked immediately by old shelter time.
@@ -4192,13 +3998,6 @@ const modes_list = [
                             try {
                                 fs.appendFileSync('bots/_supervisor/progress.txt',
                                     `[${new Date().toISOString()}] [reflex_watchdog] pinned kill-box low-food hold exempt: food=${bot.food} hp=${Math.round(bot.health || 0)} mob=${bot._mobility ? bot._mobility.state : '-'} enclosed=${!!(bot._mobility && bot._mobility.enclosed)} closestHostile=${Number.isFinite(closestHostile) ? closestHostile.toFixed(1) : 'none'} — no forced interrupt\n`);
-                            } catch (e) {}
-                        }
-                        if (bodyBudgetContainedHold && now - (bot._lastPinBodyBudgetExemptAt || 0) > 60000) {
-                            bot._lastPinBodyBudgetExemptAt = now;
-                            try {
-                                fs.appendFileSync('bots/_supervisor/progress.txt',
-                                    `[${new Date().toISOString()}] [reflex_watchdog] pinned body-budget contained hold exempt: food=${bot.food} hp=${Math.round(bot.health || 0)} mob=${bot._mobility ? bot._mobility.state : '-'} enclosed=${!!(bot._mobility && bot._mobility.enclosed)} covered=${coveredNow} — no forced interrupt\n`);
                             } catch (e) {}
                         }
                         if (tableRecoveryHold && now - (bot._lastPinTableRecoveryExemptAt || 0) > 60000) {
@@ -4221,7 +4020,7 @@ const modes_list = [
                         this.pinKickCount = 0;
                         try { bot._persistentPinKicks = 0; bot._persistentPinSince = 0; } catch (e) {}
                     }
-                    if (!nightBunker && !lowFoodShelter && !famineHold && !noRegenLowHpHold && !bodyBudgetContainedHold && !tableRecoveryHold && !nightStandDownHold && !killBoxLowFoodHold && !activeBodyWork && !activeEscapeWork) {
+                    if (!nightBunker && !lowFoodShelter && !tableRecoveryHold && !nightStandDownHold && !killBoxLowFoodHold && !activeBodyWork && !activeEscapeWork) {
                         this.pinKick = now;
                         this.pinKickCount = (this.pinKickCount || 0) + 1;
                         const kicks = this.pinKickCount;
@@ -4690,44 +4489,6 @@ const modes_list = [
             // bearing — the precise fix for the badlands-pocket no-pick seal.
             const STONY_MOBILITY = /stone|deepslate|andesite|diorite|granite|tuff|_ore$|obsidian|cobble|terracotta|sandstone/;
             const hasPick = () => bot.inventory.items().some(it => /_pickaxe$/.test(it.name));
-            const normalEdibleHeld = () => {
-                try { return bot.inventory.items().some(i => i && i.name && NORMAL_FOOD_RE.test(i.name)); }
-                catch (e) { return false; }
-            };
-            const noRegenSafeAirHold = () => {
-                const nowHold = Date.now();
-                // ★2026-07-09 用户令 (低血/饥饿全熔断): "hold air pocket, no blind dig" 熔断 —
-                //   低血低食不再冻住 mobility 的 ENTOMBED/POCKET 挖出, 正常脱困干活 (实录 2026-07-08
-                //   15:49: hp10/food14 被此 gate 钉在 y=59 气穴里发呆, 铁就在墙上不挖)。
-                if (!hpInstinctsEnabled()) return null;
-                if (!(bot.health < 14 && bot.food < 18) || normalEdibleHeld()) return null;
-                // ★C225: yield to an explicitly-dispatched recovery VENTURE (forageExplore/escapePlan
-                // travelling to food). The skill-name allowlist (survivalSkill below) can't see it —
-                // nested customSkill leaves bot._currentSkill = the sticky ('missionNether'), so the
-                // hold froze the body and the dispatched forage couldn't move (live: hp9 food17 POCKET,
-                // deadlock-breaker fired forageExplore but this hold pinned it → permanent no-regen
-                // freeze). The dispatcher sets _recoveryVentureUntil; while fresh, the venture owns
-                // movement (it carries its own night/hostile/hp-abort gates — proper exit, not a hole).
-                if (nowHold < (bot._recoveryVentureUntil || 0)) return null;
-                const prepLow = Math.max(0, (bot._prepLowHpNoFoodUntil || 0) - nowHold);
-                const prepSurface = Math.max(0, (bot._prepNoFoodSurfaceBackoffUntil || 0) - nowHold);
-                const isNight = (() => { try { const t = bot.time && bot.time.timeOfDay; return t >= 12000 && t <= 23500; } catch (e) { return false; } })();
-                const skill = bot._currentSkill || '';
-                const survivalSkill = /prepNether|feedUp|consume|auto_eat/i.test(skill);
-                const bodyBudgetHold = bot.health <= 8 && bot.food <= 6;
-                if (!bodyBudgetHold && !prepLow && !prepSurface && !isNight && !survivalSkill) return null;
-                const p = bot.entity.position;
-                const feet = bot.blockAt(p) || { name: 'air' };
-                const head = bot.blockAt(p.offset(0, 1, 0)) || { name: 'air' };
-                if (feet.boundingBox === 'block' || head.boundingBox === 'block') return null;
-                if (/water|lava|fire/.test(feet.name || '') || /water|lava|fire/.test(head.name || '')) return null;
-                if (!bot.entity.onGround && bot.entity.velocity && bot.entity.velocity.y < -0.25) return null;
-                const hostile = Object.values(bot.entities || {}).some(e =>
-                    e && e !== bot.entity && e.position && mc.isHostile(e) &&
-                    e.position.distanceTo(p) < (/creeper/i.test(e.name || '') ? 5.5 : 4.25));
-                if (hostile) return null;
-                return { prepLow, prepSurface, isNight, skill, bodyBudgetHold, pos: p };
-            };
             const heldIsPick = () => !!(bot.heldItem && /_pickaxe$/.test(bot.heldItem.name));
             const plannedNoPickStone = () => Date.now() < (bot._mobilityPlannedNoPickStoneUntil || 0);
             const invCounts = () => {
@@ -5008,26 +4769,6 @@ const modes_list = [
                         try { bot._mobility = { ...(bot._mobility || {}), state: 'ENTOMBED', since: this.stateSince }; } catch (e) {}
                         return;
                     }
-                    const noRegenHold = noRegenSafeAirHold();
-                    if (noRegenHold) {
-                        try {
-                            if (!/feedUp|surfaceUp|consume|auto_eat/i.test(bot._currentSkill || '')) {
-                                bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null);
-                                bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop();
-                                bot.clearControlStates();
-                            }
-                        } catch (e) {}
-                        if (Date.now() - (bot._lastEntombedNoRegenGateAt || 0) > 15000) {
-                            bot._lastEntombedNoRegenGateAt = Date.now();
-                            try {
-                                const p = noRegenHold.pos.floored();
-                                fs.appendFileSync('bots/_supervisor/progress.txt',
-                                    `[${new Date().toISOString()}] [mobility] ENTOMBED no-regen safe-air gate food=${bot.food} hp=${Math.round(bot.health || 0)} prepLow=${Math.ceil(noRegenHold.prepLow / 1000)}s surface=${Math.ceil(noRegenHold.prepSurface / 1000)}s night=${noRegenHold.isNight} pos=${p.x},${p.y},${p.z} skill=${noRegenHold.skill || '-'} — hold air pocket, no blind dig\n`);
-                            } catch (e) {}
-                        }
-                        try { bot._mobility = { ...(bot._mobility || {}), state: 'ENTOMBED', since: this.stateSince }; } catch (e) {}
-                        return;
-                    }
                     say(agent, 'Entombed — digging out!');
                     // 锚点只用来挑「先凿哪个朝向」，不是直线奔向该坐标（下面 bearings 有轮转兜底）。默认值原本
                     // 写死 (96,-34) —— 那是开发机世界的坐标，对新用户毫无意义。改成自身位置：读不到
@@ -5237,8 +4978,8 @@ const modes_list = [
                         try {
                             const logIds = Object.values(bot.registry.blocksByName)
                                 .filter(b => /_log$/.test(b.name)).map(b => b.id);
-                            await new Promise(r => setImmediate(r)); const hits = bot.findBlocks({ matching: logIds, maxDistance: 64, count: 8 });   // ★findBlocks(palette)+setImmediate让路(0714)
-                            const reachable = (hits || []).filter(p => Math.abs(p.y - me0.y) <= 6)
+                            const hits = await world.getNearestBlocksWhereAsync(bot, logIds, 64, 8);
+                            const reachable = (hits || []).map(b => b.position).filter(p => Math.abs(p.y - me0.y) <= 6)
                                 .sort((a, b) => me0.distanceTo(a) - me0.distanceTo(b));
                             if (reachable.length) {
                                 ux = reachable[0].x - me0.x; uz = reachable[0].z - me0.z;
@@ -5445,27 +5186,6 @@ const modes_list = [
             } else if (st === 'POCKET' && now - this.stateSince > 30000) {
                 // stuck in a roofless pit >60s: dig a step-out toward the anchor side
                 execute(this, agent, async () => {
-                    const noRegenHold = noRegenSafeAirHold();
-                    if (noRegenHold) {
-                        try {
-                            if (!/feedUp|surfaceUp|consume|auto_eat/i.test(bot._currentSkill || '')) {
-                                bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null);
-                                bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop();
-                                bot.clearControlStates();
-                            }
-                        } catch (e) {}
-                        if (Date.now() - (bot._lastPocketNoRegenGateAt || 0) > 15000) {
-                            bot._lastPocketNoRegenGateAt = Date.now();
-                            try {
-                                const p = noRegenHold.pos.floored();
-                                fs.appendFileSync('bots/_supervisor/progress.txt',
-                                    `[${new Date().toISOString()}] [mobility] POCKET no-regen gate food=${bot.food} hp=${Math.round(bot.health || 0)} bodyBudget=${!!noRegenHold.bodyBudgetHold} prepLow=${Math.ceil(noRegenHold.prepLow / 1000)}s surface=${Math.ceil(noRegenHold.prepSurface / 1000)}s night=${noRegenHold.isNight} pos=${p.x},${p.y},${p.z} skill=${bot._currentSkill || '-'} — hold, no step-out dig\n`);
-                            } catch (e) {}
-                        }
-                        this.stateSince = Date.now();
-                        try { bot._mobility = { ...(bot._mobility || {}), state: 'POCKET', since: this.stateSince }; } catch (e) {}
-                        return;
-                    }
                     const noEdible = !bot.inventory.items().some(i => FAMINE_FOOD_RE.test(i.name || ''));
                     const isNight = (() => { try { const t = bot.time && bot.time.timeOfDay; return t >= 13000 && t <= 23000; } catch (e) { return false; } })();
                     const actionableHostileNear = (() => {
@@ -5639,7 +5359,7 @@ const modes_list = [
             };
             const write = (event, data = {}) => {
                 try {
-                    fs.appendFileSync(file, JSON.stringify({
+                    appendTelemetry('mine_motion.jsonl', {
                         ts: new Date().toISOString(),
                         event,
                         seq: data.seq,
@@ -5653,7 +5373,7 @@ const modes_list = [
                         skill: bot._currentSkill || null,
                         mob: bot._mobility ? bot._mobility.state : null,
                         data,
-                    }) + '\n');
+                    });
                 } catch (e) {}
             };
             const stony = /stone|deepslate|andesite|diorite|granite|tuff|_ore$|obsidian|cobble/;
@@ -5752,7 +5472,7 @@ const modes_list = [
                     if (_xd > 2.2) {
                         const _xsee = (() => { try { return bot.canSeeBlock(block); } catch (e) { return true; } })();
                         if (!_xsee) {
-                            try { fs.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★XRAY-BLOCK dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} d=${_xd.toFixed(1)} occluded — refused\n`); } catch (e) {}
+                            appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★XRAY-BLOCK dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} d=${_xd.toFixed(1)} occluded — refused\n`, { json: false });
                             const err = new Error(`xray dig blocked: ${block.name} occluded at ${_xd.toFixed(1)}b`);
                             write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
                             throw err;
@@ -5788,7 +5508,7 @@ const modes_list = [
                                 || (!!_mbO.enclosed && (!_mbO.exits || _mbO.exits.length === 0))
                                 || (Date.now() < (bot._plannedNoPickStoneUntil || 0));
                             if (!_trapO) {
-                                try { fs.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★PICKTIER-BLOCK dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} held=${bot.heldItem ? bot.heldItem.name : 'empty'} — 无够品级镐可采, 拒挖(保矿不浪费)\n`); } catch (e) {}
+                                appendTelemetry('mine_dbg.log', `[${new Date().toISOString()}] ★PICKTIER-BLOCK dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} held=${bot.heldItem ? bot.heldItem.name : 'empty'} — 无够品级镐可采, 拒挖(保矿不浪费)\n`, { json: false });
                                 const err = new Error(`pick-tier dig blocked: ${block.name} not harvestable by any owned pickaxe`);
                                 write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
                                 throw err;
@@ -5913,10 +5633,7 @@ const modes_list = [
                     path: (bot.pathfinder && bot.pathfinder.isMoving && bot.pathfinder.isMoving()) ? 1 : 0,
                     dig: (bot.targetDigBlock && bot.targetDigBlock.name) || '-',
                 }) + '\n';
-                if (this.sz === 0) { try { this.sz = fs.statSync('bots/_supervisor/act_trace.jsonl').size; } catch (e) { this.sz = 1; } }
-                if (this.sz > 10 * 1024 * 1024) { try { fs.renameSync('bots/_supervisor/act_trace.jsonl', 'bots/_supervisor/act_trace.jsonl.1'); } catch (e) {} this.sz = 1; }
-                fs.appendFileSync('bots/_supervisor/act_trace.jsonl', line);
-                this.sz += line.length;
+                appendTelemetry('act_trace.jsonl', line, { json: false });
             } catch (e) {}
         }
     },
@@ -5997,10 +5714,7 @@ const modes_list = [
                     this.swings = this.swings.filter(s => s.t >= now - 10000);
                     this.hits = this.hits.filter(h => h.t >= now - 10000);
                     this._disp = 0; this._elapsed = 0; this.winStart = now;
-                    if (this.sz === 0) { try { this.sz = fs.statSync('bots/_supervisor/motion_quality.jsonl').size; } catch (e) { this.sz = 1; } }
-                    if (this.sz > 10 * 1024 * 1024) { try { fs.renameSync('bots/_supervisor/motion_quality.jsonl', 'bots/_supervisor/motion_quality.jsonl.1'); } catch (e) {} this.sz = 1; }
-                    fs.appendFileSync('bots/_supervisor/motion_quality.jsonl', line);
-                    this.sz += line.length;
+                    appendTelemetry('motion_quality.jsonl', line, { json: false });
                 }
             } catch (e) {}
         }
@@ -6567,7 +6281,6 @@ const modes_list = [
                 // --- recommendation ---
                 let action;
                 if (gateMode === 'committed_underground') action = 'GO_UNDERGROUND';
-                else if (actionable > 0 && hp < 10) action = 'FLEE';
                 else if (gateMode === 'hold') action = 'HOLD';
                 else if (migration.recommend && phase === 'day') action = 'MIGRATE';
                 else if (!foodSufficient) action = 'FORAGE_SURFACE';
@@ -6588,8 +6301,8 @@ const modes_list = [
                     //   (bed/chest 常不达 count)时把整个八面体扫穿, 每命中 palette 的 section 迭代 4096 block×
                     //   new Block(满视距下加载 section 更多 → 更重, 且大量 Block 分配触发 GC = 扫描后紧跟的
                     //   other 卡顿)。
-                    //   修: 把"12s 一次全量 6 扫"改成"每 2s tick 只跑 1 组扫描, round-robin 6 组 → 12s 走完一轮"。
-                    //   单拍最坏 = 单个最贵扫描(~140ms)而非 6× 叠加; 且 DETACHED async 不占 modes 拍。行为等价:
+                    //   修: 每 2s tick 只跑 1 组, round-robin 6 组；当前进一步把所有 section 遍历放进
+                    //   block-scan Worker，主线程只做 <=8ms 快照切片。行为等价:
                     //   同 12s 刷新周期、同 reg 口径/范围/count、同落盘 — 只是把一次性 burst 摊到 6 拍。互斥
                     //   _lmScanning 防重入(上一组还在跑就跳过本 tick)。
                     if (!bot._lmScanning) {
@@ -6604,8 +6317,8 @@ const modes_list = [
                                 if (!bot._landmarks[key]) { bot._landmarks[key] = { kind, x: Math.round(x), y: Math.round(y), z: Math.round(z), ts: now, seen: now, meta: meta || null }; return true; }
                                 bot._landmarks[key].seen = now; if (meta) bot._landmarks[key].meta = meta; return false;
                             };
-                            // ★2026-07-06 session#7: 谓词函数 matcher → 缓存的方块 ID 数组。findBlocks 用数组匹配走
-                            //   isMatchingType(indexOf)而非每格 new String + 正则, 且 palette 快扫更省。ID 表由 mc.getAllBlocks
+                            // ★2026-07-06 session#7: 谓词函数 matcher → 缓存的方块 ID 数组。Worker 用 state-id Set
+                            //   匹配而非每格 new String + 正则。ID 表由 mc.getAllBlocks
                             //   按同一正则枚举一次, 挂 bot._lmIds 缓存(热重载红线: 状态在 bot 上)。语义严格等价(同方块集)。
                             if (!bot._lmIds) {
                                 try {
@@ -6625,28 +6338,27 @@ const modes_list = [
                               let dirty = false;
                               const reg = (...a) => { if (_reg(...a)) dirty = true; };
                               try {
-                                // 6 组, 每 tick 跑一组。分组把最贵的 bed / chest 各自独占一拍(它们 maxDist48 稀有
-                                // → 全扫最重), 其余便宜项拼组。跨 findBlocks 组内也不叠(每组≤1 个 findBlocks)。
+                                // 6 组, 每 tick 跑一组。每组至多提交一个 Worker 扫描任务。
                                 switch (gi) {
                                   case 0: // bed (最贵: maxDist48 count16 稀有)
-                                    if (_ids.bed) try { await new Promise(r => setImmediate(r)); for (const bp of bot.findBlocks({ matching: _ids.bed, maxDistance: 64, count: 16 })) reg('bed', bp.x, bp.y, bp.z); } catch (e) {}   // ★B定点64:findBlocks(palette快扫)+setImmediate让路(0714;≤64 getNearestBlocksWhereAsync无yield且谓词慢,此最优)
+                                    if (_ids.bed) try { for (const b of await world.getNearestBlocksWhereAsync(bot, _ids.bed, 64, 16)) { const bp = b.position; reg('bed', bp.x, bp.y, bp.z); } } catch (e) {}
                                     break;
                                   case 1: // craft/furnace/bell (maxDist48 count8) + villager 实体(便宜)
                                     try { for (const e of Object.values(bot.entities || {})) { if (e && /villager/.test(e.name || '') && e.position) reg('village', e.position.x, e.position.y, e.position.z); } } catch (e) {}
-                                    if (_ids.craft) try { await new Promise(r => setImmediate(r)); for (const bp of bot.findBlocks({ matching: _ids.craft, maxDistance: 64, count: 8 })) { const bn = bot.blockAt(bp); reg(bn && bn.name === 'bell' ? 'village' : ((bn && bn.name) || 'craft'), bp.x, bp.y, bp.z); } } catch (e) {}   // ★B定点64:findBlocks+setImmediate让路(0714)
+                                    if (_ids.craft) try { for (const bn of await world.getNearestBlocksWhereAsync(bot, _ids.craft, 64, 8)) { const bp = bn.position; reg(bn.name === 'bell' ? 'village' : (bn.name || 'craft'), bp.x, bp.y, bp.z); } } catch (e) {}
                                     break;
                                   case 2: // wood(maxDist32 count8) — ★C328 记住最近树做 bootstrap
-                                    if (_ids.wood) try { await new Promise(r => setImmediate(r)); for (const bp of bot.findBlocks({ matching: _ids.wood, maxDistance: 128, count: 8 })) reg('wood', bp.x, bp.y, bp.z); } catch (e) {}   // ★C资源型128:findBlocks(palette)+setImmediate让路(0714)
+                                    if (_ids.wood) try { for (const b of await world.getNearestBlocksWhereAsync(bot, _ids.wood, 128, 8)) { const bp = b.position; reg('wood', bp.x, bp.y, bp.z); } } catch (e) {}
                                     break;
                                   case 3: // crops/farmland(maxDist32 count8) — 村庄食物
-                                    if (_ids.crops) try { await new Promise(r => setImmediate(r)); for (const bp of bot.findBlocks({ matching: _ids.crops, maxDistance: 128, count: 8 })) reg('crops', bp.x, bp.y, bp.z); } catch (e) {}   // ★C资源型128:findBlocks+setImmediate让路(0714)
+                                    if (_ids.crops) try { for (const b of await world.getNearestBlocksWhereAsync(bot, _ids.crops, 128, 8)) { const bp = b.position; reg('crops', bp.x, bp.y, bp.z); } } catch (e) {}
                                     break;
                                   case 4: // chest/barrel(maxDist48 count8 稀有 → 较贵) + 动物实体(便宜)
-                                    if (_ids.chest) try { await new Promise(r => setImmediate(r)); for (const bp of bot.findBlocks({ matching: _ids.chest, maxDistance: 64, count: 8 })) reg('chest', bp.x, bp.y, bp.z); } catch (e) {}   // ★B定点64:findBlocks+setImmediate让路(0714)
+                                    if (_ids.chest) try { for (const b of await world.getNearestBlocksWhereAsync(bot, _ids.chest, 64, 8)) { const bp = b.position; reg('chest', bp.x, bp.y, bp.z); } } catch (e) {}
                                     try { for (const e of Object.values(bot.entities || {})) { if (e && /^(cow|pig|sheep|chicken|mooshroom)$/.test(e.name || '') && e.position) reg('animal', e.position.x, e.position.y, e.position.z, (e.name || '')); } } catch (e) {}
                                     break;
                                   case 5: // ore(maxDist16 count12 便宜) + 流浪商人(便宜) — ★task-queue Phase B 机会源
-                                    if (_ids.ore) try { await new Promise(r => setImmediate(r)); for (const bp of bot.findBlocks({ matching: _ids.ore, maxDistance: 16, count: 12 })) { const bn = bot.blockAt(bp); reg('ore', bp.x, bp.y, bp.z, /diamond/.test((bn && bn.name) || '') ? 'diamond' : 'iron'); } } catch (e) {}   // ★机会源16b:findBlocks+setImmediate让路(0714)
+                                    if (_ids.ore) try { for (const bn of await world.getNearestBlocksWhereAsync(bot, _ids.ore, 16, 12)) { const bp = bn.position; reg('ore', bp.x, bp.y, bp.z, /diamond/.test(bn.name || '') ? 'diamond' : 'iron'); } } catch (e) {}
                                     try { for (const e of Object.values(bot.entities || {})) { if (e && /^(wandering_trader|trader_llama)$/.test(e.name || '') && e.position) reg('trader', e.position.x, e.position.y, e.position.z, e.name); } } catch (e) {}
                                     break;
                                 }
@@ -6731,7 +6443,7 @@ const modes_list = [
                 //   +台通路时井下随时补镐), 此时 60 耐久足够开工 — oracle 短程直采更不在话下。
                 const canMineWholeNight = (picksBudget >= cfg.mineNightPickBudget || (sufficientForUnderground && picksBudget >= 60))
                     && sufficientForUnderground && food >= cfg.mineNightFood && (cobble + dirtCt) >= 4
-                    && (rationsCt >= 2 || (food >= 14 && hp >= 14));   // 16→14 (03:09 实录肚15卡线): 夜耗3-5, 14起跳上浮仍9-11, 灰区兜底
+                    && (rationsCt >= 2 || food >= 14);
                 // gravity-pit trap (mirror prepNether C334): digging into a sand/red_sand/gravel column
                 // collapses onto the head → suffocation. Below dy-1/dy-2 (dug) + dy+2 (drops into head gap).
                 const _GRAV_DEC = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel)$/;
@@ -6766,20 +6478,17 @@ const modes_list = [
                 // 背包带床是天然 affordable (goBedSleep 已支持就地放床): 无需地标、无需爬升门
                 // (床就在手里, 不存在 deep-no-bed-climb 的 30s 寻路空转问题)。
                 const _bedInPack = (() => { try { return bot.inventory.items().some(i => /_bed$/.test(i.name || '')); } catch (e) { return false; } })();
-                // ★2026-07-05 用户问'等黎明为什么不睡觉' → hp>=10 门定性为软 bug: 低血+断粮夜
-                // (hp7/food15 零可食实录, 20min hold) 正是最需要跳夜的时刻, 却被 hp 门锁死;
-                // 同表达式已要求 actionable===0, 走夜路的真实风险已被覆盖, hp 门冗余。
-                // 10→5: 仅濒死(hp<5)才拒走 — 那时任何移动都危险, 归 shelter。
-                const bedAffordable = (!!_bedLm && _bedLm.dist <= cfg.bedReachDist && !inDeathZone && actionable === 0 && hp >= 5
+                // Absolute health is intentionally absent; actionable threat already captures the travel risk.
+                const bedAffordable = (!!_bedLm && _bedLm.dist <= cfg.bedReachDist && !inDeathZone && actionable === 0
                     && (y >= 50 || _bedLm.y <= y + 8))
-                    || (_bedInPack && !inDeathZone && actionable === 0 && hp >= 5);
+                    || (_bedInPack && !inDeathZone && actionable === 0);
                 // FIGHT (commitToFight): a melee-able, point-blank NON-creeper threat we can win — sword
-                // in hand, hp headroom, not boxed in (enclosed → can't kite, prefer seal). creeper is
+                // in hand, not boxed in (enclosed → can't kite, prefer seal). creeper is
                 // excluded (it suicides on contact → the defense reflex layer kites it, not us).
                 const hasSwordDec = (() => { try { return bot.inventory.items().some(i => /_sword$/.test(i.name || '')); } catch (e) { return false; } })();
                 const _creeperPB = Number.isFinite(creeperDist) && creeperDist < 3.2;
                 const _meleePB = Number.isFinite(closest) && closest < 3.2;
-                const commitToFight = _meleePB && !_creeperPB && hasSwordDec && hp > 12 && !(mob && mob.enclosed);  // ★hp>6→>12: 死亡数据(45死)实锤 hp6 提交melee=自杀(zombie 2下打死);低血该封顶/逃不该挥剑
+                const commitToFight = _meleePB && !_creeperPB && hasSwordDec && !(mob && mob.enclosed);
                 // ── computeNightPlan(): short-circuit priority chain (user spec 2026-07-08, verbatim order):
                 //    FIGHT > GO_BED(near≤15) > [SMELT_IRON·kept] > MINE_THROUGH_NIGHT > DIG_ONE_CAP(in-place|≤15b search)
                 //    > GO_BED(far, DUSK-only) > SEAL_FORT(bare hold) ; non-night → NONE.
@@ -6881,7 +6590,7 @@ const modes_list = [
                     //   终兜底照旧返回 SEAL_FORT (勿改 NONE / 勿盲转 DIG_ONE_CAP — 见红线):
                     //     • SEAL_FORT@91 必须压过白天 BOOTSTRAP_KIT@90 (world_model §night switch), 否则无镐/无床 bot 夜里没提案 → 黑灯砍树;
                     //     • unstuck 抑制门 (~modes.js:2802) 认 NIGHT_SEAL 提交, 阻止看门狗把 bot 从 hold 里拖出去。
-                    //   执行层 nightShelter('seal') 不砌墙 = 原地【裸 hold】(站住/饿了吃/挨打即让位 self-defense 反射 + surviveNow RELOCATE/DEATH, keepInv ON).
+                    //   执行层 nightShelter('seal') 不砌墙 = 原地【裸 hold】(站住/饿了吃/挨打即让位 self-defense 反射)。
                     //   挖三填一(③④) 已优先且带 15 格找地, 这里只剩"无镐/无软土可迁/无床"的物理下限 (§7 已知并接受的 stranding gap).
                     return { decision: 'SEAL_FORT', reason: 'hold in place — surface wall-box disabled (dig_one preferred when viable)' };
                 };
@@ -7001,10 +6710,9 @@ const modes_list = [
                         if (taskqInsert && this._fw.spliceOpportunistic) try {
                             const Wd = bot._world, lm = Wd.landmarks || {}, mb = Wd.mobility || {};
                             const globalOk = !/ENTOMBED|POCKET|MAROONED|SEALED|SWIM/.test(mb.state || '')
-                                && !((Wd.threat.actionable | 0) > 0 && Wd.vitals.hp < 10)
                                 && now >= (bot._recoveryVentureUntil || 0);
                             const isNightNowB = Wd.time.phase === 'dusk' || Wd.time.phase === 'night';
-                            const emergNow = (Wd.vitals.food <= 4) || ((Wd.threat.actionable | 0) > 0 && Wd.vitals.hp < 10) || (Wd.migration && Wd.migration.inDeathZone);
+                            const emergNow = (Wd.vitals.food <= 4) || (Wd.migration && Wd.migration.inDeathZone);
                             const fresh = (set, key) => { bot[set] = bot[set] || {}; return now >= (bot[set][key] || 0); };
                             const stamp = (set, key, ttl) => { bot[set] = bot[set] || {}; bot[set][key] = now + ttl; };
                             // ★OPP cond builder (fixes the unreachable-ore no-op FREEZE: live -38,73 pinned 450s
@@ -7048,7 +6756,7 @@ const modes_list = [
                                 if (an && an.dist <= 24 && !isNightNowB && !emergNow) {
                                     const fd = Wd.vitals.food, sheep = /sheep/.test(an.meta || '');
                                     const benefit = (fd <= 6 ? 100 : fd < 12 ? 50 : 20) * (meatStock < 4 ? 1.0 : 0.3) + (sheep && !lm.bed ? 60 : 0);
-                                    const cost = an.dist * 2 + ((Wd.threat.actionable | 0) > 0 ? 40 : 0) + (Wd.vitals.hp < 10 ? 50 : 0);
+                                    const cost = an.dist * 2 + ((Wd.threat.actionable | 0) > 0 ? 40 : 0);
                                     const score = benefit - cost;
                                     if (score > 0) { const k = `an@${Math.round(an.x)},${Math.round(an.z)}`; if (fresh('_oppHuntSeen', k)) { const pri = Math.max(30, Math.min(72, Math.round(30 + score))); const cur = bot._commitment; const pushable = cur && pri > 50 && !/^(NIGHT_|DUSK_|HOLD|GET_FOOD|MIGRATE|OPP_MINE)/.test(cur.kind || ''); this._fw.spliceOpportunistic(bot, { kind: 'OPP_HUNT_ANIMAL', priority: pri, position: pushable ? 'before-current' : 'tail', skill: 'attackNearest', args: [(an.meta || 'cow').replace(/[^a-z_]/g, ''), true], locus: an, rationale: `猎${an.meta}(score=${Math.round(score)})`, lifecycle: 'encounter', cond: condFor(an, 28, 30000) }); stamp('_oppHuntSeen', k, 300000); } }
                                 }
@@ -7073,9 +6781,6 @@ const modes_list = [
                             test: (w, b) => { try {
                                 const t = w && w.time; if (!t || (t.phase !== 'dusk' && t.phase !== 'night')) return false;
                                 if (w.threat && (w.threat.actionable | 0) > 0) return false;
-                                if (w.vitals && w.vitals.hp < 6) return false;
-                                if (surviveNowActive(b)) return false;   // ★灰区指挥官持体: 床由树的③分支统一处理, 本能不抢
-
                                 // ★yield to a committed night plan (live 2026-07-02 07:12: this instinct
                                 // dragged the bot back to the bed the moment mineDown dug 3 blocks down —
                                 // GoalNear(bed) right after every descent — so DUSK_MINE_NIGHT 3-struck
@@ -7150,7 +6855,6 @@ const modes_list = [
             if (held && /_pickaxe$/.test(held.name)) return;
             if (!/stone|deepslate|andesite|diorite|granite|tuff|_ore$|obsidian|cobble/.test(tgt.name)) return;
             if (bot._plannedNoPickStoneUntil && Date.now() < bot._plannedNoPickStoneUntil) return;
-            if (surviveNowActive(bot)) return;   // ★灰区指挥官: 求生挖掘不设卡(树自管工具), interrupt 会拆树
             // REGIONAL dedupe: a legit NOPICK climb chews stone for many minutes in one
             // area — per-block 30s dedupe pushed 5+ alerts per climb (pure noise once
             // the supervisor knows). One alert per ~16-block region per 10 minutes; a
@@ -7190,7 +6894,6 @@ const modes_list = [
             // 永远慢半拍,且查时常没料。人类每挥几下瞄一眼耐久条 → 放①层,5s一查,磨损>80%
             // 且无健康同类备件 → 用随身料(圆石+棍+手持工作台)当场补造,2秒换不死一把镐)。
             const bot = agent.bot;
-            if (bot.health <= 10 && bot.food < 18) return;
             if (Date.now() - this.last_check < 5000) return;
             this.last_check = Date.now();
             const held = bot.heldItem;
@@ -7308,6 +7011,22 @@ const modes_list = [
         }
     },
     {
+        name: 'auto_heal',
+        description: 'Drink a carried healing or regeneration potion when badly hurt.',
+        interrupts: ['all'],
+        on: true,
+        active: false,
+        last_heal: 0,
+        update: async function (agent) {
+            const bot = agent.bot;
+            if (!Number.isFinite(bot.health) || bot.health <= 0 || bot.health > 12 || Date.now() - this.last_heal <= 8000) return;
+            const potion = chooseHealingPotion(bot.inventory.items());
+            if (!potion) return;
+            this.last_heal = Date.now();
+            execute(this, agent, async () => { try { await skills.consume(bot, potion); } catch (e) {} });
+        }
+    },
+    {
         name: 'auto_eat',
         description: 'Eat food when hungry to keep health regenerating.',
         // 'all': third member of the scheduler-trap family (threat_radar, tool_keeper) —
@@ -7327,12 +7046,9 @@ const modes_list = [
             //   血」时才吃背包食物, 把 food 顶过 18 让 HP 回复, 到线即停 —— 绝不为填满饥饿条而吃; health 满
             //   或 food>=18(已能回血) 都不吃。食物本能启用(MC_FOOD_INSTINCTS=1)时回退原逻辑(food<=17 就吃,
             //   主动维持饥饿条)。见 contracts.foodInstinctsEnabled / docs/food-instincts-disabled.md。
-            // ★2026-07-09 用户令: "所有食物相关的机制全部熔断" — 双闸全 OFF 时 auto_eat 整体熔断
-            //   (它的 execute() 会掐掉在跑技能吃 1.6s = "因低血/饥饿打断行动"), 饿死拉倒。
-            //   任一闸开 (MC_FOOD_INSTINCTS=1 或 MC_HP_INSTINCTS=1) 恢复下面的原逻辑。
-            if (!foodInstinctsEnabled() && !hpInstinctsEnabled()) return;
-            const regenOnly = !foodInstinctsEnabled();
-            const shouldEat = regenOnly ? (bot.health < 20 && bot.food < 18) : (bot.food <= 17);
+            // Healing from carried food is the explicit exception to low-HP reflex retirement.
+            // It never forages, shelters, relocates, or interrupts for an alternate survival plan.
+            const shouldEat = shouldAutoEat({ health: bot.health, food: bot.food, foodInstincts: foodInstinctsEnabled() });
             if (shouldEat && Date.now() - this.last_eat > 8000) {
                 let food = bot.inventory.items().find(i => /cooked_|_bread|^bread$|apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/.test(i.name));
                 // EMERGENCY TIER — rotten flesh / raw meats / spider eye. The hp3/food0
@@ -7348,11 +7064,11 @@ const modes_list = [
                 // stuck 12min). When hp is low AND food<18 (regen-blocked) AND no normal food, eat the
                 // emergency food to reach the regen threshold — a brief hunger effect beats bleeding out.
                 if (!food && (bot.food <= 6 || (bot.health <= 12 && bot.food < 18))) {
-                    food = bot.inventory.items().find(i => /rotten_flesh|^beef$|^porkchop$|^chicken$|^mutton$|^rabbit$|^cod$|^salmon$|spider_eye/.test(i.name));
+                    food = bot.inventory.items().find(i => /rotten_flesh|^beef$|^porkchop$|^chicken$|^mutton$|^rabbit$|^cod$|^salmon$/.test(i.name));
                 }
                 if (food) {
                     this.last_eat = Date.now();
-                    execute(this, agent, async () => { try { await skills.consume(bot, food.name); } catch (e) {} });
+                    execute(this, agent, async () => { try { await skills.consume(bot, food); } catch (e) {} });
                 }
             }
         }

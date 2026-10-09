@@ -286,8 +286,6 @@ class WSMessageServer {
         } catch (e) {}
 
         const hpTxt = hp >= 20 ? '血满' : hp >= 15 ? '血挺足' : hp >= 10 ? '半血' : hp >= 6 ? '血不多' : '快没血';
-        const svnActive = (bot._surviveNowUntil && Date.now() < bot._surviveNowUntil)
-            || skill === 'surviveNow' || kind === 'SURVIVE_NOW';
         const goal = missionText ? this._missionGoalPhrase(missionText) : this._goalPhrase(kind, skill);   // 短目标短语, 或 null
 
         // ★ACTUAL physical action from live bot state (truthful, ordered by specificity).
@@ -311,8 +309,7 @@ class WSMessageServer {
         } catch (e) {}
 
         let head;
-        if (svnActive) head = act ? `${act}（保命中）` : '情况紧张，在保命自救（找吃的/避险/等，尽快脱困）';
-        else if (act) head = act;                       // 有真动作 → 直接报动作
+        if (act) head = act;                            // 有真动作 → 直接报动作
         else if (goal) head = `在${goal}`;              // 没动作(hold/idle) → 报正在为之等待的目标(如 躲夜等天亮)
         else if (missionText) head = '在按指令行动';     // ★任务态但此刻无具体动作/目标短语 → 中性但不谎报"空闲"
         else head = '暂时空闲，在想下一步';
@@ -327,10 +324,10 @@ class WSMessageServer {
         text += hostiles > 0 ? `，附近有${hostiles}只怪${names.length ? `（${names.join('、')}）` : ''}` : '，周围没怪';
         text += `，${night ? '夜里' : '白天'}。`;
 
-        // ★idle 标志: 纯空闲兜底(非 保命/真动作/目标 hold) = head 落到 '暂时空闲'。供 startStatusNLTimer
+        // ★idle 标志: 纯空闲兜底(非真动作/目标 hold) = head 落到 '暂时空闲'。供 startStatusNLTimer
         //   的"空闲去抖"用 —— 只有空闲持续够久才报"停下", 短暂空隙不报。
         //   ★任务态视为"在做事"(非空闲) —— 免得任务中途的短暂空隙被去抖成"停下"。
-        const isIdle = !svnActive && !act && !goal && !missionText;
+        const isIdle = !act && !goal && !missionText;
         // ★任务态: 抹掉不相干的 kernel kind(否则下游 LLM 又照它叙述成"在挖矿"), 改附 mission 原文让其精确叙述。
         return { text, kind: missionText ? null : kind, skill, hp, hostiles, night, dim, idle: isIdle, mission: missionText || undefined };   // ★不含坐标, 也不含食物字段(用户令: 饥饿不进 admin ws)
     }
@@ -834,7 +831,7 @@ class WSMessageServer {
         } catch (e) { console.error('ackDuplicateTask failed:', e && e.message || e); }
     }
     // ★2026-07-14 用户令: 游戏内玩家的自然语言聊天(非指令) → 转发给 ws 外部 admin llm。agent 端已按
-    //   MC_INGAME_CHAT_FLUSH_MS(默认3s)节流聚合成 batch; 这里广播一帧, admin llm 侧监听 type:'ingame_chat'。
+    //   MC_INGAME_CHAT_FLUSH_MS(默认3s)节流聚合成 batch; 这里广播一帧, 外部客户端需显式监听 type:'ingame_chat'。
     forwardIngameChat(batch) {
         try {
             if (!Array.isArray(batch) || !batch.length) return;
@@ -1350,9 +1347,10 @@ class WSMessageServer {
             }
 
             // Render + JPEG-encode happen in the ISOLATED renderer child process.
-            // CameraProc.capture() forwards the bot's current pos/yaw/pitch, the child
-            // renders against the chunk/entity stream it has been fed, and returns a
-            // base64 JPEG (or null on skip / worker-restarting / timeout — never throws).
+            // CameraProc.capture() derives a collision-safe camera position from the
+            // bot's current eye/yaw/pitch, then the child renders against the chunk/entity
+            // stream it has been fed and returns a base64 JPEG (or null on skip /
+            // worker-restarting / timeout — never throws).
             // 'center' above is still used only for the NaN validation guards.
             void center;
             const base64Image = await this.camera.capture();
