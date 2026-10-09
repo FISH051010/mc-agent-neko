@@ -23,7 +23,7 @@ import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
-import { toolUpkeepPlan } from './kit_gate.js';
+import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -1278,7 +1278,8 @@ export function proposeTasks(world, bot) {
     //     (GET_DIAMOND@46, GO_UNDERGROUND@45), yields to bed/food/night/armor. Zero materials →
     //     not proposed (BOOTSTRAP_KIT's wood buffer + surface foraging own restocking); crafting
     //     failure → craftChain returns false → normal 3x/5min cooldown, no livelock.
-    if (overworld && kit.picks >= 1 && !kit.sufficientForUnderground && !threat.actionable) {
+    if (overworld && kit.picks >= 1 && !threat.actionable
+        && needsToolUpkeep({ sufficientForUnderground: kit.sufficientForUnderground, pickTier: kit.pickTier, counts: invCounts(bot) })) {
         const tableCarried = invCount(bot, /^crafting_table$/) >= 1;
         // ★T-0060: wants/affordability live in kit_gate.toolUpkeepPlan (shared with isGoalDone). It drops an
         // unaffordable stone pick when the wood-only remainder (table/sticks) alone restores the descent gate.
@@ -1448,7 +1449,7 @@ export function isGoalDone(kind, world, bot) {
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
         case PROPOSAL_KIND.TOOL_UPKEEP:
             // ★T-0060: done = gate restored OR nothing affordable left to craft (same口径 as the proposal).
-            return !!(w.kit && w.kit.sufficientForUnderground)
+            return !needsToolUpkeep({ sufficientForUnderground: !!(w.kit && w.kit.sufficientForUnderground), pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot) })
                 || toolUpkeepPlan({ picks: (w.kit && w.kit.picks) || 0, pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) }).wants.length === 0;
         // ★P0-1 REPLENISH_KIT done = 补给基线的迟滞释放: 总镐数>=2 且 planksEq>=8。触发是 <2/<4
         // (proposeTasks 1c) — 触发↔释放刻意不对称(planks <4 触发但 >=8 才放手), 与 GET_FOOD 的

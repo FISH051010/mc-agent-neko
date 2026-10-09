@@ -53,3 +53,18 @@ test('T-0060: 只揣原木 0 板 → 清单首步必须折够板 (craftChain 只
     const { wants } = toolUpkeepPlan({ picks: 3, pickTier: 'wood', counts: inv, woodUnits: woodOf(inv) });
     assert.deepEqual(wants, [['spruce_planks', 2], ['crafting_table', 1], ['stick', 1]], '4 (table) + 2 (sticks) = 6 planks = 2 folds');
 });
+
+test('T-0118 回归: 石镐磨光掉回木器, 揣 97 圆石 + 2 木镐 + 原木 (下矿门因能补镐仍开) → 必须提 TOOL_UPKEEP 造 2 把石镐, 且压过 GO_UNDERGROUND', () => {
+    const inv = { wooden_pickaxe: 2, cobblestone: 97, diorite: 32, coal: 13, spruce_log: 9, spruce_planks: 2, stick: 4 };   // 16:40 live
+    const bot = fakeBot(inv);
+    const w = dayWorld({ picks: 2, pickTier: 'wood', sufficientForUnderground: true });
+    const props = proposeTasks(w, bot);
+    const tu = props.find(p => p.kind === 'TOOL_UPKEEP');
+    assert.ok(tu, 'TOOL_UPKEEP proposed even though the descent gate is open');
+    assert.deepEqual(tu.args[0].find(([n]) => n === 'stone_pickaxe'), ['stone_pickaxe', 2]);
+    const gu = props.find(p => p.kind === 'GO_UNDERGROUND');
+    assert.ok(!gu || tu.priority > gu.priority, 'upgrade before descending further');
+    assert.equal(isGoalDone('TOOL_UPKEEP', w, bot), false);
+    const stoneW = dayWorld({ picks: 2, pickTier: 'stone', sufficientForUnderground: true });
+    assert.equal(proposeTasks(stoneW, fakeBot({ ...inv, stone_pickaxe: 2 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined, 'stone tier + gate open → no upkeep');
+});
