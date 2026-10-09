@@ -173,6 +173,7 @@ node bots/_supervisor/deploy-lock.mjs status                                    
 - 工单里照旧 comment "deploying now"/"deployed" 留痕，但**是否能部署只看锁**，不看评论。
 - 冒烟自检没过也要 release（失败也是结果），并在工单里写清楚。
 - **捎带判定（先于拿锁）**：`node bots/_supervisor/deploy-lock.mjs live <sha>`（botwatch 的改动加 `--proc botwatch`）。exit 0 = 运行中的进程启动晚于该提交**落地主工作树**的时间（按分支 reflog，不是提交时间），代码已随别人的重启上线 → **不要再重启**，直接按该进程 CreationDate 验收；exit 1 才拿锁重启。（10-10 00:21 worker-death 的 C356-C358 就是这样捎带上线的，省掉第 4 次叠加重启。）只对需重启 main.js/botwatch 的改动有意义；顶层 sticky 的 re-arm 与热加载子 skill 不适用。
+- **合入后先判生效方式**：`node bots/_supervisor/deploy-lock.mjs needs-restart <sha...>`（也接受 `a..b` 区间）。只动了 `bots/_supervisor/skills/*.js`（kernelDriver 除外）→ 热加载、不用重启；动了 `src/**`、入口文件、`botwatch*.mjs`、`ticket-server*.mjs`、`watchdog.ps1` 或 kernelDriver → exit 2，打印要重启的进程和原因文件。**别凭"我只改了个 skill"判断**：customSkill 只给 skill 文件本身 cache-bust，skill 里 `import` 的 src 模块拿的是进程启动时的缓存旧版 —— 10-10 T-0189 就是热加载的 quickMeal 导入了 food_floor 新增的导出，运行中进程导入即挂、零日志，FOOD_FLOOR 三连败，bot 饿到 food 3。
 
 ## 自动探测在测什么（botwatch.mjs）
 

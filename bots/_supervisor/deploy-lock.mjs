@@ -84,6 +84,29 @@ function procStartMsWin(re) {
     return ts.length ? Math.max(...ts) : null;
 }
 
+// ★needs-restart (监工, 2026-10-10 T-0189 事故: 热加载的 quickMeal 导入了运行中进程未重载的 src/food_floor 新导出 →
+//   导入即挂零日志, FOOD_FLOOR 三连败, bot 饿到 food 3)。按提交改到的文件判定生效方式, 别靠记忆:
+//   只动 bots/_supervisor/skills/*.js (kernelDriver 除外) → 热加载; 其余运行时代码 → 列出要重启的进程与原因文件。
+//   注意: customSkill 只给 skill 文件本身 cache-bust, skill import 的 src 模块不跟着重载 — 所以 src/** 一律算重启。
+const NO_RUNTIME_RE = /^(test\/|docs\/|.*\.md$|bots\/_supervisor\/(?:CHANGELOG|.*\.json$))/;
+export function classifyRestart(files) {
+    const needs = [], hot = [], none = [];
+    for (const f of files || []) {
+        const p = String(f).replace(/\\/g, '/');
+        if (NO_RUNTIME_RE.test(p)) { none.push(p); continue; }
+        if (p === 'bots/_supervisor/skills/kernelDriver.js') { needs.push({ target: 'main', file: p, why: 'kernelDriver 是顶层 sticky 循环, 死亡不重载 (重启 main 或 cancel re-arm)' }); continue; }
+        if (/^bots\/_supervisor\/skills\/[^/]+\.js$/.test(p)) { hot.push(p); continue; }
+        if (/^src\//.test(p) || /^(main\.js|settings\.js|package\.json|profiles\/)/.test(p)) { needs.push({ target: 'main', file: p, why: 'src/入口模块进程启动时加载 (skill 的 import 也拿缓存旧版)' }); continue; }
+        if (/^bots\/_supervisor\/botwatch[^/]*\.mjs$/.test(p)) { needs.push({ target: 'botwatch', file: p, why: 'botwatch 常驻进程' }); continue; }
+        if (/^bots\/_supervisor\/ticket-server[^/]*\.mjs$/.test(p)) { needs.push({ target: 'ticket-server', file: p, why: 'ticket-server 常驻进程' }); continue; }
+        if (/^watchdog\.ps1$/.test(p)) { needs.push({ target: 'watchdog', file: p, why: 'watchdog 自身 (env/逻辑) 是启动时快照' }); continue; }
+        if (/^bots\/_supervisor\/[^/]+\.(mjs|js|ps1)$/.test(p)) { none.push(p); continue; }   // CLI 脚本 (ticket.mjs/deploy-lock.mjs…) 每次调用新加载
+        needs.push({ target: 'check', file: p, why: '未归类的运行时文件 — 人工确认由哪个进程加载' });
+    }
+    const targets = [...new Set(needs.map(n => n.target))];
+    return { hotOnly: needs.length === 0 && hot.length > 0, targets, needs, hot, none };
+}
+
 function parseArgs(argv) {
     const flags = {};
     for (let i = 0; i < argv.length; i++) {
@@ -115,10 +138,26 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         const iso = (ms) => ms ? new Date(ms).toISOString().slice(11, 19) + 'Z' : '?';
         if (alreadyLive({ landedMs: landed, procStartMs: started })) console.log(`✓ ${sha} already LIVE: landed ${iso(landed)}, ${f.proc || 'main'} process started ${iso(started)} — no restart needed`);
         else { console.log(`✗ ${sha} NOT live (landed ${iso(landed)}, ${f.proc || 'main'} started ${iso(started)}) — restart needed (take the lock first)`); process.exitCode = 1; }
+    } else if (cmd === 'needs-restart') {
+        const repo = f.repo || path.resolve(here, '..', '..');
+        const shas = rest.filter(a => !a.startsWith('--') && !Object.values(f).includes(a));
+        const files = new Set();
+        for (const s of shas) {
+            const args = s.includes('..') ? ['diff', '--name-only', s] : ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', s];
+            try { gitOut(args, repo).split(/\r?\n/).filter(Boolean).forEach(x => files.add(x)); } catch (e) { console.log(`? cannot read ${s}`); }
+        }
+        const r = classifyRestart([...files]);
+        if (!r.needs.length) console.log(r.hot.length ? `✓ hot-reload only (${r.hot.length} skill file(s): ${r.hot.join(', ')}) — no restart` : '✓ no runtime files changed — no restart');
+        else {
+            console.log(`✗ RESTART REQUIRED: ${r.targets.join(' + ')}`);
+            for (const n of r.needs) console.log(`  - [${n.target}] ${n.file} — ${n.why}`);
+            if (r.hot.length) console.log(`  (hot-reloaded too: ${r.hot.join(', ')})`);
+            process.exitCode = 2;
+        }
     } else if (cmd === 'status') {
         const s = status();
         console.log(!s.actor ? 'free' : `${s.held ? 'HELD' : 'STALE (takeover allowed)'} by ${fmt(s)}`);
     } else {
-        console.log('deploy-lock.mjs acquire --as <actor> --reason "..." | release --as <actor> | status | live <sha> [--proc main|botwatch]');
+        console.log('deploy-lock.mjs acquire --as <actor> --reason "..." | release --as <actor> | status | live <sha> [--proc main|botwatch] | needs-restart <sha|a..b>...');
     }
 }
