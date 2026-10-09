@@ -1,4 +1,5 @@
 import * as skills from './library/skills.js';
+import { undergroundKitGate } from './framework/kit_gate.js';
 import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
@@ -6083,11 +6084,7 @@ const modes_list = [
                 // the pick STILL WORKS and wood is merely low, so the bot surfaces to restock WITH a pick
                 // (can dig back up) instead of getting stranded pickless. A real spare (picks>=2) still
                 // passes outright (existing allowance).
-                const sticks = counts['stick'] || 0;
-                const carriedTable = (counts['crafting_table'] || 0) > 0;
-                const woodForRecraft = planksMax + logs * 4;                 // planks on hand + logs→4 planks each
-                const planksToRecraft = (carriedTable ? 0 : 4) + (sticks >= 2 ? 0 : 2);  // table (if none) + sticks (if none)
-                const canRecraftPick = cobble >= 3 && woodForRecraft >= planksToRecraft;
+                // (formula lives in framework/kit_gate.js — pinned by test/kit_gate.test.mjs)
                 // ★T-0088/T-0012 BYPASS GAP (tier-wood relapse smoking gun, 06-25): the old tail was
                 // `(picks >= 2 || canRecraftPick)` — a raw picks>=2 count bypassed the can-recraft check.
                 // But N picks ALL break: a bot descended with 4 (worn) stone picks + 136 cobble + 2 planks
@@ -6100,7 +6097,7 @@ const modes_list = [
                 // unaffected: 2+ picks WITH a carried table still pass; a table-less bot that can craft one
                 // (≥4 planks / a log) passes via canRecraftPick; only "multi-pick + no table + no wood to
                 // make one" is now correctly gated to surface for wood FIRST (resource-floor kit, T-0060).
-                const sufficientForUnderground = picks >= 1 && (durablePick || picks >= 2) && ((picks >= 2 && carriedTable) || canRecraftPick);
+                const { sufficientForUnderground } = undergroundKitGate({ picks, durablePick, counts });
                 // --- depth band ---
                 const y = Math.round(p.y);
                 const depthBand = y >= 62 ? 'surface' : (y >= 40 ? 'shallow' : (y >= 16 ? 'mid' : 'deep'));
