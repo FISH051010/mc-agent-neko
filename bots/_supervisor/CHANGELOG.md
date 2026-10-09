@@ -2963,6 +2963,8 @@
 
 - **★C399-S mineDown 三面见水 = 含水层, 横向挖隧道换址而非下挖最后一向(T-0162 续, death #10)**（2026-10-10，worker-stuck，T-0162）: 实录 10-09 22:03:36-41 @31,42,-4 'fluid turn 1/4→3/4' (三个朝向台阶格旁见水), T-0162 随后沿第 4 个朝向下挖 (其台阶环读数干), 3 步后含水层灌入 → 22:03:52 SWIM → ENTOMBED → 22:04:16 溺死 (救援挖掘拿不到槽另见 worker-death T-0174)。修: 朝向记忆记录中止原因 (rememberAbortedHeading(…, 'fluid')); aquiferHere = 8 格内 TTL 内 ≥3 个不同朝向因水中止; 派发内流体中止命中则直接走 T-0161 换址隧道 (隧道自带侧邻/头顶防水检查), 不再旋到最后一向; START 跨派发记忆命中同样走 relocate 分支; 隧道不可行 → 诚实失败交上层。测试 test/minedown_aquifer_relocate.test.mjs, 更新 minedown_fluid_reheading 钉子。
 
+- **★C400-S breakBlockAt 工具切换失败不再让挖掘失败(T-0179)**（2026-10-10，worker-stuck，T-0179；worker-tier 报）: 实录 10-09 22:26:50-53 @-10,20,33 mineDown 楼梯头格是 replenishKit 离场台回收失败遗留的 crafting_table, 3 次派发 START 后 2ms 'dig threw: invalid operation' (prismarine-windows Window.acceptClick 槽位断言, 来自 bot.tool.equipForBlock; mine_motion 无 dig.begin) → DUSK_MINE_NIGHT 冷却 5min。修: equipForBlock 包 try/catch — 失败记 log + motionAudit 'equip_for_block.fail' (含堆栈前 6 行, 供追查是哪个失效槽位), 用手上物品继续挖; 矿保护闸与 9s 上限照旧作用于手上物品。测试 test/break_block_equip_fail.test.mjs。
+
 ---
 
 ---

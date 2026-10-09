@@ -2608,7 +2608,15 @@ export async function breakBlockAt(bot, x, y, z) {
             await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4));
         }
         if (bot.game.gameMode !== 'creative') {
-            await bot.tool.equipForBlock(block);
+            // ★T-0179: a failed tool swap must not fail the dig (live 22:26:50 crafting_table in mineDown's stair:
+            //   equipForBlock threw prismarine-windows 'invalid operation' ×3 → zero-dig dispatches → cooldown). Break
+            //   with whatever is held; the ore-waste guard and the 9s cap below still apply to that held item.
+            try { await bot.tool.equipForBlock(block); }
+            catch (eq) {
+                const em = (eq && eq.message) || String(eq);
+                log(bot, `equip for ${block.name} failed (${em}) — digging with ${bot.heldItem ? bot.heldItem.name : 'hand'}`);
+                try { motionAudit(bot, 'equip_for_block.fail', { block: motionBlockObj(block), held: bot.heldItem ? bot.heldItem.name : null, error: em, stack: String((eq && eq.stack) || '').split(/\r?\n/).slice(0, 6).join(' | ') }); } catch (e2) {}
+            }
             const itemId = bot.heldItem ? bot.heldItem.type : null
             // canHarvest() answers "will this DROP an item", NOT "can I break it". A bare-handed
             // bot CAN break cobblestone/stone/netherrack (slow, no drop, but the block disappears)
