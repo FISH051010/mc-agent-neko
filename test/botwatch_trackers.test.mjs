@@ -161,3 +161,24 @@ test('T-0124: MOBILITY-STALE stays quiet when vitals themselves are stale (that 
   assert.equal(mobilityStaleActive({ v: { x: 0 }, ageS: 600, mobAge: 900, mobRaw: 'FREE' }), false);
   assert.equal(mobilityStaleActive({ v: null, ageS: 9999, mobAge: null, mobRaw: '' }), false);
 });
+
+import { makeCooldownChurnTracker } from '../bots/_supervisor/botwatch-trackers.mjs';
+
+test('2026-10-10: COOLDOWN-CHURN flags a kind cooled ≥3 times within 60min (proposal↔skill gate mismatch)', () => {
+  const tr = makeCooldownChurnTracker();
+  const base = Date.parse('2026-10-09T18:00:00Z');
+  const line = (min, kind, skill) => `[${new Date(base + min * 60000).toISOString()}] [kernel] ★dispatch-cooldown ${kind} via ${skill}: failed 3x consecutively — suppressing`;
+  tr.ingest([line(0, 'GO_UNDERGROUND', 'mineDown'), line(6, 'GO_UNDERGROUND', 'mineDown'), line(12, 'GET_BED', 'prepNether'), line(40, 'GO_UNDERGROUND', 'mineDown')]);
+  const hits = tr.churning(base + 45 * 60000);
+  assert.deepEqual(hits.map((h) => h.kind), ['GO_UNDERGROUND']);
+  assert.equal(hits[0].count, 3);
+  assert.deepEqual(hits[0].skills, ['mineDown']);
+});
+
+test('2026-10-10: COOLDOWN-CHURN forgets cooldowns older than the window', () => {
+  const tr = makeCooldownChurnTracker();
+  const base = Date.parse('2026-10-09T18:00:00Z');
+  const line = (min) => `[${new Date(base + min * 60000).toISOString()}] [kernel] ★dispatch-cooldown FOOD_FLOOR via quickMeal: failed 3x`;
+  tr.ingest([line(0), line(10), line(70)]);
+  assert.deepEqual(tr.churning(base + 75 * 60000), []);
+});

@@ -97,3 +97,34 @@ export const falseShelterActive = (s) => !!(s.wm && s.wm.time && s.wm.time.isDay
     && (/prepNether|shelter|bunker|sleep|bed/i.test(s.skill || '') || /POCKET|ENC|ENTOMB|MAROON/i.test(s.mob || ''))
     && (s._stale ? s._stale.staleMs >= 60000 : false)
     && (s.threat ? (s.threat.actionable | 0) === 0 : true));
+
+// ── COOLDOWN-CHURN (2026-10-10, 监工): 同一 kind 60min 内被 dispatch-cooldown ≥3 次 = 提案端判可行而技能端判不可行,
+//    两边判据不同源 (noop-dispatch 通律: 决策层绝不能 commit 技能层必拒的 skill)。7h 回放校准: 命中的恰是人工
+//    才发现的三处 (GO_UNDERGROUND×5 mineDown 静默拒跑 / FOOD_FLOOR×4 地下侦察 / DUSK_MINE_NIGHT×3), 其余 kind ≤2。
+export const COOLDOWN_CHURN_WINDOW_MS = 60 * 60000;
+export const COOLDOWN_CHURN_THRESHOLD = 3;
+const COOLDOWN_RE = /^\[(\d{4}-\d\d-\d\dT[\d:.]+Z)\].*★dispatch-cooldown (\w+)(?: via (\w+))?/;
+export function makeCooldownChurnTracker({ windowMs = COOLDOWN_CHURN_WINDOW_MS, threshold = COOLDOWN_CHURN_THRESHOLD } = {}) {
+    const ev = new Map();   // kind -> [{t, skill}]
+    return {
+        ingest(lines) {
+            for (const line of lines) {
+                const m = COOLDOWN_RE.exec(line);
+                if (!m) continue;
+                const t = Date.parse(m[1]);
+                if (!Number.isFinite(t)) continue;
+                if (!ev.has(m[2])) ev.set(m[2], []);
+                ev.get(m[2]).push({ t, skill: m[3] || null });
+            }
+        },
+        churning(now) {
+            const out = [];
+            for (const [kind, arr] of ev) {
+                const recent = arr.filter((e) => now - e.t <= windowMs);
+                ev.set(kind, recent);
+                if (recent.length >= threshold) out.push({ kind, count: recent.length, skills: [...new Set(recent.map((e) => e.skill).filter(Boolean))] });
+            }
+            return out;
+        },
+    };
+}

@@ -39,7 +39,7 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, mobilityStaleActive } from './botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, mobilityStaleActive, makeCooldownChurnTracker } from './botwatch-trackers.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -245,6 +245,40 @@ const D = [
     },
 ];
 
+// ── COOLDOWN-CHURN: 按 kind 开单 (框架外的轻量通道, 因为 dedupKey 随 kind 变)。增量读 progress.txt,
+//    启动时从当前 EOF 开始, 重启不会把历史冷却回灌成新单。同一 kind 2h 内只开一次。
+const cooldownChurn = makeCooldownChurnTracker();
+const _churnTicketedAt = new Map();
+let _progOffset = null;
+function readNewProgressLines() {
+    try {
+        const f = path.join(DIR, 'progress.txt');
+        const size = fs.statSync(f).size;
+        if (_progOffset === null || size < _progOffset) { _progOffset = size; return []; }   // first run / rotated
+        if (size === _progOffset) return [];
+        const len = Math.min(size - _progOffset, 4 * 1024 * 1024);
+        const buf = Buffer.alloc(len);
+        const fd = fs.openSync(f, 'r');
+        try { fs.readSync(fd, buf, 0, len, size - len); } finally { fs.closeSync(fd); }
+        _progOffset = size;
+        return buf.toString('utf8').split(/\r?\n/);
+    } catch (e) { return []; }
+}
+async function cooldownChurnDetector(s, t) {
+    cooldownChurn.ingest(readNewProgressLines());
+    for (const h of cooldownChurn.churning(t)) {
+        if (t - (_churnTicketedAt.get(h.kind) || 0) < 2 * 3600000) continue;
+        _churnTicketedAt.set(h.kind, t);
+        const id = await postTicket({
+            type: 'framework', severity: 'high', dedupKey: `cooldown-churn-${h.kind}`,
+            title: `提案↔技能判据不同源: ${h.kind} 60min 内被 dispatch-cooldown ${h.count} 次 (via ${h.skills.join('/') || '?'})`.slice(0, 140),
+            detail: `同一 kind 反复"提案判可行 → 技能秒败/NO-OP → 3 连败冷却 5min → 冷却完再提"。noop-dispatch 通律: 决策层绝不能 commit 技能层必拒的 skill —— 查提案门(world_model/modes)与 ${h.skills.join('/') || '技能'} 的前置条件是否同源, 让两边用同一个谓词。现状 skill=${s.skill} mob=${s.mob} hp=${s.hp} food=${s.food}`.slice(0, 480),
+            evidence: { kind: h.kind, cooldownsInWindow: h.count, skills: h.skills, pos: s.v ? [s.v.x, s.v.y, s.v.z] : null },
+        });
+        flagsOut.push(`★COOLDOWN-CHURN ${h.kind}×${h.count}→${id || '?'}`);
+    }
+}
+
 // per-detector runtime state
 const ST = {};
 const flagsOut = [];
@@ -367,6 +401,7 @@ async function tick() {
         flagsOut.push(`★STALE(vitals ${s.ageS}s old)`);
     } else {
         for (const d of D) await runDetector(d, s, t);
+        try { await cooldownChurnDetector(s, t); } catch (e) {}
         edgeDetectors(s, t);
         await classicDetectors(s, t);
     }
