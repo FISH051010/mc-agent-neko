@@ -29,6 +29,7 @@ import { log, validateNameFormat, handleDisconnection } from './connection_handl
 import fs from 'fs';
 import { dataPath, expandUserPath } from '../utils/paths.js';
 import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket } from './world_scope.js';
+import { readJsonFileSync } from '../utils/json_io.js';
 import { deathAlertText, observeKeepInventory, countItems } from './keepinv_report.js';
 
 // ★2026-08-07 路径统一: 本文件所有监工状态文件原来都是裸相对 'bots/_supervisor/xxx' (相对 CWD)。
@@ -1807,7 +1808,7 @@ export class Agent {
                         console.log('[adminMission] respawn: mission active — suppressing sticky_skill re-arm');
                         try { this.adminMission.resumeAfterSupervised(); } catch (e) {}
                     } else if (fs.existsSync(SUP('sticky_skill.json'))) {
-                        const sticky = JSON.parse(fs.readFileSync(SUP('sticky_skill.json'), 'utf8'));
+                        const sticky = readJsonFileSync(SUP('sticky_skill.json'), { onError: (e) => console.warn('respawn sticky parse failed (sticky_skill.json):', e && e.message) });
                         if (sticky && sticky.skill) {
                             // Single-shot re-arm: if a supervised skill is still running it'll
                             // be rejected as "busy" and simply keep running (that survives the

@@ -1,5 +1,6 @@
 import * as skills from './library/skills.js';
 import { undergroundKitGate } from './framework/kit_gate.js';
+import { readJsonCached } from '../utils/json_io.js';
 import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
@@ -47,16 +48,7 @@ const FILL_RE = /cobblestone|cobbled|deepslate|^dirt$|andesite|diorite|granite|^
 // double-read and drops the predicate's independent read WITHOUT pushing await into any sync decision
 // chain. Returns null on any read/parse failure — every call site already null-guards, matching the
 // old bare `try { JSON.parse(readFileSync(...)) } catch {}`.
-const _jsonReadCache = new Map();   // path -> { t, v }
-function readJsonCached(path, ttlMs) {
-    const now = Date.now();
-    const c = _jsonReadCache.get(path);
-    if (c && (now - c.t) < ttlMs) return c.v;
-    let v = null;
-    try { v = JSON.parse(fs.readFileSync(path, 'utf8')); } catch (e) { v = null; }
-    _jsonReadCache.set(path, { t: now, v });
-    return v;
-}
+// (implementation moved to src/utils/json_io.js — BOM-safe, pinned by test/bom_json.test.mjs, T-0116)
 
 // Oracle files are larger and are refreshed by independent daemons. Never put their
 // disk IO on the websocket/modes event loop: return the last immutable snapshot now,
