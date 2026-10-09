@@ -91,6 +91,21 @@ test('T-0164: 记录点是 stone 但 4 格内有炉 (坐标差一格) → 照收
     assert.equal(inv.iron_ingot, 8);
 });
 
+test('T-0164: 到场空手 (清炉 +0 且挖不回炉) 2 次 → 删记录, 不无限重派 (21:23:47 实录)', async () => {
+    writeStranded(null);
+    writeStranded({ x: -55, y: 21, z: 23, item: 'raw_iron', product: 'iron_ingot', n: 8, at: Date.now() });
+    const { default: reclaimFurnace, } = await import('../bots/_supervisor/skills/reclaimFurnace.js');
+    const { readAllStranded } = await import('../bots/_supervisor/skills/smeltSafe.js');
+    const pos = { x: -55, y: 22, z: 25 };
+    const bot = { entity: { get position() { return { ...pos, offset(dx, dy, dz) { return { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }; } }; } }, blockAt: () => ({ name: 'furnace' }) };
+    const ctx = { skills: { goToPosition: async () => {}, clearNearestFurnace: async () => true, collectBlock: async () => {} },
+                  world: { getInventoryCounts: () => ({}), getNearestBlock: () => null }, log: () => {} };
+    assert.equal(await reclaimFurnace(bot, ctx), false);
+    assert.equal(readAllStranded().length, 1, 'first empty visit keeps the record');
+    assert.equal(await reclaimFurnace(bot, ctx), false);
+    assert.equal(readAllStranded().length, 0, 'second empty visit drops it');
+});
+
 test('T-0164: 滞留记录 ≤64 格 → 提 RECLAIM_FURNACE(reclaimFurnace); 收回后 isGoalDone; 太远不提', () => {
     writeStranded({ x: -54, y: 22, z: 24, item: 'raw_iron', product: 'iron_ingot', n: 8, at: Date.now() });
     const w = JSON.parse(JSON.stringify(EMPTY_WORLD));

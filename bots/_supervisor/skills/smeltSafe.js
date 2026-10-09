@@ -117,7 +117,14 @@ export async function reclaimStranded(bot, { skills, world, log }, { all = false
         got += r.got; furnaces += r.furnace ? 1 : 0;
         log(bot, `reclaim stranded furnace @${rec.x},${rec.y},${rec.z}: +${r.got} (${rec.product || '?'}/${rec.item || '?'}, expected ${rec.n ?? 'unknown'})${r.furnace ? ' + furnace picked up' : ''}`);
         if (r.got > 0 || r.furnace) removeStranded(rec);
-        else break;   // 到了炉边却既没收到东西也没挖回炉 — 别在同一口上打转, 记录留给下次
+        else {
+            // 到了炉边却既没收到东西也没挖回炉 — 别在同一口上打转。★21:23:47 实录: 空手→记录保留→每 1.5s 重派。
+            //   同一条到场空手 2 次 → 认定收不回, 删记录 (否则 3h 内每 5min 冷却到期就再跑一趟)。
+            const tries = (rec.emptyVisits || 0) + 1;
+            if (tries >= 2) { log(bot, `stranded furnace @${rec.x},${rec.y},${rec.z}: empty-handed ${tries}x on site — giving up, dropping record`); removeStranded(rec); }
+            else writeStranded({ ...rec, emptyVisits: tries });
+            break;
+        }
         if (!all) break;
     }
     return { got, furnaces };
