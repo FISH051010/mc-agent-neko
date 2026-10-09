@@ -6,6 +6,7 @@ import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
 import { lowHpMovementProfile } from '../framework/mobility_signals.js';
+import { planWaterStep } from '../mobility_geom.js';
 import settings from "../../../settings.js";
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -2953,6 +2954,36 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         motionAudit(bot, 'place_skill.end', placeCtx({ ok: false, item: item_name, reason: 'exception', error: err && err.message ? err.message : String(err) }));
         return false;
     }
+}
+
+/**
+ * ★T-0165: get out of SHALLOW water when the bank is unclimbable from the surface — drop a block into a neighbour
+ * water cell (solid floor, 2 air above) and swim-jump onto it. The under-feet pillar can't work here: floating at the
+ * surface the feet top out ~y+0.83 < the y+0.92 placeBlockUnderFeet needs (live 20:42-20:46, ~90 failed tries).
+ * @returns {Promise<boolean>} true once standing out of the water.
+ */
+export async function climbOutViaWaterStep(bot, item, prefer = null) {
+    const feet = bot.entity.position.floored();
+    const step = planWaterStep((x, y, z) => bot.blockAt(new Vec3(x, y, z)), feet, prefer);
+    if (!step) return false;
+    const placed = await placeBlock(bot, item, step.x, step.y, step.z, 'bottom', false, { positioning: false });
+    if (!placed || bot.interrupt_code) return false;
+    const isW = (b) => !!(b && /water/.test(b.name || ''));
+    try {
+        await bot.lookAt(new Vec3(step.x + 0.5, step.y + 1.6, step.z + 0.5), true);
+        bot.setControlState('forward', true);
+        bot.setControlState('jump', true);
+        const t0 = Date.now();
+        while (Date.now() - t0 < 2500 && !bot.interrupt_code) {
+            const p = bot.entity.position;
+            if (bot.entity.onGround && p.y >= step.y + 0.9 && !isW(bot.blockAt(p.floored()))) break;
+            await new Promise(r => setTimeout(r, 100));
+        }
+    } finally { try { bot.clearControlStates(); } catch (e) {} }
+    const p = bot.entity.position;
+    const out = !!bot.entity.onGround && p.y >= step.y + 0.9 && !isW(bot.blockAt(p.floored()));
+    log(bot, `water step @${step.x},${step.y},${step.z} (${step.dx},${step.dz}) → ${out ? 'out' : 'still in water'}`);
+    return out;
 }
 
 export async function placeBlockUnderFeet(bot, blockType, opts = {}) {
