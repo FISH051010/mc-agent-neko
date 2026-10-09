@@ -46,9 +46,9 @@ test('C231 base state: water short-circuits to SWIM (classifySwim then decides),
 });
 
 
-const trapBot = ({ oxygen = 10, enclosed = true, above = 'stone' } = {}) => ({
+const trapBot = ({ oxygen = 10, enclosed = true, above = 'stone', state = 'ENTOMBED' } = {}) => ({
     oxygenLevel: oxygen,
-    _mobility: { enclosed },
+    _mobility: { enclosed, state },
     entity: { position: new Vec3(69.5, 48, 12.5) },
     blockAt: (p) => (p.y === 50 ? { name: above, boundingBox: /water|lava|air/.test(above) ? 'empty' : 'block' } : { name: 'water', boundingBox: 'empty' }),
 });
@@ -63,4 +63,13 @@ test('T-0104: no yield in open water, with air/water overhead, or before oxygen 
     assert.equal(sealedWaterTrapYield(trapBot({ above: 'water' })), false);
     assert.equal(sealedWaterTrapYield(trapBot({ above: 'air' })), false);
     assert.equal(sealedWaterTrapYield(trapBot({ oxygen: 20 })), false);
+});
+
+test('T-0175: no handoff gap — swim reflex only yields once ENTOMBED owns the trap, and drowning escalates to ENTOMBED immediately (death #11)', () => {
+    // live 22:48:43→54: swim reflex yielded while mobility was still 'SWIM' (12s escalation) → nobody acted
+    assert.equal(sealedWaterTrapYield(trapBot({ state: 'SWIM' })), false, 'mobility not digging yet → keep swimming');
+    assert.equal(sealedWaterTrapYield(trapBot({ state: 'ENTOMBED' })), true);
+    const h = {};
+    assert.equal(classifySwim(h, { enc: true, now: 1e9, x: 0, z: 0, oxygen: 20 }), 'SWIM', 'controlled dive with full air');
+    assert.equal(classifySwim(h, { enc: true, now: 1e9 + 2000, x: 0, z: 0, oxygen: 14 }), 'ENTOMBED', 'drowning in a covered pocket → dig out now, not after 12s');
 });

@@ -56,12 +56,16 @@ export function mobilityBaseState({ inWater, exitsN, upOpen, enc }) {
 // One mobility tick while st==='SWIM' (moved verbatim from modes.js). holder keeps _submTrapAt/_swimTrack.
 // ★T-0098 SUBMERGED-TRAP: covered water pocket (enc) for >12s → ENTOMBED (aquifer-aware dig-out) —
 //   horizontal thrashing never resets it. Open water (enc=false) → T-0091 windowed SWIM_STUCK.
-export function classifySwim(holder, { enc, now, x, z }) {
+export function classifySwim(holder, { enc, now, x, z, oxygen }) {
     if (!holder._swimTrack) holder._swimTrack = createSwimTracker();
     if (enc) {
         let st = 'SWIM';
+        // ★T-0175 handoff gap (death #11 10-09 22:49:00 @y44): sealedWaterTrapYield made the swim reflex stand
+        //   down as soon as it was drowning in a covered pocket, but this escalation still waited 12s → ~12s with
+        //   NO reflex on the body (act_trace act='-' 22:48:43→54) while a zombie hit and O2 ran out. Actually
+        //   drowning (oxygen ≤14) in a covered pocket → ENTOMBED now; the yield requires ENTOMBED (below).
         if (!holder._submTrapAt) holder._submTrapAt = now;
-        else if (now - holder._submTrapAt > 12000) st = 'ENTOMBED';
+        if (now - holder._submTrapAt > 12000 || (Number.isFinite(oxygen) && oxygen <= 14)) st = 'ENTOMBED';
         // fresh episode so surfacing into open water doesn't instantly SWIM_STUCK
         holder._swimTrack.reset();
         return st;
@@ -81,5 +85,7 @@ export function sealedWaterTrapYield(bot) {
     const _subEnc = !!(bot._mobility && bot._mobility.enclosed);
     const _hCap = bot.blockAt(bot.entity.position.offset(0, 2, 0));
     const _headCapped = _hCap && _hCap.boundingBox === 'block' && !/water|lava/.test(_hCap.name || '');
-    return !!(_drownSub && _subEnc && _headCapped);
+    // ★T-0175: only yield once the ENTOMBED dig-out actually owns the trap — else nobody acts (the 12s gap).
+    const _rescuing = !!(bot._mobility && bot._mobility.state === 'ENTOMBED');
+    return !!(_drownSub && _subEnc && _headCapped && _rescuing);
 }

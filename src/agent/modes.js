@@ -4117,7 +4117,7 @@ const modes_list = [
                     // 边界: 开放湖/河/海 enc=false 走原 SWIM/SWIM_STUCK 不变; 头顶有竖井时 (0,0) 列
                     // 见天 → enc=false → 自动让位 SWIM_STUCK 爬竖井; 受控深潜瞬时穿水踩不到 12s 门。
                     // (logic in swim_progress.js classifySwim — pinned by test/swim_progress.test.mjs)
-                    st = classifySwim(this, { enc, now, x: sp2.x, z: sp2.z });
+                    st = classifySwim(this, { enc, now, x: sp2.x, z: sp2.z, oxygen: bot.oxygenLevel });   // ★T-0175 drowning → ENTOMBED now
                 } else { if (this._swimTrack) this._swimTrack.reset(); this._submTrapAt = 0; }
                 // ★C341 (T-0074): SEALED-ROOM override. Locally FREE/POCKET (interior air to move in) but
                 // covered above (enc) — the ONLY situation that can be a walled-in room. Flood-fill the

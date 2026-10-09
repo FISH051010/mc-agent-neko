@@ -12,6 +12,14 @@
 
 ---
 
+## C375. ★封顶水袋溺水的反射交接空档: 溺水即升 ENTOMBED + 游泳反射只在 ENTOMBED 已接手时才让位（swim_progress.js + modes.js 需重启,T-0180,worker-death,⏳待重启）
+
+**证据**: death #11 10-09 22:49:00Z drowning+zombie(0.7) @~-10,44,41 夜, mineDown 挖进天然水洞。22:48:41 →SWIM; 22:48:43 mineDown 按 T-0174 让位(生效); 22:48:43→54 act_trace 全程 act='-' ctrl='-'(无任何反射接手, 无 [swim] 日志); 22:48:54 →ENTOMBED; 22:48:50 hp13(-7), 22:48:58 hp4, 22:49:00 死。
+**机理**: 两条旧修复交接空档 —— T-0104 `sealedWaterTrapYield`(溺水+封闭+头顶实心 → 游泳反射立即让位给 ENTOMBED) vs T-0098 `classifySwim`(封闭水袋要 12s 才升 ENTOMBED)。让位立即发生, 接手要 12s → ~12s 无人掌舵, 僵尸贴身打 + 缺氧。
+**改动**: classifySwim 加 `oxygen`: 封闭水袋且 O2≤14 → 立即 ENTOMBED(不等 12s); sealedWaterTrapYield 追加前提 `bot._mobility.state==='ENTOMBED'`(真有人在挖才让)。modes 调用处传 bot.oxygenLevel。
+**可证伪预测**: 封闭水袋溺水时 O2 掉到 14 内即出 `[mobility] → ENTOMBED`(不再与 SWIM 间隔 ~12s), act_trace 不再出现水下 act='-' 连续 >3s。监工建议的①(夜挖破入开放洞穴→补块封口回撤)②(水中有贴身敌对→先上浮)未在本条, 视复发另加。
+**回滚**: revert, 重启 main.js。回归 test/submerged_trap.test.mjs 'T-0175: …' + swim_progress T-0091 正则放宽。
+
 ## C374. ★C373 收紧: 救命挖掘只在【危险中】(溺水/3s 内掉血) 才抢槽, 封锁只跟随真实抢断（modes.js + framework/mobility_signals 需重启,T-0174,worker-death,⏳待重启）
 
 **证据(C373 预测落空的那一半)**: 22:45:05-46 每 ~8s `★rescue dig preempts task dig (mobility:ENTOMBED, O2=20, was -)`; 当时满血 O2=20 白天, surfaceUp(replenishKit ①) 在 1×1 竖井里上爬, mobility 把竖井判 ENTOMBED 抢 surfaceUp 的槽, 两边互相 `Digging aborted`。
