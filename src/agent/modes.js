@@ -33,6 +33,7 @@ import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep
 import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
+import { decisionOwnsNightMining } from './framework/night_owner.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -855,6 +856,9 @@ const modes_list = [
             // 回答这个问题: 封闭=夜晚白天没区别,继续干活。近身威胁仍由 shouldFlee/
             // bunkerDown 的怪压分支兜底——enclosed 只豁免"无怪也要预防性蹲坑"。)
             if (bot._mobility && bot._mobility.enclosed) return false;
+            // ★T-0136: 决策层已承诺夜挖 (DUSK_MINE_NIGHT) + 派发器在线 + 无怪 → 下挖即庇护, 预防性封箱让位
+            //   (否则 bunkerDown 抢身体 → mineDown 秒退 3 连败冷却 → 站着过夜)。判据见 framework/night_owner.js。
+            if (decisionOwnsNightMining(bot, { hostilesNear: this.nearbyHostiles(bot).length })) return false;
             // ★甲兵贴脸僵尸死战 (见 armoredZombieBrawl): 穿甲 + 僵尸类贴脸 → 不夜宿封箱, 让位 self_defense
             //   站撸(与 shouldFlee 同步, 否则夜里会先 bunkerDown 把仗躲掉)。仅贴脸生效, 离身即恢复常规夜宿。
             if (this.armoredZombieBrawl(bot)) return false;
