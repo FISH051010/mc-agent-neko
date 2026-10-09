@@ -6449,6 +6449,18 @@ export function breakWouldFlood(blockAt, pos) {
 }
 
 /**
+ * ★T-0168 (death #8 10-09 21:17:59, 僵尸 d=1.7, hp14→0, 7s 内零反射): shouldFlee 的"健康无武器开局豁免"
+ * (无武器 + 恰 1 只近战怪 → 不逃, 理由"一只怪杀不死满血 bot, 让它去造剑") 不看是否已在挨打;
+ * self_defense 无武器又不出手 → 两边都不接, 站着被打死。人类: 满血被挠一下可以继续干活;
+ * 已经在掉血就退回坑里封口。豁免只在 "没在挨打" 或 "血量仍近满(≥16)" 时成立。
+ */
+export function unarmedSoloMeleeExempt({ hasWeapon, hostileCount, hostileName, recentlyHurt, hp }) {
+    if (hasWeapon || hostileCount !== 1) return false;
+    if (/skeleton|stray|creeper|witch|ghast|blaze|pillager/i.test(hostileName || '')) return false;
+    return !recentlyHurt || (Number(hp) || 0) >= 16;
+}
+
+/**
  * ★T-0152 (death #6 10-09 20:03:31 fall, hp1): MAROONED 行军把 spruce_leaves 当可爬台阶, 一路爬上
  * 树冠 (y74→76), 然后 forward+jump 固定 420ms 越过 1 格宽的叶/柱边缘自由落体 5 格。
  * 人类: 不在树冠上行军 (叶子是"挖穿"的障碍, 不是路); 跳上台阶一落稳就收脚。

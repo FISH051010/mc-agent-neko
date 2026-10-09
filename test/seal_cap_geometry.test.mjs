@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -191,4 +191,14 @@ test('T-0152: MAROONED march never climbs onto leaves/logs (death #6 fell off a 
     assert.equal(climbLanded({ startY: 74, y: 75.0, onGround: true }), true);
     assert.equal(climbLanded({ startY: 74, y: 75.6, onGround: false }), false, 'still airborne mid-jump');
     assert.equal(climbLanded({ startY: 74, y: 74.0, onGround: true }), false, 'has not risen yet');
+});
+
+test('T-0168: unarmed vs one zombie — keep working only while not being hit or near-full hp; once bleeding, flee/dig in (death #8 zero-reflex)', () => {
+    const base = { hasWeapon: false, hostileCount: 1, hostileName: 'zombie', recentlyHurt: true, hp: 14 };
+    assert.equal(unarmedSoloMeleeExempt(base), false, 'hit and down to 14 → no exemption → flee/dig-in path');
+    assert.equal(unarmedSoloMeleeExempt({ ...base, recentlyHurt: false }), true, 'not being hit → keep bootstrapping (original livelock fix)');
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 18 }), true, 'one scratch at near-full hp → keep going');
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hasWeapon: true }), false, 'armed → self_defense owns it');
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hostileCount: 2 }), false);
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hostileName: 'skeleton', recentlyHurt: false }), false);
 });

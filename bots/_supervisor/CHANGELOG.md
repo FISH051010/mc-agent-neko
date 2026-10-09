@@ -12,6 +12,14 @@
 
 ---
 
+## C368. ★无武器遇单只近战怪: 已在掉血就不再豁免逃跑(地下→封坑), 堵"零反射站着被打死"（modes.js shouldFlee + skills.unarmedSoloMeleeExempt 需重启,T-0168,worker-death,⏳待重启）
+
+**证据**: death #8 10-09 21:17:59Z `Zombie` d=1.7 @14,33,42 underground 白天 tod1679 skill=surfaceUp gear 全空。events: 21:17:52 hp10, 21:17:55 hp6, 21:17:59 死; act_trace 21:17:52-59 act 全为 '-', progress 该窗零 self_defense/self_preservation 行。背景: 21:17:05 他人部署重启 main.js 时 bot 正在 y22 surfaceUp, 重连后续爬, y33 挖进僵尸洞。
+**机理**: shouldFlee 的 HEALTHY-UNARMED BOOTSTRAP EXIT(无武器 + 恰 1 只近战怪 → 不逃; 前提"一只怪杀不死满血 bot")不看是否已挨打/掉血; self_defense 明写"无武器把身体交给别的处理器" → 无人接管 → 站桩挨打至死。
+**改动**: skills.js 纯函数 `unarmedSoloMeleeExempt({hasWeapon,hostileCount,hostileName,recentlyHurt,hp})`: 仅在"没在挨打"或"hp≥16"时豁免; shouldFlee 用它替代原条件。挨打掉血 → cantWin → 走原 flee 分支(地表 sprintFlee / 地下 'Outmatched — digging in' bunkerDown+capOverhead)。原 livelock 修复(满血裸装不该见怪就永久蹲坑)保留。
+**可证伪预测**: 无武器被单只僵尸打到 hp<16 时出 `Outmatched (1 mob, hp …) — digging in!`/`fleeing`, 不再出现 act='-' 的站桩死亡。若出现"裸装满血被一只僵尸反复挠→进出坑循环"→看 hp≥16 门是否需要放宽到"被打两下再躲"。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0168: …'。
+
 ## C367. ★mineDown 砂砾层: 悬空重力块不算支撑 + 重力列塌完再进（③mineDown.js 热加载即生效,T-0158,worker-death,🟡已生效待观测）
 
 **证据**: death #7 10-09 20:08:26Z `suffocation` @16,32,41 夜 skill=replenishKit act=auto_eat。act_trace 20:08:14-21 @y49 连续 dig gravel; 20:08:22 y39.3 g=0 → 20:08:24 y32(坠 17 格, hp→6); 20:08:23 `mineDown DIAG newHead(16,32,41)=gravel clear(16,33,41)=gravel` → `breakResults head+1=true` → 前进 → 窒息。

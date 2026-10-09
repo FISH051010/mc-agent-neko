@@ -641,8 +641,13 @@ const modes_list = [
             // ONE non-ranged, non-creeper mob, do NOT flee: let the bot move and bootstrap
             // (or punch it). One melee mob can't kill a full-hp bot before it acts. Ranged/creeper/
             // swarm/recently-hurt-by-skeleton are all handled above and still flee.
-            if (!hasWeapon && hostiles.length === 1
-                && !/skeleton|stray|creeper|witch|ghast|blaze|pillager/i.test(hostiles[0].name || '')) return false;
+            // ★T-0168: the exemption assumed "one melee mob can't kill a full-hp bot before it acts" —
+            // once it is ALREADY hitting us and hp has dropped, that premise is gone and (with self_defense
+            // refusing to fight unarmed) nobody owns the body: death #8 stood still 7s while a zombie took
+            // hp14→0. Only exempt while not being hit, or still near-full hp; otherwise fall through to
+            // flee (exposed) / dig-in (underground).
+            if (skills.unarmedSoloMeleeExempt({ hasWeapon, hostileCount: hostiles.length, hostileName: hostiles[0] && hostiles[0].name,
+                recentlyHurt, hp: bot.health })) return false;
             // With a sword AND shield we can actually WIN (block arrows/hits, close,
             // strike) — don't flee, let self_defense's shieldFight take it. Only flee
             // when truly outmatched: critically low, or genuinely swarmed (3+).
