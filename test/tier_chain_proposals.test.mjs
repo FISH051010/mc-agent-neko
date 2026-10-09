@@ -40,7 +40,7 @@ test('T-0097: once >=3 ingots are in hand the same night plan crafts the iron ti
 test('T-0097: NIGHT_SMELT_IRON releases on an iron pick OR when nothing is left to smelt/craft (no smeltSafe no-op spin)', () => {
     const w = (tier) => makeWorld({ kit: { picks: 1, pickTier: tier } });
     assert.equal(!!isGoalDone('NIGHT_SMELT_IRON', w('stone'), makeBot({ raw_iron: 5 })), false);
-    assert.equal(!!isGoalDone('NIGHT_SMELT_IRON', w('iron'), makeBot({ raw_iron: 5 })), true);
+    assert.equal(!!isGoalDone('NIGHT_SMELT_IRON', w('iron'), makeBot({ raw_iron: 5, iron_sword: 1 })), true);   // T-0170: 铁剑已在 (否则防护序里 2 锭铁剑可造)
     // worker-sync 0630 frozen-alive: raw_iron smelted & ingots used without an iron pick → sticky spin at raw_iron=0
     assert.equal(!!isGoalDone('NIGHT_SMELT_IRON', w('stone'), makeBot({ iron_ingot: 2 })), true);
 });

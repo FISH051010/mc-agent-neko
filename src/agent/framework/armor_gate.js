@@ -28,10 +28,17 @@ export function armorPoints(names) {
 export function chestTierArmor(names) {
     return armorPoints(names) >= DIAMOND_ARMOR_MIN_POINTS || (names || []).some(n => /_chestplate$/.test(n));
 }
-/** 按防护优先序挑下一件: 跳过已有(穿着或背包里)的, 挑铁料预算造得起的第一件; 都造不起 → null。 */
-export function nextProtectionPiece(haveNames, budget) {
-    const have = new Set((haveNames || []).map(n => (pieceOf(n) || {}).slot).filter(Boolean));
-    for (const [name, cost] of PROTECTION_ORDER) {
+// ★T-0170 (监工: 剑排在胸/腿之后、盔/靴之前): 已有铁镐时防护序插入铁剑 (2 锭), 已有铁+剑则跳过。
+export const PROTECTION_ORDER_WITH_SWORD = [['iron_chestplate', 8], ['iron_leggings', 7], ['iron_sword', 2], ['iron_helmet', 5], ['iron_boots', 4]];
+const IRON_PLUS_SWORD_RE = /^(iron|diamond|netherite)_sword$/;
+/** 按防护优先序挑下一件: 跳过已有(穿着或背包里)的, 挑铁料预算造得起的第一件; 都造不起 → null。
+ *  withSword: 已有铁镐 → 序里含铁剑 (haveNames 里有铁+剑即视为已有)。 */
+export function nextProtectionPiece(haveNames, budget, { withSword = false } = {}) {
+    const names = haveNames || [];
+    const have = new Set(names.map(n => (pieceOf(n) || {}).slot).filter(Boolean));
+    const hasGoodSword = names.some(n => IRON_PLUS_SWORD_RE.test(n));
+    for (const [name, cost] of (withSword ? PROTECTION_ORDER_WITH_SWORD : PROTECTION_ORDER)) {
+        if (name === 'iron_sword') { if (!hasGoodSword && cost <= budget) return [name, cost]; continue; }
         const slot = pieceOf(name).slot;
         if (have.has(slot)) continue;
         if (cost <= budget) return [name, cost];

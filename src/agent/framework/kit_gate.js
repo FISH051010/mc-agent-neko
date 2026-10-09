@@ -46,10 +46,14 @@ export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
     if (!durable || picks < 2) wants.push(['stone_pickaxe', (!durable && cobble >= 6) ? 2 : 1]);
     // ★T-0130 护航石镐: 铁+镐在手却 0 石镐 → 造 1 把 (挖普通石用它, 护住铁镐; worker-stuck T-0128 diamondDiveReady 要求 ≥1 石镐)
     else if (IRON_PLUS_RE.test(pickTier || '') && (counts['stone_pickaxe'] || 0) === 0) wants.push(['stone_pickaxe', 1]);
-    const needsCobble = wants.some(([n]) => n === 'stone_pickaxe');
-    if (wants.length && (!needsCobble || cobble >= 3) && woodUnits >= Math.max(2, woodCost(wants)))
+    // ★T-0170 随身剑 (death #8 21:17:59Z: 铁镐在手无剑, self_defense 只认剑/斧不出手, 被僵尸三下打死):
+    //   无剑 → 镐用掉的圆石之外还剩 ≥2 就顺手造石剑 (2 圆石 + 1 棍)。镐优先: 圆石不够两样都造时先镐。
+    const pickCobble = wants.filter(([n]) => n === 'stone_pickaxe').reduce((s, [, k]) => s + 3 * k, 0);
+    if (swordMissing(counts) && cobble - pickCobble >= 2) wants.push(['stone_sword', 1]);
+    const needsCobble = wants.some(([n]) => /^stone_(pickaxe|sword)$/.test(n));
+    if (wants.length && (!needsCobble || cobble >= Math.max(pickCobble ? 3 : 2, pickCobble)) && woodUnits >= Math.max(2, woodCost(wants)))
         return { wants: withPlanks(wants, counts), partial: false };
-    const sub = wants.filter(([n]) => n !== 'stone_pickaxe');
+    const sub = wants.filter(([n]) => !/^stone_(pickaxe|sword)$/.test(n));
     if (sub.length && sub.length < wants.length && woodUnits >= Math.max(2, woodCost(sub))) {
         const after = { ...counts };
         if (sub.some(([n]) => n === 'crafting_table')) after['crafting_table'] = (after['crafting_table'] || 0) + 1;
@@ -74,11 +78,17 @@ export function digOneCapViable({ picks, gravityPit, y }) {
 // ★T-0130 (worker-stuck 报, 02:26 现场: iron_pickaxe×3 + stone_pickaxe×0 + 圆石 545 + 棍 27): 铁镐在手、下矿门开 →
 //   旧判据不需维护 → 永不补护航石镐 → T-0128 的 diamondDiveReady 门让 GET_DIAMOND 永不提出。
 const IRON_PLUS_RE = /iron|diamond|netherite/;
+/** ★T-0170: 背包里一把剑都没有 (任何材质)。 */
+export function swordMissing(counts) {
+    return !Object.keys(counts || {}).some(k => /_sword$/.test(k) && (counts[k] || 0) > 0);
+}
 export function needsToolUpkeep({ sufficientForUnderground, pickTier, counts }) {
     counts = counts || {};
     const cobble = (counts['cobblestone'] || 0) + (counts['cobbled_deepslate'] || 0);
     const escortMissing = IRON_PLUS_RE.test(pickTier || '') && (counts['stone_pickaxe'] || 0) === 0 && cobble >= 3;
-    return !sufficientForUnderground || (!PICK_DURABLE_RE.test(pickTier || '') && cobble >= 3) || escortMissing;
+    // ★T-0170 每个 tier 随身一把剑: 无剑 + 圆石≥2 即需维护 (2 圆石 + 1 棍, 成本几乎为零)
+    const swordGap = swordMissing(counts) && cobble >= 2;
+    return !sufficientForUnderground || (!PICK_DURABLE_RE.test(pickTier || '') && cobble >= 3) || escortMissing || swordGap;
 }
 
 // ★T-0150 (19:49Z 实录: y21 夜挖, raw_iron 10 + 原木 17 + 0 煤, 无铁镐): 夜间冶炼判据燃料只数 coal/charcoal →

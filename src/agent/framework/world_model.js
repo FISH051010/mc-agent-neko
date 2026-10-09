@@ -221,11 +221,11 @@ export function ironArmorBudget(bot) {
     const hasIronPlusPick = invCount(bot, /^(iron|diamond|netherite)_pickaxe$/) > 0;
     return ironForArmor(bot) - (hasIronPlusPick ? 0 : IRON_PICK_RESERVE);
 }
-function armorItemNames(bot) { try { return bot.inventory.items().map(i => i.name).filter(n => /_(helmet|chestplate|leggings|boots)$/.test(n)); } catch (e) { return []; } }
+function armorItemNames(bot) { try { return bot.inventory.items().map(i => i.name).filter(n => /_(helmet|chestplate|leggings|boots|sword)$/.test(n)); } catch (e) { return []; } }   // ★T-0170 含剑 (防护序里的铁剑)
 // ★T-0157: craftArmor 本轮要造的那件的成本 (与技能端同序: keepInv 关 → 防护序挑造得起的; 否则 cheapest-first)。
 function nextArmorCost(world, bot) {
     if (keepInventoryOff() === true) {
-        const nx = nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot));
+        const nx = nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot), { withSword: hasIronTierPick(world) });
         return nx ? nx[1] : null;
     }
     return ARMOR_PIECE_COST[Math.min(3, (world.vitals && world.vitals.armor) || 0)];
@@ -1592,7 +1592,7 @@ export function isGoalDone(kind, world, bot) {
         case PROPOSAL_KIND.GET_IRON_TOOLS:   return hasIronTierPick(w);
         // ★T-0097 NIGHT_SMELT_IRON done = same target (an iron-tier pick exists) — holds the night
         // commitment sticky across the smelt→craft hand-off until the iron pickaxe is actually crafted.
-        case TASK.NIGHT_SMELT_IRON:          if (hasIronTierPick(w)) return !nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot));   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
+        case TASK.NIGHT_SMELT_IRON:          if (hasIronTierPick(w)) return !nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot), { withSword: true });   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
             return (invCount(bot, /^raw_iron$/) === 0 && invCount(bot, /^iron_ingot$/) < 3);   // ★FIX (worker-sync 0630 frozen-alive): the sticky NIGHT_SMELT_IRON deadlocked into a smeltSafe no-op spin — chosen at dusk w/ raw_iron≥3, but once the iron was smelted+consumed WITHOUT reaching hasIronTierPick (ingots banked/used, no lasting iron pick), it stayed sticky dispatching smeltSafe('raw_iron',N) at raw_iron=0 → no-op every 1.5s, frozen until watchdog (live: pinned 9min @54,58 mob=FREE/ENC). Release when there's nothing left to smelt OR craft → re-evaluate → mine more iron. Does NOT gate pick-making.
         // ★P1-4 GET_IRON_ARMOR_SET 复活后语义 = 采集端(下铁带补铁库存), done 与提案门(RUNG 1.5)共用
         // ironDemandTotal = max(缺甲总成本, portal kit 铁成本): 铁攒够总需求即释放(demand=0 时恒真,

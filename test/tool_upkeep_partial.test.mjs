@@ -42,7 +42,7 @@ test('T-0060: 部分造补不回下矿门 (单木镐无圆石) → 不提, 不�
 });
 
 test('T-0060: 全套造得起时行为不变 (台+棍+石镐一起造)', () => {
-    const inv = { wooden_pickaxe: 1, oak_log: 4, cobblestone: 5 };
+    const inv = { wooden_pickaxe: 1, oak_log: 4, cobblestone: 5, wooden_sword: 1 };   // T-0170: 带剑, 本条只验台+棍+镐
     const { wants, partial } = toolUpkeepPlan({ picks: 1, pickTier: 'wood', counts: inv, woodUnits: woodOf(inv) });
     assert.equal(partial, false);
     assert.deepEqual(wants.map(w => w[0]), ['oak_planks', 'crafting_table', 'stick', 'stone_pickaxe']);
@@ -66,7 +66,7 @@ test('T-0118 回归: 石镐磨光掉回木器, 揣 97 圆石 + 2 木镐 + 原木
     assert.ok(!gu || tu.priority > gu.priority, 'upgrade before descending further');
     assert.equal(isGoalDone('TOOL_UPKEEP', w, bot), false);
     const stoneW = dayWorld({ picks: 2, pickTier: 'stone', sufficientForUnderground: true });
-    assert.equal(proposeTasks(stoneW, fakeBot({ ...inv, stone_pickaxe: 2 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined, 'stone tier + gate open → no upkeep');
+    assert.equal(proposeTasks(stoneW, fakeBot({ ...inv, stone_pickaxe: 2, stone_sword: 1 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined, 'stone tier + gate open (+ T-0170 剑在) → no upkeep');
 });
 
 test('T-0130: 铁镐×3 + 0 石镐 + 圆石 545 + 棍 27 (下矿门开) → 必须提 TOOL_UPKEEP 造 1 把护航石镐; 已有石镐则不提', () => {
@@ -77,8 +77,8 @@ test('T-0130: 铁镐×3 + 0 石镐 + 圆石 545 + 棍 27 (下矿门开) → 必�
     assert.ok(tu, 'escort stone pick upkeep proposed');
     assert.deepEqual(tu.args[0].find(([n]) => n === 'stone_pickaxe'), ['stone_pickaxe', 1]);
     assert.equal(isGoalDone('TOOL_UPKEEP', w, fakeBot(inv)), false);
-    assert.equal(isGoalDone('TOOL_UPKEEP', w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1 })), true, 'done once an escort exists');
-    assert.equal(proposeTasks(w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined);
+    assert.equal(isGoalDone('TOOL_UPKEEP', w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1, iron_sword: 1 })), true, 'done once an escort exists (+ T-0170 剑在)');
+    assert.equal(proposeTasks(w, fakeBot({ ...inv, stone_pickaxe: 1, crafting_table: 1, iron_sword: 1 })).find(p => p.kind === 'TOOL_UPKEEP'), undefined);
 });
 
 test('T-0149: y19 地下零镐 + 圆石/原木/棍 (19:35 现场) → TOOL_UPKEEP 原地造石镐 @94.5, 抢下已粘住的夜挖承诺', async () => {

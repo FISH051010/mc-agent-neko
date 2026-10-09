@@ -6387,9 +6387,9 @@ const modes_list = [
                     && actionable === 0 && food > 6 && hasTablePath && !_stuckMob;
                 // ★T-0151 先甲后钻 (监工拍板): 铁镐已到手 + 还有造得起的下一件甲 (胸>腿>盔>靴) → 夜里接着冶炼造甲,
                 //   排在整夜下矿之前 (地下封闭坑里冶炼合成是安全的; keepInventory=false 无甲下深层最贵)。
-                const _armorHave = [...equippedArmorNames(bot), ...Object.keys(counts).filter(k => /_(helmet|chestplate|leggings|boots)$/.test(k) && counts[k] > 0)];
+                const _armorHave = [...equippedArmorNames(bot), ...Object.keys(counts).filter(k => /_(helmet|chestplate|leggings|boots|sword)$/.test(k) && counts[k] > 0)];   // ★T-0170 含剑 (铁剑在防护序里)
                 const _armorNightWarranted = _hasIronPickDec && actionable === 0 && food > 6 && hasTablePath && !_stuckMob && _canSmeltHere
-                    && !!nextProtectionPiece(_armorHave, _rawIronDec + _ironIngotsDec)
+                    && !!nextProtectionPiece(_armorHave, _rawIronDec + _ironIngotsDec, { withSword: true })
                     && (_ironIngotsDec >= 4 || smeltableUnits(counts) >= 4);
                 // ── ★用户令 2026-07-08 夜间行为白名单参数 ──
                 // NEAR_BED: 近床阈值 6→15 (第①项, 最高优先级); DIG_SEARCH: 挖三填一"找地"半径 (第④项).
