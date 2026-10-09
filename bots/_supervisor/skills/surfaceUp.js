@@ -81,6 +81,18 @@ export function kernelYieldRequested(bot, enteredAt, now = Date.now()) {
     return !!(t && t >= enteredAt && now - t < KERNEL_FLIP_FRESH_MS);
 }
 
+// No-pick vertical breach ELIGIBILITY (first gates of canPlanNoPickStoneBreach, moved verbatim). PURE.
+// ★C223b: *_ore ceilings are bare-hand breakable (no drop) — a coal_ore roof was a permanent tomb otherwise.
+// ★C304-A: NO_PICK_BREACHABLE incl. the sandstone family. Budget: breachesSoFar < limit.
+// ★C247: a trapped-enclosed bot in a TALL pocket may breach a ceiling at h=4 (old h>3 cap froze it 2h at y66).
+export function noPickBreachEligible({ name, h, breachesSoFar, limit, famine, trappedEnclosed }) {
+    const nm = name;
+    if (!nm || (!NO_PICK_BREACHABLE.has(nm) && !/_ore$/.test(nm))) return false;
+    if (breachesSoFar >= limit) return false;
+    if (h > 3 && !famine() && !trappedEnclosed) return false;
+    return true;
+}
+
 export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     const enteredAtSU = Date.now();
     const { skills, world, mc, Vec3, log } = ctx;
@@ -904,15 +916,13 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
         // don't DROP without a pick). A coal_ore ceiling was sealing the bot in a tomb at y67 under a
         // meadow ("fallback no-pick stone blocked at h=2 name=coal_ore"). Losing one ore drop beats a
         // permanent tomb — accept the plain stone family OR any *_ore (generic, covers deepslate ores).
-        const nm = block && (block.name || '');
-        if (!nm || (!NO_PICK_BREACHABLE.has(nm) && !/_ore$/.test(nm))) return false;
-        if (plannedStoneBreaches >= plannedStoneLimit) return false;
+        if (!noPickBreachEligible({ name: block && (block.name || ''), h, breachesSoFar: plannedStoneBreaches, limit: plannedStoneLimit,
+            famine: () => famineEmergency(), trappedEnclosed })) return false;   // ★C223b/C247 — module-level PURE export
         // C247: a trapped-enclosed bot in a TALL air pocket has its stone ceiling at h=4
         // (feet+4 = ~2.4 blocks above eye height, well within the ~4.5 reach). The old
         // `h>3` cap wrongly forbade breaching it unless famine (food<=2) — so a sealed
         // bot with food>2 could never break out of a 4-tall pocket (live: y66 pocket,
         // air y67-69, stone y70, frozen 2h). Allow trapped-enclosed up to the loop's h=4.
-        if (h > 3 && !famineEmergency() && !trappedEnclosed) return false;
         const famineBreach = famineNoPickStoneBreachOk();
         // A trapped bot must retain an upward exit. The optional food gate applies only when
         // the bot is not enclosed; absolute health never blocks the breach.
