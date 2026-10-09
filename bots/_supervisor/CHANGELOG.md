@@ -12,7 +12,15 @@
 
 ---
 
-## C358. ★夜间/hold 承诺不算 no-op 空转: kernelDriver NO-OP-SPIN 逃逸按承诺 kind 豁免（kernelDriver.js 顶层 sticky 需重启,T-0105,worker-death,⏳待重启）
+## C359. ★黎明亡灵窗: 无甲时不在亡灵未晒死的黎明起步长途 migrate(force 也要过)（③migrate.js 热加载即生效,T-0120,worker-death,🟡已生效待观测）
+
+**证据**: death #2 10-09 16:16:59 `shot:Skeleton` d=11 @96,75,16 tod=479 skill=migrate gear 全空, keepInventory 关 → 背包 38→0。前因见 C358(夜坑 hold 被 NO-OP 逃逸 force-migrate)。
+**机理**: migrate 的 isNight 只到 23000, 黎明 23000→~1800 亡灵在树荫/水边不着火; `force:true`(NO-OP 逃逸/手动)直接跳过所有门。C358 堵了这次的触发源, 但任何黎明 migrate(决策层 MIGRATE、日间 kind 的 NO-OP 逃逸)仍会把裸装 bot 送到亡灵面前。
+**改动**: migrate.js 纯函数 `dawnUndeadHold({tod, armorPieces, hasShield, undeadNear})`(tod≥22800 或 <1800 + 0 甲 + 无盾 + 24b 内有亡灵)。起步前与每段 leg 前: 命中则原地(还在坑里)等, 3s 一查, ≤120s/次, 遵守 interrupt; 起步时等满 120s 仍危险 → return false(kernel 冷却)。force 不豁免。
+**可证伪预测**: 黎明 progress/agent 出 `[migrate] start: dawn + unarmored + undead within 24b — waiting…`, 之后才出发; 不再有 tod<1800 + skill=migrate + 无甲 的亡灵击杀。若出现"黎明在开阔地原地等被射"→ 说明 bot 起步前已在空地(不是坑里), 需让等待改为退回掩体。
+**回滚**: revert migrate.js 本段(热加载)。回归 `test/migrate_dawn_gate.test.mjs`。
+
+## C358. ★夜间/hold 承诺不算 no-op 空转: kernelDriver NO-OP-SPIN 逃逸按承诺 kind 豁免（kernelDriver.js 顶层 sticky 需重启,T-0105,worker-death,🟡已随 00:22:51 重启上线）
 
 **证据**: 10-09 16:15:48 `★NO-OP-SPIN escape: nightShelter churned 524s … → force migrate(escape bad spot)` —— bot 正在 y65 口袋 `night bunker dwell: sealedBox=true`; tod≈23100(黎明前) → migrate 拉出 26 格 → 16:16:47 起连中箭 → 16:16:59 死 `shot:Skeleton` @96,75,16 tod479(云杉林荫骷髅未晒死), keepInventory 关 → 13 原木/3 木镐全掉。
 **机理**: `noopEscapePlan` 只用 `w.time.isDay` 判"合法夜 hold"; 黎明过渡 world_model 已转 isDay → legitNightHold=false → 封坑 hold 被当"白天空转"。kernel.js 早有 `NO_DELTA_EXEMPT=/^(NIGHT_|DUSK_GO_BED$|HOLD$|SLEEP$|FREE_PLAY$)/`(夜间/hold 承诺不动即成功), 实际在跑的 kernelDriver 没用它。

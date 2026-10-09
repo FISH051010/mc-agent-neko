@@ -35,6 +35,17 @@ const dbg = (s) => { try { fs.appendFileSync(MIGRATELOG, `[${new Date().toISOStr
 const LAND_HUNT = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom', 'goat'];
 const NIGHT_START = 13000, NIGHT_END = 23000;
 
+// ★T-0120 (death #2 10-09 16:16:59: tod=479 裸装被 NO-OP-SPIN 逃逸 force-migrate 拉出夜坑, 云杉荫下骷髅
+// 未晒死, 11b 外连射致死; keepInventory 关 → 全套掉光)。isNight() 只到 23000, 而黎明到 ~1800 亡灵还在
+// (树荫/水下不着火)。人类: 天刚亮没甲 → 先在坑里/掩体后等一会儿让亡灵晒死, 不在开阔地起步长途。
+// force 只是"离开坏点位", 不是"无视致命危险", 所以这道门 force 也要过。
+const DAWN_END = 1800, DAWN_START = 22800;
+const UNDEAD_RE = /^(zombie|zombie_villager|husk|skeleton|stray|drowned|phantom|wither_skeleton)$/;
+export function dawnUndeadHold({ tod, armorPieces, hasShield, undeadNear }) {
+    const dawn = Number.isFinite(tod) && (tod >= DAWN_START || tod < DAWN_END);
+    return !!(dawn && (armorPieces || 0) === 0 && !hasShield && (undeadNear || 0) > 0);
+}
+
 // The food-instinct switch controls proactive low-food migration gates.
 const _foodOn = () => process.env.MC_FOOD_INSTINCTS === '1';
 
@@ -178,6 +189,29 @@ export default async function migrate(bot, ctx, opts = {}) {
     const maxMs = opts.maxMs ?? 480000;
 
     const isNight = () => { try { const t = bot.time.timeOfDay; return t > NIGHT_START && t < NIGHT_END; } catch { return false; } };
+    // ★T-0120 dawn-undead window (see dawnUndeadHold): unarmored + unburnt undead within 24b at dawn.
+    const dawnHold = () => {
+        try {
+            const me = bot.entity.position;
+            const armorPieces = [5, 6, 7, 8].filter(s => bot.inventory.slots[s]).length;
+            const off = bot.inventory.slots[45];
+            const undeadNear = Object.values(bot.entities || {}).filter(e => e && e !== bot.entity && e.position
+                && UNDEAD_RE.test(e.name || '') && e.position.distanceTo(me) <= 24).length;
+            return dawnUndeadHold({ tod: bot.time.timeOfDay, armorPieces, hasShield: !!(off && /shield/.test(off.name)), undeadNear });
+        } catch { return false; }
+    };
+    // Wait out the dawn window where we stand (in the night pocket, not on the open trail). Bounded by
+    // the window itself (tod passes 1800 within ~90s real time) + a hard 120s cap; honors interrupt.
+    const waitOutDawn = async (where) => {
+        const t = Date.now();
+        if (!dawnHold()) return false;
+        log_(`${where}: dawn + unarmored + undead within 24b — waiting for them to burn before marching (T-0120)`);
+        while (dawnHold() && Date.now() - t < 120000 && !bot.interrupt_code && bot.health > 0) {
+            try { await skills.wait(bot, 3000); } catch (e) { break; }
+        }
+        return dawnHold();
+    };
+    if (await waitOutDawn('start')) { log_('start: dawn-undead window still open after 120s — no-go (return false, kernel cools the kind)'); return false; }
     const closeActionable = () => {
         try {
             return Object.values(bot.entities || {}).some(e =>
@@ -373,6 +407,7 @@ export default async function migrate(bot, ctx, opts = {}) {
             leg--;                      // don't consume a travel leg on a night spent bunkering
             continue;
         }
+        if (dawnHold()) { await waitOutDawn(`leg ${leg}`); leg--; continue; }   // ★T-0120: never march unarmored into unburnt dawn undead (bounded by maxMs)
         if (closeCreeper()) { abort = `creeper point-blank at leg ${leg} — yield to defense/EVAC`; break; }   // C263: only an unavoidable creeper aborts; other mobs handled by reflex (interrupt_code) or walked past
         // Absolute health never aborts a migration; night, food, threats, and damage remain bounded.
         // ★2026-07-09 用户令 HP/食物本能熔断: 低饿 forage 补给+中止行军整块; 食物闸开恢复。
