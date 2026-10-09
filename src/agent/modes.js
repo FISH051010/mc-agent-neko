@@ -28,6 +28,9 @@ import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobility_geom.js';
+// ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
+//   (pinned by test/modes_free_identifiers.test.mjs).
+import { purposefulDigActive, withBurstDeadline } from './framework/mobility_signals.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -4176,7 +4179,17 @@ const modes_list = [
                     try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] enclosed → ${enclosed}\n`); } catch (e) {}
                 }
                 bot._mobility = { state: st, since: this.stateSince, exits, enclosed };
-            } catch (e) { return; }
+            } catch (e) {
+                // ★T-0124: this used to be a bare `return` — a ReferenceError here silently killed the whole
+                //   mobility state machine for 1h+ (bot._mobility frozen/'?'). Never swallow silently: log
+                //   (throttled) and mark the model stale so consumers stop trusting it.
+                if (Date.now() - (this._classifyErrAt || 0) > 60000) {
+                    this._classifyErrAt = Date.now();
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★CLASSIFY ERROR — state machine not updating: ${e && e.stack ? e.stack.split('\n').slice(0, 2).join(' | ') : e}\n`); } catch (e2) {}
+                }
+                try { bot._mobility = { ...(bot._mobility || {}), state: '?', since: now }; } catch (e2) {}
+                return;
+            }
             if (famineBodyFreeze(agent, 'mobility')) return;
             // ★C294: terracotta + sandstone are PICK-REQUIRED (badlands/mesa terrain) but were absent
             // here, so canMarchDig() read them as bare-handable → a pickless MAROONED bot endlessly
