@@ -1,0 +1,100 @@
+// T-0105 seal-fail root: head caps were placed at a FIXED feet+2 after a fixed-depth dig. On flat
+// ground that cell floats (all neighbours air, below = the bot's own head) → placeBlock
+// 'no-build-off' (~85% of ~3.3k historical head-cap attempts in mine_motion.jsonl) → "Can't seal".
+// Also: digOneCapOne froze its cap material BEFORE digging, falling back to any item with an id
+// (stick / pressure plate), so the dirt it had just dug was never used.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import Vec3 from 'vec3';
+import minecraftData from 'minecraft-data';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood } from '../src/agent/library/skills.js';
+
+const registry = minecraftData('1.21.1');
+
+// Tiny voxel world: everything at y <= groundTop is `ground`, above is air; `dug` cells are air,
+// `placed` cells are solid.
+function world({ groundTop = 66, ground = 'grass_block', dug = [], placed = [] } = {}) {
+    const key = (p) => `${p.x},${p.y},${p.z}`;
+    const air = new Set(dug.map(key));
+    const solid = new Map(placed.map(([p, n]) => [key(p), n]));
+    return (p) => {
+        const k = key(p);
+        if (solid.has(k)) return { name: solid.get(k), boundingBox: 'block' };
+        if (air.has(k) || p.y > groundTop) return { name: 'air', boundingBox: 'empty' };
+        return { name: ground, boundingBox: 'block' };
+    };
+}
+const col = (x, z, ys) => ys.map(y => new Vec3(x, y, z));
+
+test('T-0105: flat ground 1 deep — cap cell (feet+2) floats above the surface → must NOT try to place', () => {
+    // live sample 2026-06-18T19:03: feet y66 inside the grass layer, cap target y68, neighbours all air.
+    const blockAt = world({ groundTop: 66, dug: col(0, 0, [66]) });
+    const plan = planOverheadCap(blockAt, new Vec3(0, 66, 0));
+    assert.equal(plan.cap.y, 68);
+    assert.notEqual(plan.action, 'place', 'placing here is the no-build-off failure');
+    assert.equal(plan.action, 'deepen');
+});
+
+test('T-0105: flat ground 2 deep — cap cell is at surface level → support block beside it (or deepen), never a blind place', () => {
+    const blockAt = world({ groundTop: 66, dug: col(0, 0, [66, 65]) });
+    const plan = planOverheadCap(blockAt, new Vec3(0, 65, 0));
+    assert.equal(plan.action, 'support');
+    assert.equal(plan.support.y, 67);
+    assert.equal(blockAt(plan.support.offset(0, -1, 0)).boundingBox, 'block', 'support must stand on solid ground');
+});
+
+test('T-0105: flat ground 3 deep (挖三填一) — cap cell sits IN the ground layer with solid sides → place', () => {
+    const blockAt = world({ groundTop: 66, dug: col(0, 0, [66, 65, 64]) });
+    assert.equal(planOverheadCap(blockAt, new Vec3(0, 64, 0)).action, 'place');
+});
+
+test('T-0105: roof already solid → capped (no block spent)', () => {
+    const blockAt = world({ groundTop: 70, dug: col(0, 0, [66, 67]) });
+    assert.equal(planOverheadCap(blockAt, new Vec3(0, 66, 0)).action, 'capped');
+});
+
+test('T-0105: pillar top — head-level wall gives the cap a support; bare pillar has none', () => {
+    // bot stands on a 2-high pillar at y69 over ground top 66 (pillar blocks y67,y68).
+    const pillar = [[new Vec3(0, 67, 0), 'dirt'], [new Vec3(0, 68, 0), 'dirt']];
+    const bare = planOverheadCap(world({ groundTop: 66, placed: pillar }), new Vec3(0, 69, 0));
+    assert.equal(bare.action, 'deepen', 'nothing around the cap cell on a bare pillar');
+    const walled = planOverheadCap(world({ groundTop: 66, placed: [...pillar, [new Vec3(1, 70, 0), 'dirt']] }), new Vec3(0, 69, 0));
+    assert.equal(walled.action, 'support');
+    assert.deepEqual([walled.support.x, walled.support.y, walled.support.z], [1, 71, 0]);
+});
+
+function fakeBot(items) {
+    return { registry, inventory: { items: () => items.map(([name, count]) => ({ name, count })) } };
+}
+
+test('T-0105: cap material never a non-full block (stick / pressure plate) — first-night pack', () => {
+    // vitals 2026-10-09 15:46: {spruce_pressure_plate:1, spruce_planks:2, wooden_pickaxe:2, spruce_log:16}
+    assert.equal(resolveCapBlock(fakeBot([['spruce_pressure_plate', 1], ['stick', 4], ['spruce_planks', 2], ['wooden_pickaxe', 2]])), null);
+    assert.equal(resolveCapBlock(fakeBot([['spruce_pressure_plate', 1], ['spruce_planks', 2], ['wooden_pickaxe', 2], ['spruce_log', 16]])), 'spruce_log');
+});
+
+test('T-0105: freshly dug dirt wins over logs; gravity blocks never cap (sand falls on the head)', () => {
+    assert.equal(resolveCapBlock(fakeBot([['spruce_log', 16], ['dirt', 1]])), 'dirt');
+    assert.equal(resolveCapBlock(fakeBot([['sand', 30], ['gravel', 5]])), null);
+    assert.equal(isCapBlockName('cobblestone', registry), true);
+    assert.equal(isCapBlockName('oak_planks', registry), false, 'planks are tool-chain material (user rule)');
+    assert.equal(isCapBlockName('crafting_table', registry), false);
+});
+
+test('T-0105: re-dispatched dig_one inside a sealed pocket must NOT dig again (15:50:45 drown chain)', () => {
+    // pocket at feet y56: roof y58 solid, walls solid (natural ground everywhere except the shaft)
+    const blockAt = world({ groundTop: 60, dug: col(0, 0, [56, 57]) });
+    assert.equal(isSealedPocket(blockAt, new Vec3(0, 56, 0)), true);
+    // open shaft to the sky is NOT sealed
+    const open = world({ groundTop: 60, dug: col(0, 0, [56, 57, 58, 59, 60]) });
+    assert.equal(isSealedPocket(open, new Vec3(0, 56, 0)), false);
+});
+
+test('T-0105: overhead break that would let water in is refused (edge_unstick headroom-break dirt@-49,59,23)', () => {
+    const base = world({ groundTop: 60, dug: col(0, 0, [57, 58]) });
+    const wet = (p) => (p.y === 60 && p.x === 0 && p.z === 0) ? { name: 'water', boundingBox: 'empty' } : base(p);
+    assert.equal(breakWouldFlood(wet, new Vec3(0, 59, 0)), true, 'water sits on top of the roof block');
+    const sideWet = (p) => (p.y === 59 && p.x === 1 && p.z === 0) ? { name: 'flowing_water', boundingBox: 'empty' } : base(p);
+    assert.equal(breakWouldFlood(sideWet, new Vec3(0, 59, 0)), true, 'water beside the roof block');
+    assert.equal(breakWouldFlood(base, new Vec3(0, 59, 0)), false, 'dry roof may be broken');
+});

@@ -6229,6 +6229,141 @@ export async function digDown(bot, distance = 10, options = {}) {
     }
 }
 
+// ── ★T-0105 封顶几何原语 (seal-fail 根因) ─────────────────────────────────────────────
+// 取证 (_worldreset_* mine_motion.jsonl): 头顶封顶 (target = 脚+2) 共 ~3.3k 次放置, ~85% 以
+// 'no-build-off' 失败 —— 平地挖 1~2 格时, 脚+2 那格在地表或地表之上, 四周全是空气、正下方是
+// bot 自己的头, 根本没有可贴的面 (样本: 脚 y66 在草方块层, 封顶格 y68 周边全 air/snow)。各封顶
+// 调用方都写死"挖 N 格就往脚+2 放", 失败只会原地重试同一个悬空格 → "Can't seal" → 夜死。
+// 人类的做法 (挖三填一 本意): 先看封顶格贴不贴得上; 贴不上就再往下挖一格 (封顶格沉进地层,
+// 侧面就是泥土), 或在旁边地面上先垫一块当支点, 再盖顶。下面是唯一一份几何判据 + 执行原语,
+// digOneCapOne 与 modes.bunkerDown 共用, 不再各写各的"固定深度"。
+const CAP_PREFS = [
+    'dirt', 'coarse_dirt', 'cobblestone', 'cobbled_deepslate', 'stone', 'deepslate',
+    'andesite', 'diorite', 'granite', 'netherrack', 'tuff', 'sandstone', 'red_sandstone', 'terracotta',
+];
+const CAP_GRAVITY_RE = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|concrete_powder|[a-z_]+_concrete_powder)$/;
+// 非整方块/设施/工具链材料: 压力板/按钮/告示牌放上去不成顶; 木板是工具链命脉 (用户令不拿来封);
+// 工作台/熔炉/箱子是自家设施。(旧 fallback 只查"有 item id", 会挑中 stick/压力板当封顶料。)
+const CAP_EXCLUDE_RE = /_slab$|_stairs$|_fence|_wall$|_pane$|door$|_bed$|^bed$|carpet|pressure_plate|_button$|_sign$|banner|torch|rail$|_sapling$|^scaffolding$|^ladder$|crafting_table|furnace|smoker|chest|barrel|anvil|enchanting_table|brewing_stand|cauldron|lectern|campfire|lantern|_head$|_skull$|flower_pot|^tnt$|hopper|_planks$|^planks$|shulker_box|^ice$|leaves$/;
+const CAP_REPLACEABLE = new Set(['air', 'cave_air', 'void_air', 'short_grass', 'tall_grass', 'grass', 'fern', 'large_fern', 'snow', 'dead_bush', 'water', 'flowing_water']);
+const _capSolid = (b) => !!b && b.boundingBox === 'block';
+
+/** 能否当封顶/补墙料: 注册表里是整格碰撞方块, 非重力、非设施、非木板。registry 缺失 → fail-closed。 */
+export function isCapBlockName(name, registry) {
+    if (!name || CAP_GRAVITY_RE.test(name) || CAP_EXCLUDE_RE.test(name)) return false;
+    const b = registry && registry.blocksByName ? registry.blocksByName[name] : null;
+    return !!b && b.boundingBox === 'block';
+}
+
+/** 按【当前】背包解析封顶料 (每次放置前重解析 —— 挖下来的泥土立刻可用)。泥土 > 石系 > 其它整方块。 */
+export function resolveCapBlock(bot) {
+    const reg = bot && bot.registry;
+    let items = [];
+    try { items = bot.inventory.items(); } catch (e) { return null; }
+    const has = new Set(items.filter(it => it && it.count > 0).map(it => it.name));
+    const pref = CAP_PREFS.find(n => has.has(n) && isCapBlockName(n, reg));
+    if (pref) return pref;
+    const any = items.find(it => it && it.count > 0 && isCapBlockName(it.name, reg));
+    return any ? any.name : null;
+}
+
+/**
+ * 纯判据: 站在 feet (整数格) 的 bot, 头顶封顶格 feet+2 现在该怎么处理。
+ * @returns {{action:'capped'|'place'|'support'|'deepen', cap:Vec3, support?:Vec3}}
+ *   capped  = 封顶格已是实心 (地形/已封);
+ *   place   = 封顶格有可贴面 (上方或水平邻格实心), 直接放;
+ *   support = 封顶格悬空, 但某水平邻格是空且其下方实心 → 先在那垫一块当支点;
+ *   deepen  = 悬空且无支点可垫 (平地挖 1 格时的情形) → 再往下挖一格让封顶格沉进地层。
+ * 正下方 (feet+1, bot 的头) 永远不算贴面 —— 那是 bot 自己占着的空格。
+ */
+export function planOverheadCap(blockAt, feet) {
+    const cap = feet.offset(0, 2, 0);
+    if (_capSolid(blockAt(cap))) return { action: 'capped', cap };
+    const H = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    if (_capSolid(blockAt(cap.offset(0, 1, 0))) || H.some(([dx, dz]) => _capSolid(blockAt(cap.offset(dx, 0, dz))))) {
+        return { action: 'place', cap };
+    }
+    for (const [dx, dz] of H) {
+        const s = cap.offset(dx, 0, dz);
+        const sb = blockAt(s);
+        if ((!sb || CAP_REPLACEABLE.has(sb.name)) && _capSolid(blockAt(s.offset(0, -1, 0)))) {
+            return { action: 'support', cap, support: s };
+        }
+    }
+    return { action: 'deepen', cap };
+}
+
+/** 已在封闭口袋里: 头顶 (feet+2) + 脚/头两层四面全实心。夜间庇护的"不再动"判据。 */
+export function isSealedPocket(blockAt, feet) {
+    if (!_capSolid(blockAt(feet.offset(0, 2, 0)))) return false;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (!_capSolid(blockAt(feet.offset(dx, 0, dz))) || !_capSolid(blockAt(feet.offset(dx, 1, dz)))) return false;
+    }
+    return true;
+}
+
+const FLUID_RE = /water|lava|kelp|seagrass|bubble_column/;
+/**
+ * ★T-0105 溺死链: 挖掉 pos 处方块会不会把液体放进来 (其上方或四个水平邻格是液体)。
+ * 反射里"破头顶脱困"(edge_unstick headroom/capped-head break) 必须先过这道 —— 水下封顶坑
+ * 的顶就是挡水的那块, 破了 = 自己灌水。
+ */
+export function breakWouldFlood(blockAt, pos) {
+    const nb = [pos.offset(0, 1, 0), pos.offset(1, 0, 0), pos.offset(-1, 0, 0), pos.offset(0, 0, 1), pos.offset(0, 0, -1)];
+    return nb.some(p => { const b = blockAt(p); return !!b && FLUID_RE.test(b.name || ''); });
+}
+
+/**
+ * 执行原语: 把 bot 头顶封上。按 planOverheadCap 走 支点/加深/放置, 放置一律 positioning:false
+ * (绝不为了"够到"封顶格而寻路离开竖井)。每步前重读位置 + 重解析封顶料。
+ * @param {object} opts maxDeepen: 最多再往下挖几格 (默认 2); useSupport: 允许垫支点 (默认 true)
+ * @returns {Promise<boolean>} 头顶 feet+2 是否已实心
+ */
+export async function capOverhead(bot, opts = {}) {
+    const maxDeepen = Number.isFinite(opts.maxDeepen) ? opts.maxDeepen : 2;
+    const useSupport = opts.useSupport !== false;
+    const tag = opts.tag || 'capOverhead';
+    let deepened = 0, placeFails = 0, supportFails = 0;
+    for (let step = 0; step < 8; step++) {
+        if (bot.interrupt_code || bot.health <= 0) return false;
+        const feet = bot.entity.position.floored();
+        const plan = planOverheadCap((p) => bot.blockAt(p), feet);
+        if (plan.action === 'capped') return true;
+        const capName = resolveCapBlock(bot);
+        const canDeepen = deepened < maxDeepen;
+        if (plan.action === 'place') {
+            if (!capName) { log(bot, `${tag}: no cap block (dirt/stone/full block) in inventory — cannot roof.`); return false; }
+            if (await placeBlock(bot, capName, plan.cap.x, plan.cap.y, plan.cap.z, 'bottom', true, { positioning: false })) continue;
+            if (++placeFails >= 3) return false;
+            await new Promise(r => setTimeout(r, 120));   // 被击退/起跳中 (intersects-body) — 落地后重读位置
+            continue;
+        }
+        // 封顶格悬空: 加深 (封顶格沉进地层) 优先于垫支点 —— 挖出的土就是封顶料, 且更深更安全;
+        // 加深被拒 (下方水/岩浆/悬崖/挖不动) 或预算用完 → 垫支点。
+        if (canDeepen) {
+            const before = feet.y;
+            const ok = await digDown(bot, 1);
+            if (ok && Math.floor(bot.entity.position.y) < before) { deepened++; continue; }
+            deepened = maxDeepen;   // 挖不下去 — 不再尝试加深
+        }
+        if (plan.action === 'support' && useSupport && supportFails < 2) {
+            const supName = resolveCapBlock(bot);
+            const have = supName ? bot.inventory.items().filter(it => it.name === supName).reduce((a, it) => a + it.count, 0) : 0;
+            const total = bot.inventory.items().filter(it => isCapBlockName(it.name, bot.registry)).reduce((a, it) => a + it.count, 0);
+            if (supName && total >= 2 && have >= 1) {
+                const s = plan.support;
+                if (await placeBlock(bot, supName, s.x, s.y, s.z, 'bottom', true, { positioning: false })) continue;
+            }
+            supportFails++;
+            if (total < 2) { log(bot, `${tag}: cap cell floats and only ${total} cap block(s) — need 2 (support + cap).`); return false; }
+            continue;
+        }
+        log(bot, `${tag}: cap cell ${plan.cap} floats (nothing to place on) and cannot deepen/support — pocket stays open.`);
+        return false;
+    }
+    return _capSolid(bot.blockAt(bot.entity.position.floored().offset(0, 2, 0)));
+}
+
 export async function digOneCapOne(bot) {
     /**
      * "挖三填一" night-shelter primitive: dig ONE block straight down (reusing
@@ -6250,29 +6385,21 @@ export async function digOneCapOne(bot) {
 
     const feet = bot.entity.position.floored();
 
+    // ★T-0105 (溺死实录 2026-10-09 15:50:45): kernel 每个 nightShelter 切片 (≤120s) 都重派 dig_one,
+    //   旧版每次都从【已封好的】口袋里再 digDown 一格 → 整夜一片一片往下沉; 这次第 N 片撞上侧水,
+    //   digDown 的 detourFromHazard 横向掘进 7 格进了水里 → 溺死。人类封好了就待着: 已在封闭口袋 → 不挖, 直接算封成。
+    if (isSealedPocket((p) => bot.blockAt(p), feet)) {
+        log(bot, 'digOneCapOne: already inside a sealed pocket (roof + 4 walls) — holding, no further digging.');
+        return true;
+    }
+
     // ★封顶料 capName 先算(与 ④ 同优先级: 泥土>石系>...>非木板兜底)——① 的 gravity
     //   闸门要靠它判定"能不能挖三填一穿沙"。inv/capName 下游 ④⑤ 直接复用。
-    const inv = world.getInventoryCounts(bot);
-    // ★#4 (review-2026-07-06 乱放木板): cap/侧墙材料 cheap-first。旧版 _CAP_PREFS 只列
-    // oak_planks(漏 spruce 等), fallback 抓"任意固体"会选中 spruce_planks → 工作台旁乱堆木板(真凶,
-    // 初诊误判在 modes.js)。扩充贱料清单，并在 fallback 中硬排除所有木板；cap(④)与侧墙(⑤ 4376)
-    // 共用 capName，只有木板时宁可诚实失败，也不消耗工具链材料。
-    // ★材料优先级 (用户令 2026-07-07: 泥土 > 石头 > 其他): dirt/coarse_dirt 优先, 石系其次;
-    //   其他非木板固体仍可末位 fallback，但所有 *_planks 一律禁用。
-    const _CAP_PREFS = [
-        'dirt', 'coarse_dirt', 'cobblestone', 'cobbled_deepslate', 'stone', 'deepslate',
-        'andesite', 'diorite', 'granite', 'netherrack', 'tuff', 'sandstone', 'red_sandstone', 'terracotta',
-    ];
-    let capName = _CAP_PREFS.find(n => (inv[n] || 0) > 0);
-    if (!capName) {
-        const _solidOK = (it) =>
-            !_isGravity({ name: it.name }) &&
-            !/sword|pickaxe|axe|shovel|hoe|_ingot|_pickaxe|bucket|torch|seeds|^bed$|_bed$|food|apple|bread|meat|fish/.test(it.name) &&
-            (mc.getItemId(it.name) != null);
-        const items = bot.inventory.items();
-        const _nonPlank = items.find(it => _solidOK(it) && !isPlankBlock(it.name));
-        capName = (_nonPlank && _nonPlank.name) || null;
-    }
+    // ★#4 (review-2026-07-06 乱放木板) + 用户令 2026-07-07 (泥土 > 石头 > 其他, 木板一律禁用):
+    //   材料规则收进 resolveCapBlock (见上方 T-0105 原语)。★T-0105: 旧版在【挖之前】一次性定死
+    //   capName, 且 fallback 只查"有 item id" → 首夜背包无泥土时挑中 stick / 压力板当封顶料, 挖出
+    //   来的泥土反而用不上 → 封顶必败。现在这里只用于 ① 的 gravity 闸门预判; 真正放置时每次重解析。
+    const capName = resolveCapBlock(bot);
 
     // ① _gravityPitTrap (C334 sand/gravel column): if a gravity block sits just
     // below the dig target (dy-1 / dy-2) or is poised to fall onto the cap (dy+2),
@@ -6337,21 +6464,9 @@ export async function digOneCapOne(bot) {
     // — at 3 deep the cap cell sits flush IN the ground layer with solid side support. Try
     // the cap at each depth 1→3 and deepen only while the cap cell floats; slopes still cap
     // at depth 1 like before, flat ground now digs to where a roof is physically possible.
-    let capped = false;
-    for (let depth = 1; depth <= 3; depth++) {
-        const here0 = bot.entity.position.floored();
-        const top0 = here0.offset(0, 2, 0);
-        const existingCap = bot.blockAt(top0);
-        if (existingCap && existingCap.boundingBox === 'block') { capped = true; break; }   // roofed by terrain
-        if (!capName) { log(bot, 'digOneCapOne: no non-gravity cap block carried — cannot roof pocket.'); break; }
-        capped = await placeBlock(bot, capName, top0.x, top0.y, top0.z, 'bottom', true);
-        if (capped) break;
-        if (depth === 3) break;
-        // cap cell floats (flat terrain) — deepen one more through digDown's own guards
-        const deeper = await digDown(bot, 1);
-        if (!deeper) { log(bot, `digOneCapOne: cap floats at depth ${depth} and digDown refused deeper — pocket stays open.`); break; }
-        log(bot, `digOneCapOne: cap had nothing to place on at depth ${depth} — deepened to ${depth + 1} (挖三填一 geometry).`);
-    }
+    // ★T-0105: 深度自适应改走共享原语 capOverhead —— 先判封顶格有没有可贴面 (planOverheadCap),
+    //   悬空就先加深 (≤2, 总深 ≤3) / 垫支点, 不再对悬空格空放一次; 放置 positioning:false。
+    const capped = await capOverhead(bot, { maxDeepen: 2, tag: 'digOneCapOne' });
     const here = bot.entity.position.floored();
 
     // ⑤ Patch ONLY the genuinely open side holes (boundingBox !== 'block') across
@@ -6366,9 +6481,10 @@ export async function digOneCapOne(bot) {
             const cell = here.offset(dx, dy, dz);
             const blk = bot.blockAt(cell);
             if (blk && blk.boundingBox === 'block') continue; // solid wall already
-            // open side — try to fill it
-            if (!capName) { openRemaining = true; continue; }
-            const filled = await placeBlock(bot, capName, cell.x, cell.y, cell.z, 'side', true);
+            // open side — try to fill it (material re-resolved: dirt dug just now counts)
+            const sideName = resolveCapBlock(bot);
+            if (!sideName) { openRemaining = true; continue; }
+            const filled = await placeBlock(bot, sideName, cell.x, cell.y, cell.z, 'side', true, { positioning: false });
             const after = bot.blockAt(cell);
             if (!filled || !after || after.boundingBox !== 'block') {
                 openRemaining = true;

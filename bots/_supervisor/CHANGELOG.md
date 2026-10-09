@@ -12,6 +12,20 @@
 
 ---
 
+## C354. ★★封顶失败(seal-fail)几何根因 + 夜庇护重派下沉溺死链（①modes.js bunkerDown/edge_unstick + ②skills.js 封顶原语 需重启,T-0105,worker-death,⏳待重启）
+
+**（2026-10-09，worker-death，T-0105 / 关联 T-0043·T-0057）**
+
+**证据**: ①`_worldreset_*/mine_motion.jsonl` 全量统计头顶封顶 (target=脚+2) 放置 ~3.3k 次, ~85% 以 `no-build-off` 失败 (prepNether 1388+159 / missionNether 591+77 / achieve 203+52 / …); 样本 06-18T19:03: 脚 y66 在草方块层(挖了 1 格), 封顶格 y68 周边全 air/snow, 130ms 内对同一悬空格重试 3 次全败。②新世界首夜 10-09 15:51 溺死 (掉血全为 drowning, 末击 shot:Skeleton): 15:48:45–15:50:45 已在 y56 封闭口袋 `sealed night hold`; 15:50:45 kernel 重派 `nightShelter(dig_one)` → 位置 -42,56,29 → -45,56,28 → -49,57,25 横移 7 格进水 → 15:51:34 `edge_unstick headroom-break dirt@-49,59,23` → 溺死。③首夜背包 `{spruce_pressure_plate, spruce_planks, wooden_pickaxe, spruce_log}`: 旧 digOneCapOne 挖前定死 capName, fallback "任意有 item id 的非木板" 可挑中压力板/棍子。
+
+**机理**: (a) 封顶调用方写死"挖 N 格→往脚+2 放"。平地挖 1~2 格时脚+2 在地表层或之上、四周空、正下方是 bot 自己的头 → placeBlock 无贴面 → "Can't seal"。人类的挖三填一=封顶格要沉进地层(挖 3)或旁边先垫一块当支点。(b) nightShelter hold 是 ≤120s 切片, kernel 每片重派 dig_one, digOneCapOne 每次都从已封好的口袋里再 digDown → 整夜逐片下沉, 撞侧水时 digDown 的 detourFromHazard 横向掘进出口袋进水。(c) edge_unstick 的 capped-head/headroom break 不看被破块上方/侧面是不是水, 也不管是否在夜封顶中 → 水下口袋的顶 (=挡水坝) 被自己破掉。
+
+**改动**: ②skills.js 新原语 `planOverheadCap`(纯判据 capped/place/support/deepen) + `capOverhead`(悬空→先加深≤N, 挖不下→垫支点; 放置 positioning:false 绝不寻路出竖井; 每次重解析料) + `resolveCapBlock/isCapBlockName`(整方块/非重力/非设施/非木板, 刚挖的泥土立刻可用) + `isSealedPocket` + `breakWouldFlood`。digOneCapOne: 入口已在封闭口袋→直接 true 不挖; 封顶走 capOverhead; 侧墙料重解析+positioning:false。①modes.js bunkerDown: 两段固定脚+2 封顶→capOverhead; pillar 兜底改"先墙后顶"; 竖井补墙 positioning:false。edge_unstick: 两处破头顶加 `!breakWouldFlood`, `bot._nightSealedUntil` 有效时不破自家顶。
+
+**可证伪预测**: ①events.log `Can't seal` 频率 / botwatch seal-fail occ 显著下降。②夜里 nightShelter 重派时日志出 `already inside a sealed pocket — holding`, vitals 夜间 hold 期 y 不再逐片下降。③不再出现"封闭 hold 后被重派横移进水溺死"型死亡; edge_unstick 不再对挡水块 headroom-break。若出现"封顶后憋在坑里白天不出来"→查 isSealedPocket(本改动只在 digOneCapOne 入口生效, 白天出坑仍归 surfaceUp/mobility)。
+
+**回滚**: `git revert` 本提交 (skills.js + modes.js), 重启 main.js。回归测试 `test/seal_cap_geometry.test.mjs`(9 条 T-0105)。
+
 ## C353. ★★战斗无能↔reflexBusy 三重互锁破解:self_defense 对"够不到的远程怪"disengage 让位 POCKET 脱困/觅食（①modes.js self_defense 门 需重启 + ③shieldFight.js HP-stuck bail 热加载,T-0063,worker-combat,🟡①待重启③已生效待验）
 
 **（2026-06-27，worker-combat，T-0063）**: bot 跨多天钉死 91,53,160 出不来的真根=三重互锁，监工 06-27 实锤 + 我实时复现(radar/events/progress 三流交叉)。

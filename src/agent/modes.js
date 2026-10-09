@@ -1479,20 +1479,17 @@ const modes_list = [
                 try { await skills.digDown(bot, 1); } catch (e) {}
                 if (Math.floor(bot.entity.position.y) >= before) break; // couldn't descend (water/lava/stuck) — stop
             }
-            let p = bot.entity.position.floored();
-            // CAP FIRST (highest priority — this is what actually stops the swarm). FASTEST
-            // possible: ≤4 tries 60ms apart, RE-READING our position each pass (a 3-4 mob swarm
-            // knocks the bot around mid-place), stop the instant the head is covered. The old
-            // 6×150ms (~0.9s) was too slow — at ~1hp/tick under a swarm the naked bot bled out
-            // before the cap landed (the recurring "Can't seal here" → 连死). Speed = survival.
-            for (let i = 0; i < 4; i++) {
-                const head2 = bot.blockAt(p.offset(0, 2, 0));
-                if (head2 && !OPENISH.includes(head2.name)) break;
-                const f = fillerOf(); if (!f) break;
-                try { await skills.placeBlock(bot, f, p.x, p.y + 2, p.z, 'bottom', true); } catch (e) {}
-                await new Promise(r => setTimeout(r, 60));
-                p = bot.entity.position.floored();
-            }
+            // CAP FIRST (highest priority — this is what actually stops the swarm).
+            // ★T-0105 (seal-fail 根因): the old code placed the cap at a FIXED feet+2 after a fixed
+            // 2-deep dig. On flat ground 2 deep puts feet+2 at the surface layer — every neighbour
+            // is air and below it is our own head, so placeBlock had NOTHING to place against
+            // ('no-build-off' = ~85% of ~3.3k historical head-cap attempts) and the 4×60ms retries
+            // all hit the same floating cell → "Can't seal here" → death. skills.capOverhead reads
+            // the geometry first (planOverheadCap): floating → deepen one (the cap cell sinks into
+            // the ground layer, solid sides) or drop a support block beside it; never walks out of
+            // the shaft to place (positioning:false); cap material re-resolved each try so the dirt
+            // we just dug is used, gravity blocks never (sand cap falls onto our head).
+            try { await skills.capOverhead(bot, { maxDeepen: 2, tag: 'bunkerDown' }); } catch (e) {}
             // Now (sealed/safer) dig 2 more down for water-table robustness, re-capping if the
             // descent reopened the head. Skip if we couldn't descend at all (hit water/rock).
             for (let d = 0; d < 2 && Math.floor(bot.entity.position.y) > y0 - 4; d++) {
@@ -1500,21 +1497,14 @@ const modes_list = [
                 try { await skills.digDown(bot, 1); } catch (e) {}
                 if (Math.floor(bot.entity.position.y) >= before) break;
             }
-            p = bot.entity.position.floored();
-            for (let i = 0; i < 4; i++) {   // re-cap after deepening — same fast cadence as above
-                const head2 = bot.blockAt(p.offset(0, 2, 0));
-                if (head2 && !OPENISH.includes(head2.name)) break;
-                const f = fillerOf(); if (!f) break;
-                try { await skills.placeBlock(bot, f, p.x, p.y + 2, p.z, 'bottom', true); } catch (e) {}
-                await new Promise(r => setTimeout(r, 60));
-                p = bot.entity.position.floored();
-            }
+            try { await skills.capOverhead(bot, { maxDeepen: 1, tag: 'bunkerDown' }); } catch (e) {}
+            let p = bot.entity.position.floored();
             for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 for (const dy of [0, 1]) {
                     const c = bot.blockAt(p.offset(dx, dy, dz));
                     if (c && OPENISH.includes(c.name)) {
                         const f = fillerOf(); if (!f) break;
-                        try { await skills.placeBlock(bot, f, p.x + dx, p.y + dy, p.z + dz, 'bottom', true); } catch (e) {}
+                        try { await skills.placeBlock(bot, f, p.x + dx, p.y + dy, p.z + dz, 'bottom', true, { positioning: false }); } catch (e) {}   // never path out of our own shaft to patch it
                     }
                 }
             }
@@ -1559,19 +1549,16 @@ const modes_list = [
                     await new Promise(r => setTimeout(r, 160));
                 }
                 const q = bot.entity.position.floored();
-                for (let i = 0; i < 4; i++) {                       // cap head
-                    const h2 = bot.blockAt(q.offset(0, 2, 0));
-                    if (h2 && !OPENISH.includes(h2.name)) break;
-                    const f = fillerOf(); if (!f) break;
-                    try { await skills.placeBlock(bot, f, q.x, q.y + 2, q.z, 'bottom', true); } catch (e) {}
-                    await new Promise(r => setTimeout(r, 140));
-                }
+                // ★T-0105: walls FIRST, cap LAST. On top of a fresh pillar the cap cell (q+2) has no
+                // neighbour at all — capping first was always 'no-build-off'. A head-level wall block
+                // gives capOverhead a support to stand a cap block on (planOverheadCap 'support').
                 for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { // wall 4 sides (feet+head)
                     for (const dy of [0, 1]) {
                         const c = bot.blockAt(q.offset(dx, dy, dz));
-                        if (c && OPENISH.includes(c.name)) { const f = fillerOf(); if (!f) break; try { await skills.placeBlock(bot, f, q.x + dx, q.y + dy, q.z + dz, 'bottom', true); } catch (e) {} }
+                        if (c && OPENISH.includes(c.name)) { const f = fillerOf(); if (!f) break; try { await skills.placeBlock(bot, f, q.x + dx, q.y + dy, q.z + dz, 'bottom', true, { positioning: false }); } catch (e) {} }
                     }
                 }
+                try { await skills.capOverhead(bot, { maxDeepen: 0, tag: 'bunkerDown-pillar' }); } catch (e) {}
             }
             if (!headBlocked()) {
                 const nightHold = this.coveredNightHoldStatus(bot);
@@ -5777,7 +5764,11 @@ const modes_list = [
                         const hasPick0 = (() => { try { return bot.inventory.items().some(i => /_pickaxe$/.test(i.name || '')); } catch (e) { return false; } })();
                         const hard0 = (b) => /stone|deepslate|terracotta|andesite|diorite|granite|tuff|_ore$|obsidian|cobble|basalt|blackstone|netherrack|end_stone|prismarine|brick|concrete|amethyst|copper/.test((b && b.name) || '');
                         const keep0 = (b) => /bedrock|barrier|chest|furnace|crafting_table|_bed$|door|sign|portal|spawner|enchanting/.test((b && b.name) || '');
-                        if (now - this._chStuckSince > 900 && now - (this._chLastBreakAt || 0) > 700 && !keep0(cap0) && (!hard0(cap0) || hasPick0)) {
+                        // ★T-0105: never break a cap that holds back fluid (underwater pocket roof → self-flood),
+                        // nor our own night-shelter roof while the shelter flag is live.
+                        const floods0 = (() => { try { return skills.breakWouldFlood((q) => bot.blockAt(q), cap0.position); } catch (e) { return true; } })();
+                        const nightSealed0 = (bot._nightSealedUntil || 0) > now;
+                        if (now - this._chStuckSince > 900 && now - (this._chLastBreakAt || 0) > 700 && !keep0(cap0) && (!hard0(cap0) || hasPick0) && !floods0 && !nightSealed0) {
                             this._chLastBreakAt = now; this._chDigBusy = true;
                             const ob0 = cap0;
                             (async () => { try { await bot.dig(ob0, true); } catch (e) {} finally { this._chDigBusy = false; this._chStuckSince = 0; } })();
@@ -5836,8 +5827,13 @@ const modes_list = [
                     const hasPick = (() => { try { return bot.inventory.items().some(i => /_pickaxe$/.test(i.name || '')); } catch (e) { return false; } })();
                     const hard = (b) => /stone|deepslate|terracotta|andesite|diorite|granite|tuff|_ore$|obsidian|cobble|basalt|blackstone|netherrack|end_stone|prismarine|brick|concrete|amethyst|copper/.test((b && b.name) || '');
                     const keep = (b) => /bedrock|barrier|chest|furnace|crafting_table|_bed$|door|sign|portal|spawner|enchanting/.test((b && b.name) || '');
-                    const breakable = (b) => solid(b) && !keep(b) && (!hard(b) || hasPick);
-                    const overSelf2 = bot.blockAt(fl.offset(0, 2, 0));
+                    // ★T-0105 (溺死 2026-10-09 15:51:34 "headroom-break dirt@-49,59,23" in a flooded pocket):
+                    // a block whose top/sides touch fluid is a DAM — breaking it floods us. Never.
+                    const floods = (b) => { try { return skills.breakWouldFlood((q) => bot.blockAt(q), b.position); } catch (e) { return true; } };
+                    const breakable = (b) => solid(b) && !keep(b) && (!hard(b) || hasPick) && !floods(b);
+                    const _nightSealed = (bot._nightSealedUntil || 0) > now;   // our own shelter roof — not an obstacle
+                    const overSelf2Raw = bot.blockAt(fl.offset(0, 2, 0));
+                    const overSelf2 = _nightSealed ? null : overSelf2Raw;
                     let obstr = null;
                     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                         const fFoot = bot.blockAt(fl.offset(dx, 0, dz));
