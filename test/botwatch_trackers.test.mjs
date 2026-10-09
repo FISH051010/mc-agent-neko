@@ -142,6 +142,15 @@ test('T-0126b: a never-classified model after restart (NONE) is not a crash; onl
   assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 5, mobRaw: '?' }), true);   // catch-path crash
 });
 
+test('T-0129b: a legit sealed night hold starving mobility >5min is not a stall; a crash still fires', () => {
+  const t = Date.now();
+  const wm = { ts: t, time: { isDay: false }, cover: { coverReal: true }, threat: { actionable: 0 } };
+  // live 20:14: night at spawn, self_preservation held the slot all night, mobAge=370
+  assert.equal(mobilityStaleActive({ v: { x: 9 }, ageS: 2, mobAge: 370, mobRaw: 'FREE', hp: 20, wm, t }), false);
+  assert.equal(mobilityStaleActive({ v: { x: 9 }, ageS: 2, mobAge: 370, mobRaw: 'FREE', hp: 20, wm: { ...wm, time: { isDay: true } }, t }), true);
+  assert.equal(mobilityStaleActive({ v: { x: 9 }, ageS: 2, mobAge: 5, mobRaw: '?', hp: 20, wm, t }), true);
+});
+
 test('T-0124: MOBILITY-STALE stays quiet when vitals themselves are stale (that is the STALE detector)', () => {
   assert.equal(mobilityStaleActive({ v: { x: 0 }, ageS: 600, mobAge: 900, mobRaw: 'FREE' }), false);
   assert.equal(mobilityStaleActive({ v: null, ageS: 9999, mobAge: null, mobRaw: '' }), false);

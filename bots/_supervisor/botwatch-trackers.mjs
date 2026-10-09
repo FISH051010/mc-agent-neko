@@ -84,7 +84,9 @@ export const mobilityStuckActive = (s) => STUCK_MOBILITY_RE.test(s.mob || '')
 export const MOBILITY_STALE_SEC = 300;
 export const mobilityCrashed = (s) => /^\?/.test(s.mobRaw || '');
 export const mobilityStaleActive = (s) => !!s.v && s.ageS < 60
-    && (mobilityCrashed(s) || (Number.isFinite(s.mobAge) && s.mobAge > MOBILITY_STALE_SEC));
+    // ★T-0129b: 合法的封闭过夜(一夜≈7min)里 self_preservation 整夜占槽, mobility 合法地不被排程 → '饿死'档豁免;
+    //   崩溃档('?')不豁免。用 legitNightHold 同一判据(夜+真遮蔽+无可行威胁+wm 新鲜), 与 FROZEN-ALIVE 口径一致。
+    && (mobilityCrashed(s) || (Number.isFinite(s.mobAge) && s.mobAge > MOBILITY_STALE_SEC && !legitNightHold(s)));
 // ── BOOTSTRAP resource-floor deadlock (T-0012): 0 usable picks AND no pickaxe in the bag (a table does NOT clear it). ──
 export const bootstrapDeadlockActive = (s) => s.picks === 0 && !s.has(/_pickaxe$/);
 // ── FALSE-SHELTER (T-0040/T-0085): the SILENT night near-miss — sheltering intent but roof NOT sealed. ──
