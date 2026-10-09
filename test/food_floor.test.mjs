@@ -128,3 +128,37 @@ test('监工加急#2: 侦察航点全在 96 格内, 有线索先朝线索; 16 �
         assert.equal(hostileWithin({ entity: { position: V(0, 64, 0) }, entities: { 1: { name: 'cow', position: V(10, 64, 0) } } }, 16), false);
     } finally { process.chdir(cwd); }
 });
+
+test('监工加急#3: y60(shallow) 饿着零动物 → 提案必须同时带 surfaceFirst+scout; quickMeal 先上浮(y<62)再侦察, 不直接失败', async () => {
+    const p = foodFloorProposal({ foodInstincts: false, overworld: true, phase: 'day', food: 0, actionable: 0, counts: LIVE, botY: 60, depthBand: 'shallow', animal: null });
+    assert.ok(p && p.args[0].surfaceFirst && p.args[0].scout, '17:57:41 live: surfaceFirst without scout → honest-fail x3 → cooldown');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qm3-'));
+    fs.mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
+    const cwd = process.cwd(); process.chdir(home);
+    try {
+        const { default: quickMeal } = await import('../bots/_supervisor/skills/quickMeal.js');
+        const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
+        const calls = [], legs = [];
+        const bot = { food: 0, entity: { position: V(81, 60, 54) }, entities: {},
+            pathfinder: { stop() {}, setMovements() {}, goto: async (g) => { legs.push(g); } }, clearControlStates() {} };
+        const ctx = { world: { getInventoryCounts: () => ({ coal: 60 }) },
+            skills: { customSkill: async (_b, name) => { calls.push(name); if (name === 'surfaceUp') bot.entity.position = V(81, 71, 54); },
+                attackEntity: async () => {}, pickupNearbyItems: async () => {}, consume: async () => {} } };
+        const r = await quickMeal(bot, ctx, { ...p.args[0], scoutMs: 300 });
+        assert.ok(calls.includes('surfaceUp'), 'surfaced first at y60');
+        assert.ok(legs.length >= 1, 'then scouted');
+        assert.notEqual(r.failed, true, 'surfacing is progress, not a strike');
+    } finally { process.chdir(cwd); }
+});
+
+test('监工加急#3: GET_IRON_ARMOR_SET 饿着时不提且已承诺的被释放; 饥饿冻结给 FOOD_FLOOR/quickMeal 让路', () => {
+    delete process.env.MC_FOOD_INSTINCTS;
+    const w = world({ food: 0 });
+    const props = proposeTasks(w, fakeBot(LIVE));
+    assert.equal(props.find(p => p.kind === 'GET_IRON_ARMOR_SET'), undefined);
+    assert.equal(isGoalDone('GET_IRON_ARMOR_SET', w, fakeBot(LIVE)), true);
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const fn = src.slice(src.indexOf('function famineBodyFreeze'), src.indexOf('function famineForageActive'));
+    assert.ok(/quickMeal/.test(fn), 'quickMeal whitelisted in famineBodyFreeze');
+    assert.ok(/_commitment\.kind === 'FOOD_FLOOR'\) return false/.test(fn), 'FOOD_FLOOR commitment unfreezes the body');
+});

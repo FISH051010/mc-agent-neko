@@ -156,7 +156,10 @@ function famineBodyFreeze(agent, owner) {
     // travel-budget safety gate (won't march into deep water / far targets at low food), so
     // whitelisting it here is the freeze's proper exit, not a hole. escapePlan likewise owns
     // movement authority when breaking a trap.
-    if (/feedUp|surfaceUp|consume|auto_eat|forage|forageExplore|migrate|escapePlan/i.test(skill)) return false;
+    if (/feedUp|surfaceUp|consume|auto_eat|forage|forageExplore|migrate|escapePlan|quickMeal/i.test(skill)) return false;
+    // ★T-0069 (监工加急#3, 17:57:49Z 实录): FOOD_FLOOR 是食物本能关闭时唯一的觅食出口 — 冻身体会让"去拿食物"
+    //   永远发生不了 (Normal 饿不死, 只会永久停滞)。承诺是 FOOD_FLOOR 时一律让路 (上浮/侦察/猎杀都要动身体)。
+    if (bot._commitment && bot._commitment.kind === 'FOOD_FLOOR') return false;
     const edible = bot.inventory && bot.inventory.items().some(i => i && i.name && FAMINE_FOOD_RE.test(i.name));
     if (edible) return false;
     const p = bot.entity.position;

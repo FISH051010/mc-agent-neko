@@ -26,7 +26,7 @@ import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, starvingNoFood, DESCENT_SKILL_RE } from './food_floor.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
-const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT']);
+const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT']);
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对

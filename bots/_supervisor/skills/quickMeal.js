@@ -71,13 +71,18 @@ export function pickHuntTarget(bot, radius, maxDy) {
     return best;
 }
 
-const race = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(r => setTimeout(r, Math.max(0, ms)))]);
+const race = (p, ms) => {
+    let timer = null;
+    const deadline = new Promise(r => { timer = setTimeout(r, Math.max(0, ms)); });
+    return Promise.race([Promise.resolve(p).catch(() => null), deadline]).finally(() => clearTimeout(timer));   // 不留悬挂计时器
+};
 
 export default async function quickMeal(bot, ctx, opts = {}) {
     const { skills, world } = ctx;
     const radius = opts.radius ?? 48, maxDy = opts.maxDy ?? 6, maxMs = opts.maxMs ?? 60000;
     // ⓪ 饿着在矿里 → 先上浮 (监工拍板: 在矿里的要先回地面觅食); 单独限时, 不吃猎杀的 60s 预算
-    if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 60) {
+    // ★监工加急#3: 阈值与 depthBand 同口径 (surface = y≥62); 旧 y<60 在 y60 跳过上浮 → 直接失败 3 连败冷却
+    if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 62) {
         const y0 = Math.round(bot.entity.position.y);
         prog(`starving underground y=${y0} food=${bot.food} — surfaceUp first (≤${Math.round((opts.surfaceMaxMs ?? 120000) / 1000)}s)`);
         await race(skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
@@ -101,7 +106,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             target = await scoutForAnimal(bot, { radius, maxDy, scoutRadius: opts.scoutRadius ?? 96, scoutMs: opts.scoutMs ?? 90000, scoutToward: opts.scoutToward });
             prog(target ? `scout found ${target.name}` : 'scout found nothing');
             t0 = Date.now();   // 侦察有自己的 ≤scoutMs 上限; 猎杀/烤/吃重新计 maxMs
-            if (!target) return { failed: true, reason: 'scout-found-nothing' };
+            if (!target) return opts._surfaced ? { ok: true, surfaced: true, scouted: true } : { failed: true, reason: 'scout-found-nothing' };
         }
         if (!target) {
             prog(`no huntable animal within ${radius}b/dy${maxDy} — ${opts._surfaced ? 'surfaced (progress), no hunt' : 'honest fail (no roaming)'}`);

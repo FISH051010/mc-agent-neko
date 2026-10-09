@@ -61,8 +61,9 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
     const scout = starving && !surfaceFirst && !animalOk && rawMeat === 0;
     if (rawMeat === 0 && !animalOk && !surfaceFirst && !scout) return null;
     const args = [{ radius: HUNT_RADIUS, maxDy: HUNT_DY, maxMs: QUICK_MEAL_MAX_MS,
+        // ★监工加急#3: surfaceFirst 必须连带侦察 — 上浮后看不到动物就侦察, 不直接失败
         ...(surfaceFirst && rawMeat === 0 ? { surfaceFirst: true, surfaceMaxMs: SURFACE_FIRST_MAX_MS } : {}),
-        ...(scout ? { scout: true, scoutRadius: SCOUT_RADIUS, scoutMs: SCOUT_MS, scoutToward: animal && Number.isFinite(animal.x) ? { x: animal.x, z: animal.z } : null } : {}) }];
+        ...((scout || (surfaceFirst && rawMeat === 0 && !animalOk)) ? { scout: true, scoutRadius: SCOUT_RADIUS, scoutMs: SCOUT_MS, scoutToward: animal && Number.isFinite(animal.x) ? { x: animal.x, z: animal.z } : null } : {}) }];
     if (scout) return { priority: FOOD_FLOOR_PRIORITY, args,
         rationale: `food ${food}≤${STARVING_FOOD} starving, no animal ≤${HUNT_RADIUS}b — bounded scout ≤${SCOUT_RADIUS}b/${SCOUT_MS / 1000}s (safe path, hunt on sight)` };
     return {
