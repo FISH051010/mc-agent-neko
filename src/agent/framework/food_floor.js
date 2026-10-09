@@ -50,6 +50,10 @@ export const FOOD_RELEASE = 18;
 export const STOCK_COOKED = 4;
 export const SESSION_KILL_CAP = 6;
 export const DESCENT_MIN_HP = 10;
+// ★T-0188 (监工: 07:15 hp=11 food=11 零食物不回血, FOOD_FLOOR 无状态触发 hp<10 与 arbiter eatFloor hp≤12 口径不一 → hp 10-12 卡死):
+//   "回不了血" 统一判据 hp≤REGEN_HP_MAX 且 food<FOOD_RELEASE — FOOD_FLOOR 会话触发 / arbiter.eatFloor / pickAutoEatFood 应急档三处共用。
+export const REGEN_HP_MAX = 12;
+export function cannotRegen(hp, food) { return Number.isFinite(hp) && Number.isFinite(food) && hp <= REGEN_HP_MAX && food < FOOD_RELEASE; }
 const COOKED_RE = /^(cooked_\w+|bread|baked_potato)$/;
 
 /** 下矿门 (监工拍板): 饿着零可吃 或 hp<10 → 不提出/不继续下矿。 */
@@ -70,8 +74,7 @@ export function animalInRange(animal, botPos, botY) {
 //   → 一次挖出窒息即死、铁装全丢。触发也要看"回不了血": hp<10 且 food<18 同样开会话 — 状态可由 hp/food 重建, 不怕重启。
 export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, now = Date.now() }) {
     const L = latch || { active: false, kills: 0, since: 0 };
-    const cannotRegen = Number.isFinite(hp) && hp < DESCENT_MIN_HP && food < FOOD_RELEASE;
-    if (!L.active) return (food <= FOOD_FLOOR || cannotRegen) ? { active: true, kills: 0, since: now } : L;
+    if (!L.active) return (food <= FOOD_FLOOR || cannotRegen(hp, food)) ? { active: true, kills: 0, since: now } : L;
     const cooked = countMatching(counts, COOKED_RE);
     const fed = food >= FOOD_RELEASE;
     if (L.kills >= SESSION_KILL_CAP || (fed && (cooked >= STOCK_COOKED || !animalNear)))

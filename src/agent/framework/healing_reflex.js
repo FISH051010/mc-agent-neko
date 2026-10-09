@@ -3,6 +3,7 @@
  * carried by the bot. These helpers are pure so the retirement boundary can be
  * regression-tested without a live Minecraft client.
  */
+import { FOOD_FLOOR, cannotRegen } from './food_floor.js';   // ★T-0188 "回不了血" 判据与 FOOD_FLOOR/eatFloor 同源
 
 // ★T-0155: 生鸡肉 (30% 饥饿 debuff, 饿到掉血时反而更快掉) 两档都排除 — 旧正则 /chicken/ 把生鸡肉当正常食物。
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|carrot|potato|^beef$|^porkchop$|^mutton$|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -13,7 +14,7 @@ export function pickAutoEatFood(items, { health = 20, food = 20 } = {}) {
     const list = (items || []).filter(i => i && i.name && i.name !== 'chicken');
     let pick = list.find(i => NORMAL_FOOD_RE.test(i.name) && !RAW_RE.test(i.name))
         || list.find(i => NORMAL_FOOD_RE.test(i.name));
-    if (!pick && (food <= 6 || (health <= 12 && food < 18))) pick = list.find(i => EMERGENCY_FOOD_RE.test(i.name));
+    if (!pick && (food <= FOOD_FLOOR || cannotRegen(health, food))) pick = list.find(i => EMERGENCY_FOOD_RE.test(i.name));
     return pick || null;
 }
 

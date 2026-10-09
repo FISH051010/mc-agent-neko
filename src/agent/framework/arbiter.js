@@ -32,6 +32,7 @@
 import fs from 'fs';
 import { withTimeout } from '../../utils/timeout.js';
 import { dataPath } from '../../utils/paths.js';
+import { FOOD_FLOOR, cannotRegen } from './food_floor.js';
 
 // ★2026-08-07 路径统一: 原来 process.cwd() 相对 —— 与 world_model.js 的 import.meta.url
 // 相对是分裂的两半, 分发包里会各自解析到不同目录 (仲裁矩阵写一处、世界模型读另一处)。
@@ -87,7 +88,7 @@ export function eatFloor(bot, holder, claimant) {
         if (claimant.name !== 'mode:auto_eat') return false;
         const food = Number(bot.food), hp = Number(bot.health);
         if (!Number.isFinite(food)) return false;
-        return food <= 6 || (Number.isFinite(hp) && hp <= 12 && food < 18);
+        return food <= FOOD_FLOOR || cannotRegen(hp, food);   // ★T-0188 与 FOOD_FLOOR 会话触发 / pickAutoEatFood 同源
     } catch (e) { return false; }
 }
 
