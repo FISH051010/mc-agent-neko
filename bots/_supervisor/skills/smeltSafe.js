@@ -77,6 +77,10 @@ export function removeStranded(rec) { saveAllStranded(readAllStranded().filter(s
 export async function clearAndPickUp(bot, { skills, world }, item, product) {
     const before = { ...(world.getInventoryCounts(bot) || {}) };
     try { await skills.clearNearestFurnace(bot); } catch (e) {}
+    // ★T-0179 源头 (worker-stuck 定位: 22:26:11 收尾后熔炉窗口没关 → mineflayer clickWindow 用 currentWindow,
+    //   之后每次 equip 都按背包槽号点熔炉窗口 → 'invalid operation' 50+ 次, mineDown/surfaceUp 全瘫):
+    //   clearNearestFurnace 开了炉窗从不关 — 清完立刻关。
+    try { if (bot.currentWindow && bot.currentWindow !== bot.inventory) bot.closeWindow(bot.currentWindow); } catch (e) {}
     const mid = world.getInventoryCounts(bot) || {};
     const got = ((mid[product] || 0) - (before[product] || 0)) + ((mid[item] || 0) - (before[item] || 0));
     let furnace = false;

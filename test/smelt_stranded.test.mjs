@@ -125,3 +125,14 @@ test('T-0164: 滞留记录 ≤64 格 → 提 RECLAIM_FURNACE(reclaimFurnace); �
     writeStranded(null);
     assert.equal(isGoalDone('RECLAIM_FURNACE', w, bot), true);
 });
+
+test('T-0179 源头: 收尾清炉后必须关掉熔炉窗口 (否则之后所有 equip 点错窗口 → invalid operation)', async () => {
+    const { clearAndPickUp } = await import('../bots/_supervisor/skills/smeltSafe.js');
+    const furnaceWin = { type: 'minecraft:furnace' };
+    let closed = null;
+    const bot = { inventory: {}, currentWindow: null, closeWindow(w) { closed = w; this.currentWindow = null; } };
+    const skills = { clearNearestFurnace: async () => { bot.currentWindow = furnaceWin; return true; }, collectBlock: async () => {} };
+    await clearAndPickUp(bot, { skills, world: { getInventoryCounts: () => ({}) } }, 'raw_iron', 'iron_ingot');
+    assert.equal(closed, furnaceWin, 'furnace window closed');
+    assert.equal(bot.currentWindow, null);
+});
