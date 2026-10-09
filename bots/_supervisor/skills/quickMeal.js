@@ -31,14 +31,19 @@ export function scoutWaypoints(origin, radius, toward) {
     return pts;
 }
 
-/** ★监工加急 #2 有界侦察: hp=1 任何伤害致死 → 安全寻路 (最多下落 2 格、不跑酷、不挖、水极贵), 16 格内有敌对立即收手。 */
-async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
-    const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
+/** hp=1 安全寻路: 最多下落 2 格 (3 格内无摔伤)、不跑酷、不挖、水极贵。 */
+function setSafeMovements(bot) {
     try {
         const mv = new Movements(bot);
         mv.maxDropDown = 2; mv.allowParkour = false; mv.canDig = false; mv.allow1by1towers = false; mv.liquidCost = 1000;
         bot.pathfinder.setMovements(mv);
     } catch (e) {}
+}
+
+/** ★监工加急 #2 有界侦察: hp=1 任何伤害致死 → 安全寻路 (最多下落 2 格、不跑酷、不挖、水极贵), 16 格内有敌对立即收手。 */
+async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
+    const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
+    setSafeMovements(bot);
     for (const wp of scoutWaypoints(origin, scoutRadius, scoutToward)) {
         if (Date.now() - t0 > scoutMs) break;
         if (hostileWithin(bot, 16)) { prog('scout aborted: hostile within 16b (hp-critical)'); break; }
@@ -114,6 +119,15 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         }
         prog(`hunt ${target.name} @${target.position.distanceTo(bot.entity.position).toFixed(1)}b (food=${bot.food})`);
         const r0 = rawHeld();
+        // ★18:04:35 实录: attackEntity 预检"远于 4 格且无清晰路径就放弃" → 41.7 格的羊 0 秒收手、零肉。
+        //   先安全寻路贴近 (≤2 格, 限时 20s; 动物会走动, 用实时 position), 再出手。
+        if (target.position.distanceTo(bot.entity.position) > 3.5) {
+            setSafeMovements(bot);
+            try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
+            try { bot.pathfinder.stop(); } catch (e) {}
+            if (hostileWithin(bot, 16)) { prog('approach aborted: hostile within 16b (hp-critical)'); stopBody(); return { failed: true, reason: 'hostile-near' }; }
+            prog(`approached ${target.name} → ${target.position.distanceTo(bot.entity.position).toFixed(1)}b`);
+        }
         await race(skills.attackEntity(bot, target, true), Math.min(left(), 25000));
         stopBody();
         if (skills.pickupNearbyItems) await race(skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));

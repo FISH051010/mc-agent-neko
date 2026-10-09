@@ -162,3 +162,22 @@ test('监工加急#3: GET_IRON_ARMOR_SET 饿着时不提且已承诺的被释放
     assert.ok(/quickMeal/.test(fn), 'quickMeal whitelisted in famineBodyFreeze');
     assert.ok(/_commitment\.kind === 'FOOD_FLOOR'\) return false/.test(fn), 'FOOD_FLOOR commitment unfreezes the body');
 });
+
+test('18:04 实录: 41.7 格的羊 → quickMeal 必须先安全寻路贴近再出手 (attackEntity 对 >4 格目标直接放弃)', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qm4-'));
+    fs.mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
+    const cwd = process.cwd(); process.chdir(home);
+    try {
+        const { default: quickMeal } = await import('../bots/_supervisor/skills/quickMeal.js');
+        const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
+        const inv = { coal: 60 };
+        const sheep = { name: 'sheep', position: V(41.7, 73, 0) };
+        const bot = { food: 0, entity: { position: V(0, 73, 0) }, entities: { 1: sheep },
+            pathfinder: { stop() {}, setMovements() {}, goto: async () => { bot.entity.position = V(40, 73, 0); } }, clearControlStates() {} };
+        const ctx = { world: { getInventoryCounts: () => ({ ...inv }) },
+            skills: { attackEntity: async (_b, e) => { if (e.position.distanceTo(bot.entity.position) > 4) return false; inv.mutton = 1; return true; },
+                pickupNearbyItems: async () => {}, customSkill: async () => {}, consume: async () => {} } };
+        const r = await quickMeal(bot, ctx, { radius: 48, maxDy: 6, maxMs: 60000 });
+        assert.equal(r.gotMeat, true, 'approached then killed');
+    } finally { process.chdir(cwd); }
+});
