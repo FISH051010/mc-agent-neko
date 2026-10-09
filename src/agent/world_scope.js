@@ -113,3 +113,25 @@ export async function archiveStaleWorldStateOnSwitch(b, { sup, delayMs = 5000, n
 }
 
 export const supIn = (dir) => (...segs) => path.join(dir, ...segs);
+
+// ★C344v2 (T-0071) keepInventory READ-ONLY probe: classify one server chat line answering
+// '/gamerule keepInventory'. Returns {verdict:true|false|null, why} or null when the line is unrelated.
+// verdict null = explicit rejection (no permission / unknown command) → UNVERIFIED, never assumed ON.
+// (moved verbatim from Agent._assertKeepInventory's message listener)
+export function classifyKeepInvReply(message, jsonMsg) {
+    const txt = (message || '').toString();
+    const key = (jsonMsg && jsonMsg.translate) || '';
+    // only react to messages about THIS gamerule (avoid latching onto an unrelated /gamerule)
+    const aboutKeepInv = /keepInventory/i.test(txt) || /keepInventory/i.test(JSON.stringify(jsonMsg && jsonMsg.with || ''));
+    // query answer: vanilla commands.gamerule.query — "Gamerule keepInventory is currently set to: true" / 中文 "…目前为：true"
+    if (aboutKeepInv && (key === 'commands.gamerule.query' || /(currently set to|目前为|当前.*为)/i.test(txt))) {
+        const m = txt.match(/\b(true|false)\b\s*$/i) || txt.match(/\b(true|false)\b/i);
+        if (m) return { verdict: m[1].toLowerCase() === 'true', why: key || txt.slice(0, 80) };
+    }
+    // explicit rejection
+    if (key === 'commands.help.failed' || /(do not have permission|don't have permission|没有.*权限|无权)/i.test(txt)
+        || /(Unknown or incomplete command|Unknown command|未知.*命令|命令.*无效)/i.test(txt)) {
+        return { verdict: null, why: `rejected: ${(key || txt.slice(0, 80))}` };
+    }
+    return null;
+}

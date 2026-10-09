@@ -28,7 +28,7 @@ import { wsServer } from '../websocket/ws_server.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import fs from 'fs';
 import { dataPath, expandUserPath } from '../utils/paths.js';
-import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket } from './world_scope.js';
+import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket, classifyKeepInvReply } from './world_scope.js';
 import { readJsonFileSync } from '../utils/json_io.js';
 import { deathAlertText, observeKeepInventory, countItems } from './keepinv_report.js';
 
@@ -372,21 +372,8 @@ export class Agent {
         };
         probe.onMsg = (message, _pos, jsonMsg) => {
             try {
-                const txt = (message || '').toString();
-                const key = (jsonMsg && jsonMsg.translate) || '';
-                // only react to messages about THIS gamerule (avoid latching onto an unrelated /gamerule)
-                const aboutKeepInv = /keepInventory/i.test(txt) || /keepInventory/i.test(JSON.stringify(jsonMsg && jsonMsg.with || ''));
-                // query answer: vanilla commands.gamerule.query — "Gamerule keepInventory is currently set to: true" / 中文 "…目前为：true"
-                if (aboutKeepInv && (key === 'commands.gamerule.query' || /(currently set to|目前为|当前.*为)/i.test(txt))) {
-                    const m = txt.match(/\b(true|false)\b\s*$/i) || txt.match(/\b(true|false)\b/i);
-                    if (m) { settle(m[1].toLowerCase() === 'true', key || txt.slice(0, 80)); return; }
-                }
-                // explicit rejection
-                if (key === 'commands.help.failed' || /(do not have permission|don't have permission|没有.*权限|无权)/i.test(txt)
-                    || /(Unknown or incomplete command|Unknown command|未知.*命令|命令.*无效)/i.test(txt)) {
-                    settle(null, `rejected: ${(key || txt.slice(0, 80))}`);
-                    return;
-                }
+                const r = classifyKeepInvReply(message, jsonMsg);   // world_scope.js — pinned by test/keepinv_probe.test.mjs
+                if (r) settle(r.verdict, r.why);
             } catch (_e) {}
         };
         b.on('messagestr', probe.onMsg);
