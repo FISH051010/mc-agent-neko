@@ -21,7 +21,7 @@
 
 ## C376. ★★通律"让位必须有人接"的常驻兜底: 危险中 ≥3s 无人掌舵 → reflex_watchdog 收回控制（modes.js reflex_watchdog + framework/mobility_signals.unownedDangerAction 需重启,T-0182,worker-death,🟡已上线 22:56:24Z, 判定已在 C377 收紧）
 
-**证据**: 两次"让位没人接"致死 —— death #8(T-0168: self_defense 无武器"把身体交给别的处理器", shouldFlee 健康无武器豁免 return false → 7s 零反射被僵尸打死); death #11(T-0175: swim 反射让位给 ENTOMBED, mobility 12s 才升 ENTOMBED → 11s act='-' 溺死)。监工立通律: 任何让位/交出身体的条件必须以"接收方此刻确实已持有"为前提。
+**证据**: 两次"让位没人接"致死 —— death #8(T-0168: self_defense 无武器"把身体交给别的处理器", shouldFlee 健康无武器豁免 return false → 7s 零反射被僵尸打死); death #11(T-0180: swim 反射让位给 ENTOMBED, mobility 12s 才升 ENTOMBED → 11s act='-' 溺死)。监工立通律: 任何让位/交出身体的条件必须以"接收方此刻确实已持有"为前提。
 **机理**: 让位条件与接收方触发条件是两个不同的谓词/计时器, 只要不完全重合就有空档; 逐个修(C368/C375)只能堵已死过的那一对。
 **改动**: framework/mobility_signals.js 纯函数 `unownedDangerAction({unownedMs, hurtRecently, headInWater, oxygen, exposed})` + `UNOWNED_DANGER_MS=3000`。reflex_watchdog(常驻)每拍: 危险(≤2.5s 掉血, 或头在水里 O2<10) 且无人掌舵(无非常驻 mode active / 无 targetDigBlock / 寻路不动 / 移动键全松) 持续 ≥3s → 记 progress + 收回: 水里 jump 1.5s 上游; 暴露地表(y≥50 且非封闭) → self_preservation.sprintFlee; 否则 bunkerDown。6s 节流。逐点普查(Explore)另行回写本单并按需补"接收方就绪"前提。
 **可证伪预测**: 出现 `★UNOWNED DANGER ≥3000ms … taking back: swim|flee|bunker (T-0182)` 后 bot 有动作且掉血停止; 不再出现危险中 act='-' 连续 >3s 的死亡。风险: 夜间封坑 hold 期间被隔墙挠/漏缝打(自保 dwell active=owned 不触发; 若 dwell 不 active 则会 bunker 重封, 可接受)。
@@ -33,7 +33,7 @@
 **机理**: 两条旧修复交接空档 —— T-0104 `sealedWaterTrapYield`(溺水+封闭+头顶实心 → 游泳反射立即让位给 ENTOMBED) vs T-0098 `classifySwim`(封闭水袋要 12s 才升 ENTOMBED)。让位立即发生, 接手要 12s → ~12s 无人掌舵, 僵尸贴身打 + 缺氧。
 **改动**: classifySwim 加 `oxygen`: 封闭水袋且 O2≤14 → 立即 ENTOMBED(不等 12s); sealedWaterTrapYield 追加前提 `bot._mobility.state==='ENTOMBED'`(真有人在挖才让)。modes 调用处传 bot.oxygenLevel。
 **可证伪预测**: 封闭水袋溺水时 O2 掉到 14 内即出 `[mobility] → ENTOMBED`(不再与 SWIM 间隔 ~12s), act_trace 不再出现水下 act='-' 连续 >3s。监工建议的①(夜挖破入开放洞穴→补块封口回撤)②(水中有贴身敌对→先上浮)未在本条, 视复发另加。
-**回滚**: revert, 重启 main.js。回归 test/submerged_trap.test.mjs 'T-0175: …' + swim_progress T-0091 正则放宽。
+**回滚**: revert, 重启 main.js。回归 test/submerged_trap.test.mjs 'T-0180: …' + swim_progress T-0091 正则放宽。
 
 ## C374. ★C373 收紧: 救命挖掘只在【危险中】(溺水/3s 内掉血) 才抢槽, 封锁只跟随真实抢断（modes.js + framework/mobility_signals 需重启,T-0174,worker-death,⏳待重启）
 

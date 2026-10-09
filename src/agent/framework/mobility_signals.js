@@ -51,7 +51,7 @@ export function taskDigBlockedByRescue({ preemptUntil, now = Date.now(), rescueT
 }
 
 // ★T-0182 让位必须有人接 (监工通律: "让位/交出身体以接收方此刻已持有为前提"): 两次致死都是"让位没人接" —
-//   T-0168 self_defense 无武器让给 shouldFlee, shouldFlee 豁免 → 零反射; T-0175 swim 让给 mobility, mobility 12s
+//   T-0168 self_defense 无武器让给 shouldFlee, shouldFlee 豁免 → 零反射; T-0180 swim 让给 mobility, mobility 12s
 //   后才接。逐个修让位条件之外, 再加一道常驻兜底: 处于危险 (≤2.5s 内掉血, 或头在水里且 O2<10) 且 ≥3s 无人掌舵
 //   (无非常驻 mode active / 没在挖 / 寻路不动 / 移动键全松) → 收回控制: 水里先上游, 暴露地表逃, 地下/封闭封坑。
 export const UNOWNED_DANGER_MS = 3000;

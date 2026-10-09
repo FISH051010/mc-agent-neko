@@ -65,7 +65,7 @@ test('T-0091: botwatch mobility-stuck gate covers SWIM_STUCK but not plain SWIM/
 test('T-0091: modes.js mobility uses the windowed tracker and the SWIM_STUCK reflex does not re-anchor', () => {
     const src = fs.readFileSync(path.join(root, 'src/agent/modes.js'), 'utf8');
     // the SWIM tick now lives in swim_progress.classifySwim (T-0098 extraction); behavior pinned in submerged_trap.test.mjs
-    assert.match(src, /st = classifySwim\(this, \{ enc, now, x: sp2\.x, z: sp2\.z(, oxygen: bot\.oxygenLevel)? \}\)/);   // T-0175 adds oxygen
+    assert.match(src, /st = classifySwim\(this, \{ enc, now, x: sp2\.x, z: sp2\.z(, oxygen: bot\.oxygenLevel)? \}\)/);   // T-0180 adds oxygen
     const swim = fs.readFileSync(path.join(root, 'src/agent/swim_progress.js'), 'utf8');
     assert.match(swim, /holder\._swimTrack\.observe\(now, x, z\) \? 'SWIM_STUCK'/);
     assert.doesNotMatch(src, /_swimAnchorAt = Date\.now\(\)/, 'per-burst re-anchor gives the escape reflex ~1 burst per 12s');

@@ -65,7 +65,7 @@ test('T-0104: no yield in open water, with air/water overhead, or before oxygen 
     assert.equal(sealedWaterTrapYield(trapBot({ oxygen: 20 })), false);
 });
 
-test('T-0175: no handoff gap — swim reflex only yields once ENTOMBED owns the trap, and drowning escalates to ENTOMBED immediately (death #11)', () => {
+test('T-0180: no handoff gap — swim reflex only yields once ENTOMBED owns the trap, and drowning escalates to ENTOMBED immediately (death #11)', () => {
     // live 22:48:43→54: swim reflex yielded while mobility was still 'SWIM' (12s escalation) → nobody acted
     assert.equal(sealedWaterTrapYield(trapBot({ state: 'SWIM' })), false, 'mobility not digging yet → keep swimming');
     assert.equal(sealedWaterTrapYield(trapBot({ state: 'ENTOMBED' })), true);
