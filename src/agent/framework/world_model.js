@@ -919,7 +919,7 @@ export function proposeTasks(world, bot) {
         //   Requires armor>=4 (GET_ARMOR@68 closes that first) so the bot never strip-mines the
         //   deep diamond band unarmored. @46: above GO_UNDERGROUND@45 so a kitted iron bot heads for
         //   the diamond band on purpose instead of the open-ended shallow descent.
-        if (hasIronTierPick(w) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot) && foodSafeForUnderground
+        if (hasIronTierPick(w) && diamondDiveReady(bot) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot) && foodSafeForUnderground
             && kit.sufficientForUnderground
             && (!foodInstincts || invCount(bot, /^(cooked_\w+|bread|apple|baked_potato|carrot|beef|porkchop|mutton)$/) >= 2 || vitals.food >= 16)) {   // ★2026-07-06 satiety 档(贫瘠世界口粮存不下, 满腹+灰区兜底+keepInv 等效); ★T-0092 (worker-sync): armor>=4(full set=24 iron, unreachable since GET_ARMOR yields at <4) → armor>=1(reachable from one craftArmor pass) so an iron-tooled+lightly-armored bot actually commits GET_DIAMOND → mineDiamonds descends to y-52. NOT >=0. ★tool-budget: also gated on kit.sufficientForUnderground (spare-with-table or field-recraft kit) like GO_UNDERGROUND — the skill-side pick guard is the LAST line, not the plan; TOOL_UPKEEP@47 restores the invariant first. ★dive rations (task #9): >=2 carried edibles or GET_FOOD stocks first — the y12 famine surfacing (checkpoint #6) ate the whole night's descent.
             // Dispatch the DEDICATED mineDiamonds skill: it water-aware-descends to the diamond band,
@@ -1212,7 +1212,9 @@ export function proposeTasks(world, bot) {
                 // ★2026-07-06 夜钻优先 (镐#3 夜铁行 10min 磨死实录): 铁镐在世+钻<3 → 夜里
                 //   直接 mineDiamonds — 镐的寿命用在唯一非它不可的地方(钻矿), 铁 gap 让位
                 //   (与日间 GET_DIAMOND@46.75 同一反倒挂逻辑)。
-                if (hasIronTierPick(w) && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot)) {
+                // ★T-0128: only when mineDiamonds will actually run (stone escort pick) — else it DEFERs 3×, the
+                //   dispatch cooldown revokes the WHOLE night plan and the bot spends the night exposed.
+                if (hasIronTierPick(w) && diamondDiveReady(bot) && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot)) {
                     const _nTgt = diamondTarget(bot);   // ★相位: 无钻镐→3(造首镐), 有钻镐→40(夜里也滚雪球)
                     push({ kind: TASK.DUSK_MINE_NIGHT, priority: 94, skill: 'mineDiamonds',
                            args: [_nTgt],
@@ -1956,6 +1958,13 @@ export function woolPathVisible(bot) {
  *  guaranteed no-op that, once committed, sticks over higher live proposals (live 10-10 00:17: GET_BED@44
  *  held the body over REPLENISH_KIT@62 for 3 NO-OPs every 5 min). Human: no sheep in sight → do something
  *  else, come back when sheep show up (entities load as the bot roams, so this re-arms by itself). */
+/** ★T-0128: mineDiamonds' own entry guards — an iron+ pick to harvest diamond AND a stone_pickaxe escort
+ *  (its 孤铁镐护航闸 refuses to burn the lone iron pick on 60 blocks of stone). Proposing it without
+ *  both = a guaranteed DEFER (live 10-10 02:26: night DIAMOND rush ×3 DEFER → night plan cooled, hp1 exposed). */
+export function diamondDiveReady(bot) {
+    return invCount(bot, /^(iron|diamond|netherite)_pickaxe$/) >= 1 && invCount(bot, /^stone_pickaxe$/) >= 1;
+}
+
 export function bedErrandFeasible(bot) {
     try {
         // pack paths need no hunt (NOT woolPathVisible: its 48b sheep clause ignores setBed's food gate)

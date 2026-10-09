@@ -2839,6 +2839,8 @@
 
 - **★C381-S bedErrandFeasible 镜像 setBed 的饥饿门(T-0119 返工)**（2026-10-10，worker-stuck，T-0119）: 证据: 10-10 01:42:54 food=0 时 GET_BED 仍被提案 → `setBed: no sheep within 12 (… fit=close-only) — defer` ×3 → ★dispatch-cooldown。机理: C374-S 的 `bedErrandFeasible` 用了 `woolPathVisible`(48b 见羊即真,不看 food)且羊 64b/蜘蛛 48b 固定;而 setBed 按饥饿收缩: 羊 64b 仅 food≥6(否则 12b),蜘蛛 48b 需非木剑+food≥8、12b 需任意剑+food≥6、否则不猎 → 饥饿时又提了必定 NO-OP 的 GET_BED。**改**(① `framework/world_model.js` `bedErrandFeasible`): 背包路径(床/毛≥3/线≥4)单独判;羊/蜘蛛距离按 setBed 同一饥饿门计算;不再借用 woolPathVisible(它是 T-0043 的优先级判据,保持不动)。**回归测试**: `test/bed_errand_feasible.test.mjs` 追加 `T-0119:` 饥饿用例(修前红),并更正原"木剑+30b 蜘蛛=可做"的错误断言(setBed 木剑只猎 12b)。**可证伪预测**: 饥饿期间不再出现 `setBed: no sheep within 12 … defer`/GET_BED 冷却周期。需重启 main.js。
 
+- **★C382-S 钻石下潜须有护航石镐才提案(T-0128)**（2026-10-10，worker-stuck，T-0128）: 证据: 10-10 02:26 夜 @94,72,-61 hp=1: commitment 翻 GET_DIAMOND→DUSK_MINE_NIGHT(night DIAMOND rush, skill=mineDiamonds),背包 iron_pickaxe×3、stone_pickaxe×0(圆石 545/棍 27)→ mineDiamonds「孤铁镐护航闸」DEFER 返回 false ×3 → ★dispatch-cooldown DUSK_MINE_NIGHT 5min + 释放 commitment → 夜里提案空 FREE_PLAY、3 只敌对、进 MAROONED。机理: 决策层提了 skill 层必拒的任务(T-0115/T-0119 同族);且夜间计划只有这一个分支被选中,冷却=整夜无计划。白天 GET_DIAMOND 只看 kit.sufficientForUnderground(铁镐×3 即真),同样会派到被 DEFER 的 mineDiamonds。**改**(① `framework/world_model.js`): 新 `diamondDiveReady(bot)`(铁+镐 ∧ stone_pickaxe≥1,镜像 mineDiamonds 入口闸);夜间 MINE_THROUGH_NIGHT 的钻石冲刺分支与白天 GET_DIAMOND 都门上它——不满足时夜里落到 mineOres/mineDown 分支(夜计划仍在),白天不提 GET_DIAMOND。**回归测试**: `test/diamond_dive_escort.test.mjs`(3 条 `T-0128:`)。**遗留(tier 线)**: 铁镐在手但缺护航石镐时没有任何提案会补石镐(TOOL_UPKEEP 只在 !sufficientForUnderground 时提),GET_DIAMOND 会一直不提——已转告 worker-tier。需重启 main.js。
+
 ---
 
 ---
