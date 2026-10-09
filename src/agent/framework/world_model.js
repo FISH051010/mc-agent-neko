@@ -124,6 +124,17 @@ const REPLENISH_PLANKS_RELEASE = 64; // 释放需回补到的 buffer (迟滞: �
                                      // 窄带(触发≈释放)正是窗口切碎的根源; 宽带让 kind 拿到窗口后
                                      // commitGoal 粘性长期锁定, churn 消失而救命反射仍可打断。
                                      // 64 planksEq = 16 logs ≈ 一组木的一半, 囤积形态以 log 为主(密度4x)。
+// ★T-0118 石器前补给口径: 还没有石镐(或更好)时, 补给只求"够下矿拿圆石"— 2 镐 + 16 板(台 4 + 棍 + 余量)。
+//   3 镐/64 板的宽迟滞(用户 07-05 令)针对有石镐后的常态补给; 在木器阶段它把 bot 钉在地表补木几十分钟
+//   (10-10 新世界 40min 零圆石, 三把木镐 = 9 板+6 棍全是浪费, 石头就在脚下两格)。
+const REPLENISH_WOODTIER_PICKS = 2;
+const REPLENISH_WOODTIER_RELEASE = 16;
+const preStoneTier = (w) => !/stone|iron|diamond|netherite/.test((w && w.kit && w.kit.pickTier) || '');
+export function replenishTargets(w) {
+    return preStoneTier(w)
+        ? { picksMin: REPLENISH_WOODTIER_PICKS, planksRelease: REPLENISH_WOODTIER_RELEASE }
+        : { picksMin: REPLENISH_PICKS_MIN, planksRelease: REPLENISH_PLANKS_RELEASE };
+}
 // ── ★P1-5 BANK_GEAR 提案端停用开关 (review-2026-07-04-distance.md 结构洞#5)。
 //    keepInventory=true 下死亡不掉落, "存箱防死丢投资"的前提为假; 实测纯负价值三连:
 //      · bankGear RAW 正则 ^diamond$ 把钻石吞进箱, 而 craftChain/endgameNeeds 只数背包不读箱子
@@ -687,14 +698,14 @@ export function proposeTasks(world, bot) {
     const _planMat = pickPlanHasMat(bot, _plan);
     const _tierShort = _plan && _planMat && effectivePicksMatching(bot, _plan.re) < _plan.triggerFloor;
     if (overworld && (time.phase === 'day' || _nightAssembly)
-        && (totalPicks(bot) < REPLENISH_PICKS_MIN || _tierShort || woodUnits(bot) < REPLENISH_PLANKS_TRIGGER)) {
+        && (totalPicks(bot) < replenishTargets(w).picksMin || _tierShort || woodUnits(bot) < REPLENISH_PLANKS_TRIGGER)) {
         const pk = totalPicks(bot), pe = woodUnits(bot);
         const _pri = pk === 0 ? 67 : 62;
         const _tierTag = _plan ? ` ${_plan.tier}镐=${effectivePicksMatching(bot, _plan.re)}/${_plan.target}` : '';
         progressLogThrottled(bot, 'replenishKit', 60000,
-            `[proposeTasks] ★REPLENISH_KIT-propose: picks=${pk}/${REPLENISH_PICKS_MIN}${_tierTag} planksEq=${pe}/${REPLENISH_PLANKS_RELEASE} pri=${_pri} y=${Math.round(bot.entity.position.y)}${_nightAssembly ? ' [夜间口袋组装]' : ''} — 补给基线破底, 派 replenishKit(修复型: 不看深度, 技能自己上浮)`);
+            `[proposeTasks] ★REPLENISH_KIT-propose: picks=${pk}/${replenishTargets(w).picksMin}${_tierTag} planksEq=${pe}/${replenishTargets(w).planksRelease} pri=${_pri} y=${Math.round(bot.entity.position.y)}${_nightAssembly ? ' [夜间口袋组装]' : ''} — 补给基线破底, 派 replenishKit(修复型: 不看深度, 技能自己上浮)`);
         push({ kind: PROPOSAL_KIND.REPLENISH_KIT, priority: _pri, skill: 'replenishKit',
-               rationale: `supply baseline broken (picks ${pk}/${REPLENISH_PICKS_MIN}${_tierTag}, planksEq ${pe}/${REPLENISH_PLANKS_RELEASE})${_nightAssembly ? ' — night pocket-assembly (craft-only, chop steps self-skip)' : ' — surface + restock wood/spare pick before every consumer yields'}`,
+               rationale: `supply baseline broken (picks ${pk}/${replenishTargets(w).picksMin}${_tierTag}, planksEq ${pe}/${replenishTargets(w).planksRelease})${_nightAssembly ? ' — night pocket-assembly (craft-only, chop steps self-skip)' : ' — surface + restock wood/spare pick before every consumer yields'}`,
                hints: { picks: pk, planksEq: pe } });
     }
 
@@ -1450,7 +1461,8 @@ export function isGoalDone(kind, world, bot) {
             //   否则 executor 造到材料耗尽仍不足 target, isGoalDone 永假 → commitGoal '(holding commitment)'
             //   反复重派 → 5min 冷却 churn, 抢走采矿的身体。释放后身体回采矿(去补锭/钻), 缺口自然补齐。
             const tierOk = !plan || effectivePicksMatching(bot, plan.re) >= plan.target || !pickPlanHasMat(bot, plan);
-            return totalPicks(bot) >= REPLENISH_PICKS_MIN && tierOk && woodUnits(bot) >= REPLENISH_PLANKS_RELEASE;
+            const rt = replenishTargets(w);   // ★T-0118 石器前只求够下矿
+            return totalPicks(bot) >= rt.picksMin && tierOk && woodUnits(bot) >= rt.planksRelease;
         }
         case PROPOSAL_KIND.MIGRATE:       return !w.migration.recommend;     // arrived at a livable biome
         // ── ★T-0093 tier chain completion. ──

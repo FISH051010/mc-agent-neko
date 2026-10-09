@@ -277,7 +277,10 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
                 const fresh = bot.blockAt(block.position);
                 if (!fresh || fresh.boundingBox !== 'block') return true;
                 if (!(await ensurePickForStone(fresh, why))) return false;
-                if (!STONY_BLOCK.test(fresh.name || '')) { try { await bot.tool.equipForBlock(fresh); } catch (e) {} }
+                if (!STONY_BLOCK.test(fresh.name || '')) {
+                    // ★T-0118: 走 skills.equipForDig (木/叶上的镐/锹/剑→空手); 旧进程无此导出则退回原逻辑
+                    try { if (typeof skills.equipForDig === 'function') await skills.equipForDig(bot, fresh); else await bot.tool.equipForBlock(fresh); } catch (e) {}
+                }
                 try { bot.clearControlStates(); } catch (e) {}
                 try { await bot.lookAt(fresh.position.offset(0.5, 0.5, 0.5), true); } catch (e) {}
                 try {

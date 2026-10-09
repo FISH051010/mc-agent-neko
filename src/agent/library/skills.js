@@ -1,4 +1,5 @@
 import * as mc from "../../utils/mcdata.js";
+import { shouldBareHand } from './tool_choice.js';
 import * as world from "./world.js";
 import * as tickConfirm from "./tick_confirm.js";
 import pf from 'mineflayer-pathfinder';
@@ -1197,11 +1198,11 @@ async function equipPickForBlock(bot, block) {
 // leaves a combat sword in hand when axe-less → "用木剑砍树" (slow + burns combat durability).
 // Drop to bare hand for logs/wood when we have no axe. Every dig path uses this.
 // ★方案A: 需镐方块先走 equipPickForBlock (护高级镐/同级先用快断的); 命中即返回, 否则回退 equipForBlock。
-async function equipForDig(bot, block) {
+export async function equipForDig(bot, block) {
     try { if (block && pickReqTier(block) > 0 && await equipPickForBlock(bot, block)) return; } catch (e) {}
     try { await bot.tool.equipForBlock(block); } catch (e) {}
-    if (/_log$|_wood$|_stem$|_hyphae$/.test(block.name) && bot.heldItem && /_sword$/.test(bot.heldItem.name)
-        && !bot.inventory.items().some(i => /_axe$/.test(i.name))) {
+    // ★T-0118: 木/叶上手里是镐/锹/锄/剑 (含没斧时的剑) → 空手, 不白耗耐久
+    if (block && bot.heldItem && shouldBareHand(block.name, bot.heldItem.name)) {
         try { await bot.unequip('hand'); } catch (e) {}
     }
 }
@@ -2118,12 +2119,10 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             bot._collectSticky = { key: _stickyKey, pos: { x: block.position.x, y: block.position.y, z: block.position.z }, ts: Date.now() };
         try {
         await bot.tool.equipForBlock(block);
-        // ★Never harvest WOOD with a SWORD (chops slowly + burns the sword durability we need
-        // for combat). equipForBlock leaves a combat-equipped sword in hand when we have no axe
-        // → the bot "用木剑砍树". For logs/wood, if we're holding a sword and have no axe, drop
-        // to BARE HAND (same speed on wood, saves the sword).
-        if (/_log$|_wood$|_stem$|_hyphae$/.test(block.name) && bot.heldItem && /_sword$/.test(bot.heldItem.name)
-            && !bot.inventory.items().some(i => /_axe$/.test(i.name))) {
+        // ★Never harvest WOOD with a SWORD — nor (T-0118) with a pickaxe/shovel/hoe: no speed on
+        // wood/leaves, pure durability burn. equipForBlock keeps whatever is held when nothing is
+        // faster, so drop to BARE HAND per the shared predicate.
+        if (bot.heldItem && shouldBareHand(block.name, bot.heldItem.name)) {
             try { await bot.unequip('hand'); } catch (e) {}
         }
         if (isLiquid) {
