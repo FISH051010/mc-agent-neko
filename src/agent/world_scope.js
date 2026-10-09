@@ -56,7 +56,10 @@ export function decideBySeed(storedId, currentId) {
 // Guard (b): a SAME-world bot that died naked moments ago keeps its log (still relevant).
 export function shouldArchiveStaleWorld(recent) {
     if (!recent || recent.n < 1) return false;                 // nothing to contaminate
-    if (recent.ageMin < 10 && recent.near) return false;
+    // ★2026-10-09 实录误判: keepInventory=false 的世界里死后裸装复活是常态, 且复活点可离死点很远
+    // (这次 58 格) → 旧的 `&& recent.near` 让同一世界的 death_log/stations/landmarks 被当旧世界归档。
+    // 刚死(<10min)本身就说明这份日志属于当前世界, 不再要求距离。主判据现在是 hashedSeed, 本推断只兜底首见。
+    if (recent.ageMin < 10) return false;
     return true;
 }
 

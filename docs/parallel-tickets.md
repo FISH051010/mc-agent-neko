@@ -137,6 +137,7 @@ loop:
 | ~~d51f7cc (worker-tests)~~ ✅ 23:56 随 T-0080 重启上线 | src/agent/agent.js + 新 src/agent/world_scope.js | main.js | C333 新世界检测原样抽出（T-0065 测试用），无行为变化 |
 | ~~e7ca2bf (worker-tests)~~ ✅ 23:56 随 T-0080 重启上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（cancel re-arm 或重启 main.js） | reflexBusy/famineStall/no-op 判据提为模块级纯函数，无行为变化 |
 | 2d4190a (worker-tests) | bots/_supervisor/botwatch.mjs + 新 botwatch-trackers.mjs | botwatch 进程 | frozen/wedge tracker 原样抽出，无行为变化 |
+| (overseer, 本提交) | src/agent/world_scope.js | main.js | C333 裸装兜底去掉 near 条件（keepInv-off 世界复活点远离死点误判）；本世界 world_id 已记录不再走兜底，故不急 |
 | c66eb0d (worker-tests) | src/agent/modes.js + 新 src/agent/framework/kit_gate.js | main.js | 下矿 kit 闸(T-0088)原样抽出，无行为变化 |
 | 433787b (worker-tests) | src/agent/modes.js + 新 src/agent/framework/migration_triggers.js | main.js | 木荒 latch(T-0102)/recommend 冷却门(T-0106)原样抽出，无行为变化 |
 

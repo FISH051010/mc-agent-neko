@@ -123,3 +123,11 @@ test('T-0065: world id is read from the raw login packet (worldState.hashedSeed,
 test('T-0065: stations.json is world-scoped (old world left 223 phantom tables/furnaces behind)', () => {
     for (const f of ['stations.json', 'spawn_pos.json', 'bank.json', 'migrate_state.json']) assert.ok(WORLD_SCOPED_FILES.includes(f), f);
 });
+
+test('2026-10-09: keepInventory-off world — naked respawn far from a death 5min ago is the SAME world (keep its logs)', async () => {
+    // live misfire: died @-50,27, respawned naked @8,-4 (58 blocks away) → whole current-world state archived.
+    const s = makeSup([{ ts: minsAgo(5), x: 500, z: 500 }]);
+    assert.equal(await run(bot(makeInv()), s.sup), null);
+    assert.equal(s.has('death_log.jsonl'), true);
+    assert.equal(s.has('landmarks.json'), true);
+});
