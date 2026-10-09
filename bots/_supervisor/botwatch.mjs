@@ -39,7 +39,7 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE } from './botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive } from './botwatch-trackers.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -184,8 +184,7 @@ const D = [
         // ENTOMBED but is CORRECTLY sheltering, not stuck — don't false-fire on a legit night-hold (live
         // 2026-06-20: "sealed night hold" hp20/food20 covered, T-0027 false-fired). Real stuck = no safe
         // shelter: daytime, OR exposed (no real cover), OR under actionable threat.
-        active: (s) => STUCK_MOBILITY_RE.test(s.mob || '')
-            && !(s.wm && s.wm.time && !s.wm.time.isDay && s.wm.cover && s.wm.cover.coverReal && (!s.threat || (s.threat.actionable | 0) === 0)),
+        active: mobilityStuckActive,
         ticket: (s, dur) => ({
             type: 'stuck', severity: 'high', dedupKey: 'mobility-stuck',
             title: `移动受困 ${s.mob} ${Math.round(dur / 60000)}min @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'}`.slice(0, 140),
@@ -201,7 +200,7 @@ const D = [
         // 2026-06-20: bot acquired a table but still couldn't craft the pickaxe — table-not-placed
         // bug — and pillared into the sky; clearing on table-presence was a false "resolved"). Only
         // clear when a real pickaxe exists. (brief no-pick during crafting is normal; 5min = real.)
-        active: (s) => s.picks === 0 && !s.has(/_pickaxe$/),
+        active: bootstrapDeadlockActive,
         ticket: (s, dur) => {
             const cobble = s.count(/cobblestone|cobbled_deepslate/), planks = s.count(/_planks$/), logs = s.count(/_log$/), sap = s.count(/_sapling$/);
             return {
@@ -223,11 +222,7 @@ const D = [
         // Precision guards: night strictly known (isDay===false), cover strictly known-unsealed
         // (coverReal===false, not just missing), shelter intent, holding ≥1min, and NO actionable threat
         // (an active threat is already owned by seal-fail/death/combat — this is the silent case only).
-        active: (s) => !!(s.wm && s.wm.time && s.wm.time.isDay === false
-            && s.wm.cover && s.wm.cover.coverReal === false
-            && (/prepNether|shelter|bunker|sleep|bed/i.test(s.skill || '') || /POCKET|ENC|ENTOMB|MAROON/i.test(s.mob || ''))
-            && (s._stale ? s._stale.staleMs >= 60000 : false)
-            && (s.threat ? (s.threat.actionable | 0) === 0 : true)),
+        active: falseShelterActive,
         ticket: (s, dur) => ({
             type: 'shelter', severity: 'high', dedupKey: 'false-shelter',
             title: `夜间庇护未封顶(无声近失) ${Math.round(dur / 60000)}min — coverReal=false @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'}`.slice(0, 140),

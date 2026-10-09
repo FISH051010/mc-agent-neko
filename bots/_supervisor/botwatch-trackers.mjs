@@ -1,6 +1,7 @@
 // Stateful trackers + fire predicates for botwatch's stall detectors, split out of botwatch.mjs
 // (which has top-level side effects) so test/botwatch_trackers.test.mjs can pin them (回归测试钉死).
 // Behavior is unchanged — see botwatch.mjs's detector table for the full rationale of each.
+import { STUCK_MOBILITY_RE } from './bb-readers.mjs';
 
 // ── FROZEN-ALIVE tracker (T-0058): pos+hp identical for how long, plus events.log silence age. ──
 // eventsMtimeMs() → mtime of events.log (throws if missing → treated as silent forever).
@@ -69,3 +70,16 @@ export function makeSurvivalChurnTracker() {
     };
 }
 export const survivalChurnActive = (s) => !!(s._churn && s._churn.churnMs >= 15 * 60000);
+
+// ── MOBILITY-stuck (T-0027/T-0032): stuck mobility state, but a sealed night hold (night + real roof + no
+//    actionable threat) is CORRECT sheltering, not stuck. ──
+export const mobilityStuckActive = (s) => STUCK_MOBILITY_RE.test(s.mob || '')
+    && !(s.wm && s.wm.time && !s.wm.time.isDay && s.wm.cover && s.wm.cover.coverReal && (!s.threat || (s.threat.actionable | 0) === 0));
+// ── BOOTSTRAP resource-floor deadlock (T-0012): 0 usable picks AND no pickaxe in the bag (a table does NOT clear it). ──
+export const bootstrapDeadlockActive = (s) => s.picks === 0 && !s.has(/_pickaxe$/);
+// ── FALSE-SHELTER (T-0040/T-0085): the SILENT night near-miss — sheltering intent but roof NOT sealed. ──
+export const falseShelterActive = (s) => !!(s.wm && s.wm.time && s.wm.time.isDay === false
+    && s.wm.cover && s.wm.cover.coverReal === false
+    && (/prepNether|shelter|bunker|sleep|bed/i.test(s.skill || '') || /POCKET|ENC|ENTOMB|MAROON/i.test(s.mob || ''))
+    && (s._stale ? s._stale.staleMs >= 60000 : false)
+    && (s.threat ? (s.threat.actionable | 0) === 0 : true));

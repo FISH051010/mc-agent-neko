@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive } from '../bots/_supervisor/botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, falseShelterActive, mobilityStuckActive, bootstrapDeadlockActive } from '../bots/_supervisor/botwatch-trackers.mjs';
 
 const MIN = 60000;
 const st = (x, y, z, hp, extra = {}) => ({ v: { x, y, z }, hp, ...extra });
@@ -95,4 +95,29 @@ test('T-0072: the retired staleMin NO-PROGRESS detector stays inert (re-enabling
     const src = fs.readFileSync(path.join(root, 'bots', '_supervisor', 'botwatch.mjs'), 'utf8');
     const block = src.slice(src.indexOf("key: 'no-progress'"), src.indexOf("key: 'no-progress'") + 2500);
     assert.match(block, /active: \(s\) => false,/);
+});
+
+test('T-0040/T-0085: FALSE-SHELTER — night + shelter intent + roof NOT sealed for 1min+ + no threat → fires (silent near-miss)', () => {
+    const base = { wm: { time: { isDay: false }, cover: { coverReal: false } }, skill: 'nightShelter', mob: 'FREE', _stale: { staleMs: 3 * MIN }, threat: { actionable: 0 } };
+    assert.equal(falseShelterActive(base), true);
+    assert.equal(falseShelterActive({ ...base, wm: { ...base.wm, cover: { coverReal: true } } }), false, 'really sealed');
+    assert.equal(falseShelterActive({ ...base, wm: { ...base.wm, cover: {} } }), false, 'cover unknown ≠ known-unsealed (宁缺毋滥)');
+    assert.equal(falseShelterActive({ ...base, wm: { ...base.wm, time: { isDay: true } } }), false);
+    assert.equal(falseShelterActive({ ...base, threat: { actionable: 1 } }), false, 'active threat is owned by seal-fail/death/combat');
+    assert.equal(falseShelterActive({ ...base, skill: 'mineDown', mob: 'POCKET' }), true, 'contained mobility also counts as shelter intent');
+});
+
+test('T-0032: MOBILITY-stuck never false-fires on a legit sealed night hold; does fire by day / exposed / under threat', () => {
+    const night = { mob: 'ENTOMBED', wm: { time: { isDay: false }, cover: { coverReal: true } }, threat: { actionable: 0 } };
+    assert.equal(mobilityStuckActive(night), false);
+    assert.equal(mobilityStuckActive({ ...night, wm: { time: { isDay: true }, cover: { coverReal: true } } }), true);
+    assert.equal(mobilityStuckActive({ ...night, wm: { time: { isDay: false }, cover: { coverReal: false } } }), true);
+    assert.equal(mobilityStuckActive({ ...night, threat: { actionable: 2 } }), true);
+});
+
+test('T-0012: BOOTSTRAP deadlock = no usable pick AND no pickaxe item; a crafting table alone does NOT clear it', () => {
+    const has = (inv) => (re) => inv.some(n => re.test(n));
+    assert.equal(bootstrapDeadlockActive({ picks: 0, has: has(['crafting_table', 'cobblestone']) }), true, 'live 06-20: table in bag, still no pick');
+    assert.equal(bootstrapDeadlockActive({ picks: 0, has: has(['wooden_pickaxe']) }), false);
+    assert.equal(bootstrapDeadlockActive({ picks: 1, has: has(['stone_pickaxe']) }), false);
 });
