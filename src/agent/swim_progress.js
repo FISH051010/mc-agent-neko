@@ -45,3 +45,41 @@ export function createSwimTracker({ windowMs = 12000, radius = 2.5, exitDist = 4
 
     return { observe, reset, get latched() { return !!latch; } };
 }
+
+// ★C231 mobility base classification (moved verbatim from modes.js): in water → SWIM; any walkable exit
+// → FREE; no exits + open above + covered (enc) → POCKET; no exits + open above + sky → FREE (exposed
+// ledge); no exits + solid above → ENTOMBED.
+export function mobilityBaseState({ inWater, exitsN, upOpen, enc }) {
+    return inWater ? 'SWIM' : (exitsN ? 'FREE' : ((upOpen && enc) ? 'POCKET' : (upOpen ? 'FREE' : 'ENTOMBED')));
+}
+
+// One mobility tick while st==='SWIM' (moved verbatim from modes.js). holder keeps _submTrapAt/_swimTrack.
+// ★T-0098 SUBMERGED-TRAP: covered water pocket (enc) for >12s → ENTOMBED (aquifer-aware dig-out) —
+//   horizontal thrashing never resets it. Open water (enc=false) → T-0091 windowed SWIM_STUCK.
+export function classifySwim(holder, { enc, now, x, z }) {
+    if (!holder._swimTrack) holder._swimTrack = createSwimTracker();
+    if (enc) {
+        let st = 'SWIM';
+        if (!holder._submTrapAt) holder._submTrapAt = now;
+        else if (now - holder._submTrapAt > 12000) st = 'ENTOMBED';
+        // fresh episode so surfacing into open water doesn't instantly SWIM_STUCK
+        holder._swimTrack.reset();
+        return st;
+    }
+    holder._submTrapAt = 0;
+    // ★T-0091: windowed net-progress (all samples of the last 12s inside a 2.5b disc), latched until 4b of
+    // real headway. The old ">1b from anchor → re-anchor" test was reset forever by circling / pacing.
+    return holder._swimTrack.observe(now, x, z) ? 'SWIM_STUCK' : 'SWIM';
+}
+
+// ★T-0104 (moved verbatim from modes.js self_preservation SWIM entry): drowning (oxygen<=14) inside a
+// covered water pocket (mobility.enclosed) with a solid non-fluid block 2 above the feet → self_preservation
+// must YIELD so mobility's ENTOMBED dig-out owns the body (live 06-28 @69,48: 'heading for air' fought the
+// dig-out for 26s and ate the escape window → drowned). Open water / head in water / oxygen fine → no yield.
+export function sealedWaterTrapYield(bot) {
+    const _drownSub = bot.oxygenLevel !== undefined && bot.oxygenLevel <= 14;
+    const _subEnc = !!(bot._mobility && bot._mobility.enclosed);
+    const _hCap = bot.blockAt(bot.entity.position.offset(0, 2, 0));
+    const _headCapped = _hCap && _hCap.boundingBox === 'block' && !/water|lava/.test(_hCap.name || '');
+    return !!(_drownSub && _subEnc && _headCapped);
+}

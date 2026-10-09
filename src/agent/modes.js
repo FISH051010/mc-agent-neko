@@ -24,7 +24,7 @@ import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as a
 import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
-import { createSwimTracker } from './swim_progress.js';
+import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -1799,11 +1799,7 @@ const modes_list = [
                 //   跟 T-0100/T-0101 反射互绞让位同构. 边界: 开放水体头顶water/air(_headCapped=false)不让位、
                 //   正常 SWIM 游岸/游上; 深潜氧气足不 drowning,不让位.
                 try {
-                    const _drownSub = bot.oxygenLevel !== undefined && bot.oxygenLevel <= 14;
-                    const _subEnc = !!(bot._mobility && bot._mobility.enclosed);
-                    const _hCap = bot.blockAt(bot.entity.position.offset(0, 2, 0));
-                    const _headCapped = _hCap && _hCap.boundingBox === 'block' && !/water|lava/.test(_hCap.name || '');
-                    if (_drownSub && _subEnc && _headCapped) return;   // 封顶水牢溺水: 让 mobility ENTOMBED dig 独占
+                    if (sealedWaterTrapYield(bot)) return;   // 封顶水牢溺水: 让 mobility ENTOMBED dig 独占 (swim_progress.js)
                 } catch (e) {}
                 // ★#10 (2026-07-06 实录 deaths #5/#8/#9 三次冰盖水溺死, 全图复发): 溺水且头顶【直接是
                 //   ICE】时 — 深水分支(y<55)不触发(近地表 y60), swim 反射+edge_unstick 破冰太慢(氧气耗尽
@@ -4290,7 +4286,7 @@ const modes_list = [
                         }
                     }
                 } catch (e) { enc = false; }
-                st = inWater ? 'SWIM' : (exits.length ? 'FREE' : ((upOpen && enc) ? 'POCKET' : (upOpen ? 'FREE' : 'ENTOMBED')));
+                st = mobilityBaseState({ inWater, exitsN: exits.length, upOpen, enc });
                 // ★C346 (T-0091): SWIM_STUCK sub-state. Plain SWIM hands the body to the swim
                 // instinct (self_preservation in-water branch) and walks away. But the
                 // "head-hole + all-water" topology (only exit is one air cell straight up, all
@@ -4314,19 +4310,8 @@ const modes_list = [
                     // (避 floody 朝向、挖穿干侧、向上兜底"air is above water")——那段正是为含水层写的。
                     // 边界: 开放湖/河/海 enc=false 走原 SWIM/SWIM_STUCK 不变; 头顶有竖井时 (0,0) 列
                     // 见天 → enc=false → 自动让位 SWIM_STUCK 爬竖井; 受控深潜瞬时穿水踩不到 12s 门。
-                    if (!this._swimTrack) this._swimTrack = createSwimTracker();
-                    if (enc) {
-                        if (!this._submTrapAt) this._submTrapAt = now;
-                        else if (now - this._submTrapAt > 12000) st = 'ENTOMBED';
-                        // fresh episode so surfacing into open water doesn't instantly SWIM_STUCK
-                        this._swimTrack.reset();
-                    } else {
-                        this._submTrapAt = 0;
-                        // ★T-0091: windowed net-progress (all samples of the last 12s inside a 2.5b disc),
-                        // latched until 4b of real headway. The old ">1b from anchor → re-anchor" test was
-                        // reset forever by circling / pacing wider than 1 block (same blind spot as the y-bob).
-                        if (this._swimTrack.observe(now, sp2.x, sp2.z)) st = 'SWIM_STUCK';
-                    }
+                    // (logic in swim_progress.js classifySwim — pinned by test/swim_progress.test.mjs)
+                    st = classifySwim(this, { enc, now, x: sp2.x, z: sp2.z });
                 } else { if (this._swimTrack) this._swimTrack.reset(); this._submTrapAt = 0; }
                 // ★C341 (T-0074): SEALED-ROOM override. Locally FREE/POCKET (interior air to move in) but
                 // covered above (enc) — the ONLY situation that can be a walled-in room. Flood-fill the
