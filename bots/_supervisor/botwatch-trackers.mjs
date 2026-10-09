@@ -81,7 +81,9 @@ export const mobilityStuckActive = (s) => STUCK_MOBILITY_RE.test(s.mob || '')
 //    ★2026-10-10 修正 (T-0126 误报): mobility 不是 always-on 观察者 —— 自己在执行、被暂停、或别的模式占着执行槽
 //    (例: self_preservation 处理贴脸苦力怕) 时, ModeController 合法地不调它的 update, mobAge 涨到 1~2 分钟是正常的。
 //    所以分两档: 崩溃 = catch 路径写的 '?' 状态 (精确); 饿死 = 5 分钟都没被排程 (本身就不正常, T-0122 类)。
-export const MOBILITY_STALE_SEC = 300;
+// ★T-0166 (21:00): 分类已拆成 always-on 观察者(每 2s), 唯一合法空窗 = mobility 自身 burst(≤maxBurst 90s, 超了 T-0122
+//   强制解锁)。故门槛从 300s 收紧到 120s: 超过它一定是真停摆, 不再是排程挤占。
+export const MOBILITY_STALE_SEC = 120;
 export const mobilityCrashed = (s) => /^\?/.test(s.mobRaw || '');
 export const mobilityStaleActive = (s) => !!s.v && s.ageS < 60
     // ★T-0129b: 合法的封闭过夜(一夜≈7min)里 self_preservation 整夜占槽, mobility 合法地不被排程 → '饿死'档豁免;

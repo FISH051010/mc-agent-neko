@@ -151,6 +151,12 @@ test('T-0129b: a legit sealed night hold starving mobility >5min is not a stall;
   assert.equal(mobilityStaleActive({ v: { x: 9 }, ageS: 2, mobAge: 5, mobRaw: '?', hp: 20, wm, t }), true);
 });
 
+test('T-0166: with the always-on observer, >120s without classification is a real stall (burst max 90s)', () => {
+  const v = { x: 0, y: 64, z: 0 };
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 85, mobRaw: 'ENTOMBED' }), false);   // inside a legit burst
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 150, mobRaw: 'FREE' }), true);
+});
+
 test('T-0124: MOBILITY-STALE stays quiet when vitals themselves are stale (that is the STALE detector)', () => {
   assert.equal(mobilityStaleActive({ v: { x: 0 }, ageS: 600, mobAge: 900, mobRaw: 'FREE' }), false);
   assert.equal(mobilityStaleActive({ v: null, ageS: 9999, mobAge: null, mobRaw: '' }), false);
