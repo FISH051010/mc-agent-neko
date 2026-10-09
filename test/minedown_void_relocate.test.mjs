@@ -23,7 +23,7 @@ test('T-0183: the void branch relocates (tunnel, else surface pathfinder) once p
     const seg = src.slice(i, j);
     assert.match(seg, /if \(loopRelocates < 1\) \{/);
     assert.match(seg, /const _tun = planRelocateTunnel\(bn, cx, cy, cz\);/);
-    assert.match(seg, /else if \(openSkyAbove\(bn, cx, cy, cz\)\) \{/);
-    assert.match(seg, /await skills\.moveAway\(bot, 10\)/);
+    assert.match(seg, /else if \(openSkyAbove\(bn, cx, cy, cz\) \|\| \(bot\._mobility && bot\._mobility\.enclosed === false\)\) \{/);
+    assert.match(seg, /await skills\.goToPosition\(bot, _dest\.x, _dest\.y, _dest\.z, 1\)/);   // ★23:06 re-fix: aim at a solid column
     assert.match(seg, /voidHops = 0; noProg = 0;\s*\r?\n\s*continue;/);
 });

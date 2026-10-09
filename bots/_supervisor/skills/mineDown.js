@@ -124,10 +124,40 @@ export function planRelocateTunnel(bn, cx, cy, cz, len = 9) {
     return null;
 }
 
-/** ★T-0183: nothing solid in the first h blocks above the head = under open sky (surface pathfinding works here). */
+/** ★T-0183: nothing solid in the first h blocks above the head = under open sky (surface pathfinding works here).
+ *  A tree canopy (leaves/logs/vines) is not a roof (live 23:06 @-8,69,-7: spruce canopy blocked the relocate). */
 export function openSkyAbove(bn, x, y, z, h = 24) {
-    for (let dy = 2; dy <= h; dy++) { const b = bn(x, y + dy, z); if (b && b.boundingBox === 'block') return false; }
+    for (let dy = 2; dy <= h; dy++) {
+        const b = bn(x, y + dy, z);
+        if (b && b.boundingBox === 'block' && !/leaves|_log$|_wood$|vine/.test(b.name || '')) return false;
+    }
     return true;
+}
+
+// ★T-0183 (live 23:06: pathfinder moveAway landed on the SAME cave roof, A↔B 10b apart): a surface relocation must
+//   aim at ground known to be solid. Nearest column 6..24b away whose feet+head cells are open (no fluid) and whose
+//   5 blocks under the feet are solid — a staircase can start there without hitting the cave. null = none in range.
+const SOLID_COL_OFFSETS = (() => {
+    const out = [];
+    for (let dx = -24; dx <= 24; dx++) for (let dz = -24; dz <= 24; dz++) { const d = Math.hypot(dx, dz); if (d >= 6 && d <= 24) out.push([dx, dz, d]); }
+    return out.sort((a, b) => a[2] - b[2]);
+})();
+export function planSolidColumn(bn, cx, cy, cz) {
+    const nm = (b) => (b && b.name) || 'air';
+    const fluid = (b) => FLUID.test(nm(b));
+    const solid = (b) => !!(b && b.boundingBox === 'block' && !fluid(b));
+    const open = (b) => !solid(b) && !fluid(b);
+    for (const [dx, dz] of SOLID_COL_OFFSETS) {
+        const x = cx + dx, z = cz + dz;
+        for (const dy of [0, 1, -1, 2, -2, 3, -3]) {
+            const y = cy + dy;
+            if (!open(bn(x, y, z)) || !open(bn(x, y + 1, z))) continue;
+            let ok = true;
+            for (let d = 1; d <= 5 && ok; d++) if (!solid(bn(x, y - d, z))) ok = false;
+            if (ok) return { x, y, z };
+        }
+    }
+    return null;
 }
 
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
@@ -841,12 +871,15 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 if (_tun && await walkDugPath(bot, skills, Vec3, bn, _tun.path)) {
                     _moved = true;
                     log_(`void: no safe column within 4b — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz}`);
-                } else if (openSkyAbove(bn, cx, cy, cz)) {
-                    const _b0 = bot.entity.position.clone();
-                    try { await skills.moveAway(bot, 10); } catch (e) {}
-                    const _d = Math.hypot(bot.entity.position.x - _b0.x, bot.entity.position.z - _b0.z);
-                    _moved = _d >= 6;
-                    log_(`void: surface relocate by pathfinder moved ${_d.toFixed(1)}b${_moved ? '' : ' — not enough'} (cave under the stair here)`);
+                } else if (openSkyAbove(bn, cx, cy, cz) || (bot._mobility && bot._mobility.enclosed === false)) {
+                    const _dest = planSolidColumn(bn, cx, cy, cz);
+                    if (_dest) {
+                        try { await skills.goToPosition(bot, _dest.x, _dest.y, _dest.z, 1); } catch (e) {}
+                        const _p = bot.entity.position;
+                        const _left = Math.hypot(_p.x - (_dest.x + 0.5), _p.z - (_dest.z + 0.5));
+                        _moved = _left <= 2.5;
+                        log_(`void: surface relocate to solid column ${_dest.x},${_dest.y},${_dest.z} (${Math.round(Math.hypot(_dest.x - cx, _dest.z - cz))}b) — ${_moved ? 'arrived' : 'stopped ' + _left.toFixed(1) + 'b short'}`);
+                    } else log_(`void: surface — no column with 5 solid below within 24b`);
                 } else log_(`void: no tunnel line${_tun ? ' (walk stopped: ' + (bot._walkDugFail || '?') + ')' : ''} and not under open sky`);
                 if (_moved) {
                     const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
