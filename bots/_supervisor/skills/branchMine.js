@@ -22,6 +22,26 @@ const ORES = ['diamond_ore', 'deepslate_diamond_ore', 'iron_ore', 'deepslate_iro
               'emerald_ore', 'deepslate_emerald_ore'];
 const IRON_ORES = ['iron_ore', 'deepslate_iron_ore'];
 
+// ★T-0094 ORE-DIRECTED HEADING helpers (PURE; pinned by test/branch_mine_heading.test.mjs).
+export function cardinalToward(fromPos, toPos) {
+    const ddx = toPos.x - fromPos.x, ddz = toPos.z - fromPos.z;
+    if (Math.abs(ddx) >= Math.abs(ddz)) return { dx: Math.sign(ddx) || 1, dz: 0 };
+    return { dx: 0, dz: Math.sign(ddz) || 1 };
+}
+// nearest-first over the first 6 candidates; skip ore directly above/below (heading undefined); first that
+// passes the human-like reach gate wins. null → caller keeps the yaw heading.
+export async function pickOreHeading(me, eyePos, pool, reachable) {
+    const sorted = [...pool].sort((a, b) => a.position.distanceTo(eyePos) - b.position.distanceTo(eyePos));
+    for (const ob of sorted.slice(0, 6)) {
+        if (Math.abs(ob.position.x - me.x) < 1 && Math.abs(ob.position.z - me.z) < 1) continue; // directly above/below — heading undefined
+        if (await reachable(ob)) {
+            const c = cardinalToward(me, ob.position);
+            return { dx: c.dx, dz: c.dz, src: `ore:${ob.name}@${ob.position.x},${ob.position.y},${ob.position.z}` };
+        }
+    }
+    return null;
+}
+
 export default async function branchMine(bot, ctx, length = 24, targetY = null) {
     const { skills, world, mc, Vec3, log } = ctx;
     // ★方案A (2026-07-06, [[spec-pickaxe-stockpile-redesign]]): 取"够用的最低品级 + 同级剩余耐久最低"的镐
@@ -813,11 +833,6 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
     // the tunnel at it, so the lateral dig drives THROUGH the seam. The reach gate (_oreReachableBM)
     // is the same C305 human-like check used for ore-chasing, so we never aim at x-ray-only ore
     // across a gap. Fall back to the yaw heading when nothing reachable is in range.
-    const cardinalToward = (fromPos, toPos) => {
-        const ddx = toPos.x - fromPos.x, ddz = toPos.z - fromPos.z;
-        if (Math.abs(ddx) >= Math.abs(ddz)) return { dx: Math.sign(ddx) || 1, dz: 0 };
-        return { dx: 0, dz: Math.sign(ddz) || 1 };
-    };
     let dx, dz, headingSrc = 'yaw';
     {
         const yaw = bot.entity.yaw;
@@ -833,16 +848,8 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
             const scan = (await world.getNearestBlocksAsync(bot, wantIron ? IRON_ORES : ORES, 16, 24)) || [];
             let pool = scan.filter(b => b && (wantIron ? IRON_ORES : ORES).includes(b.name));
             if (wantIron && pool.length === 0) pool = ((await world.getNearestBlocksAsync(bot, ORES, 16, 24)) || []).filter(b => b && ORES.includes(b.name));
-            // nearest-first; pick the first that passes the reach gate so we head at real ore.
-            pool.sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
-            for (const ob of pool.slice(0, 6)) {
-                if (Math.abs(ob.position.x - me.x) < 1 && Math.abs(ob.position.z - me.z) < 1) continue; // directly above/below — heading undefined
-                if (await _oreReachableBM(ob)) {
-                    const c = cardinalToward(me, ob.position);
-                    dx = c.dx; dz = c.dz; headingSrc = `ore:${ob.name}@${ob.position.x},${ob.position.y},${ob.position.z}`;
-                    break;
-                }
-            }
+            const h = await pickOreHeading(me, bot.entity.position, pool, _oreReachableBM);
+            if (h) { dx = h.dx; dz = h.dz; headingSrc = h.src; }
         } catch (e) {}
         log(bot, `branchMine heading ${dx},${dz} src=${headingSrc}`);
         motion('branchMine.tunnel.heading', { dx, dz, src: headingSrc });
