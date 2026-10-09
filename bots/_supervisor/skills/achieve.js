@@ -65,6 +65,24 @@ export const stNearest = (bot2, type, maxD) => {
     return best;
 };
 
+// ★T-0078 (a) TOOL/ARMOR DOWNGRADE criterion, pure — pinned by test/achieve_pivot.test.mjs.
+export function equipFamilyOf(item) {
+    const _toolFam = (item.match(/_(pickaxe|sword|axe|shovel|hoe)$/) || [, ''])[1];
+    const _armorFam = (item.match(/_(helmet|chestplate|leggings|boots)$/) || [, ''])[1];
+    return _toolFam || _armorFam;
+}
+// Any same-family item in hand (incl. strictly lower tier) is a usable equivalent — wood/stone/iron/
+// diamond/leather/chainmail/gold all share the family suffix; presence alone means "we can function".
+export function heldEquipEquivalent(item, invCounts) {
+    const fam = equipFamilyOf(item);
+    if (!fam) return null;
+    return Object.keys(invCounts).find(n => n.endsWith('_' + fam) && n !== item && invCounts[n] > 0) || null;
+}
+// ★C343 (T-0077): prefer the more durable stone_sword whenever cobble>=2 (wooden needs planks we often lack).
+export function preferredSwordGoal(invCounts) {
+    return (invCounts['cobblestone'] || 0) >= 2 ? 'stone_sword' : 'wooden_sword';
+}
+
 export default async function achieve(bot, ctx, goal, depth = 0, _active = new Set()) {
     const { skills, world, mc, Vec3, log } = ctx;
     const g = typeof goal === 'string' ? { item: goal, count: 1 } : goal;
@@ -273,7 +291,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
             // shatter mid-fight like wooden → the recurring "木剑打几只husk就碎→无剑→死"). Wooden only as
             // the no-cobble fallback (the truly-naked early game the wooden pre-step was written for).
             if (item !== 'crafting_table' && !hasSword && !_nightExposed) {
-                const _swordGoal = (inv()['cobblestone'] || 0) >= 2 ? 'stone_sword' : 'wooden_sword';
+                const _swordGoal = preferredSwordGoal(inv());
                 await achieve(bot, ctx, _swordGoal, depth + 1, _active).catch(() => {});
             }
         } catch (e) {}
@@ -1057,15 +1075,9 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
     //       PRE-REQUISITE one level down (smelt input, or the ore behind it) and
     //       try to obtain THAT, so the next attempt at `item` has materials. Guarded
     //       so we pivot to a given prereq at most once per ~60s (no pivot thrash).
-    const _toolFam = (item.match(/_(pickaxe|sword|axe|shovel|hoe)$/) || [, ''])[1];
-    const _armorFam = (item.match(/_(helmet|chestplate|leggings|boots)$/) || [, ''])[1];
-    const _equipFam = _toolFam || _armorFam;
-    if (_equipFam) {
-        // Any same-family item in hand (incl. strictly lower tier) is a usable
-        // equivalent — wood/stone/iron/diamond/leather/chainmail/gold all share the
-        // family suffix. tierOf returns -1 for materials we don't rank (leather,
-        // chainmail, golden armor), but presence alone means "we can function".
-        const heldEquiv = Object.keys(inv()).find(n => n.endsWith('_' + _equipFam) && n !== item && inv()[n] > 0);
+    {
+        const _equipFam = equipFamilyOf(item);
+        const heldEquiv = heldEquipEquivalent(item, inv());
         if (heldEquiv) {
             prog(`${tag}★PIVOT(T-0078) ${item} unobtainable now — already hold ${heldEquiv} (same ${_equipFam}); advance with the equivalent instead of dead-looping the upgrade`);
             return true;
