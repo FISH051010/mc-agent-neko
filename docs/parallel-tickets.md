@@ -150,6 +150,7 @@ loop:
 | c65f6f7 (worker-tests) | bots/_supervisor/botwatch.mjs + botwatch-trackers.mjs | botwatch 进程 | survival-churn tracker(T-0073)原样抽出，无行为变化 |
 | 6947690 (worker-tests) | src/agent/modes.js + src/agent/mobility_geom.js | main.js | fleeMove 扇区选向(T-0068 C334-A)原样抽出为 chooseFleeHeading，无行为变化 |
 | 2fdf12c (worker-tests) | bots/_supervisor/botwatch.mjs + botwatch-trackers.mjs | botwatch 进程 | mobility-stuck / bootstrap-deadlock / false-shelter 判据原样抽出，无行为变化 |
+| 5541484 (worker-tests) | src/agent/agent.js + src/agent/world_scope.js | main.js | keepInventory 只读查询回执分类(T-0071 C344v2)原样抽出为 classifyKeepInvReply，无行为变化 |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 
 **部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
