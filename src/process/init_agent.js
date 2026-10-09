@@ -11,6 +11,11 @@ import { EventEmitter } from 'events';
 // This is needed because bot events are listened to by many systems simultaneously
 EventEmitter.defaultMaxListeners = 50;
 
+// 退出留痕 (见 exit_trace.js): 没有 exit_log 记录的退出 = 被外部强杀(部署/watchdog)。
+import { installExitTrace } from './exit_trace.js';
+import { dataPath } from '../utils/paths.js';
+installExitTrace(dataPath('bots', '_supervisor', 'exit_log.jsonl'));
+
 // Global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
