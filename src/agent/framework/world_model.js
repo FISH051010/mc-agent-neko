@@ -1547,8 +1547,22 @@ export function isGoalDone(kind, world, bot) {
     }
 }
 
-/** Emergencies that may PREEMPT a live commitment (else we stay committed). */
-function isEmergency(p, world) {
+// ★T-0108: kit-building commitments a CALM death-zone migrate must not interrupt. The death zone is
+//   a night hazard; in quiet daylight the human move is "finish the pick, then leave" — preempting
+//   a short bootstrap every tick (BOOTSTRAP_KIT@90 ↔ MIGRATE@60 flip) only aborts both. Once the
+//   kit commitment completes, any other day commitment is preempted as before, so the zone still
+//   gets left the same day.
+const DEATHZONE_YIELDS_TO = new Set([PROPOSAL_KIND.BOOTSTRAP_KIT, PROPOSAL_KIND.REPLENISH_KIT, PROPOSAL_KIND.SURFACE_RESCUE]);
+/** The death zone is actually biting right now (not just "we're standing where we died before"). */
+function deathZoneBiting(world) {
+    const hp = world.vitals ? world.vitals.hp : 20;
+    const th = world.threat || {};
+    return hp < 12 || th.actionable > 0 || !!th.takingDamage;
+}
+
+/** Emergencies that may PREEMPT a live commitment (else we stay committed).
+ *  @param {string=} liveKind the commitment p would preempt (omitted = "is p itself an emergency"). */
+function isEmergency(p, world, liveKind) {
     if (!p) return false;
     if (p.kind === PROPOSAL_KIND.HOLD) return false;
     // ★T-0069: GET_FOOD (feedUp) is the starve-now emergency — BUT not when a known village sits
@@ -1557,7 +1571,9 @@ function isEmergency(p, world) {
     //   When a village is in reach, harvesting it IS the food path; don't let feedUp steal the body.
     const villageClose = world.landmarks && world.landmarks.village && Number(world.landmarks.village.dist) <= 28;
     if (p.kind === PROPOSAL_KIND.GET_FOOD && world.vitals.food <= 4 && !villageClose) return true; // about to starve, no village
-    if (p.kind === PROPOSAL_KIND.MIGRATE && world.migration.inDeathZone) return true;
+    if (p.kind === PROPOSAL_KIND.MIGRATE && world.migration.inDeathZone) {
+        return deathZoneBiting(world) || !(liveKind && DEATHZONE_YIELDS_TO.has(liveKind));
+    }
     return false;
 }
 
@@ -1585,7 +1601,7 @@ export function commitGoal(bot, proposals, world) {
     // Scan ALL proposals for an emergency (a critical one need not be top-ranked —
     // e.g. food=4 GET_FOOD@88 sits under BOOTSTRAP_KIT@90 but must still preempt).
     if (c && !isGoalDone(c.kind, w, bot)) {
-        const emergency = (proposals || []).find(p => p.kind !== c.kind && isEmergency(p, w));
+        const emergency = (proposals || []).find(p => p.kind !== c.kind && isEmergency(p, w, c.kind));
         // ★T-0081: DUSK/NIGHT plan must DETHRONE a stale NON-night commitment. A daytime task
         // committed before dusk (migrate/scout/bootstrap) holds until isGoalDone — e.g. MIGRATE
         // is "done" only on arriving at a livable biome, so a long march blocks straight through
@@ -1662,7 +1678,7 @@ function resolvedSkillArgs(t, w, bot) {
 /** HEAD selection = commitGoal's logic, applied to the queue. H = current active head (sticky). */
 function pickHead(q, H, w, bot) {
     if (H && !isGoalDone(H.kind, w, bot)) {
-        const emergency = q.find(t => t.kind !== H.kind && isEmergency({ kind: t.kind }, w));
+        const emergency = q.find(t => t.kind !== H.kind && isEmergency({ kind: t.kind }, w, H.kind));
         let nightPre = null;
         const hIsEmergency = isEmergency({ kind: H.kind }, w);
         if (!isNightPlan(H.kind) && !hIsEmergency) {
