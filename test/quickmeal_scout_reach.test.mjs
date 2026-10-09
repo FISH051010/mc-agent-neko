@@ -58,3 +58,32 @@ test('T-0189: 头顶不见天 (skyLight 0) 的 y61 才上浮; 决策层 skyOpen=
     assert.ok(foodFloorProposal({ ...base, skyOpen: false }).args[0].surfaceFirst);
     assert.ok(foodFloorProposal({ ...base }).args[0].surfaceFirst, 'unknown → old y rule');
 });
+
+test('T-0189 补: 侦察段被反射叫停 ("Path was stopped") 不耗航点; 连续 3 次叫停且有敌对 → 延后返回 (不计 strike)', async () => {
+    const goals = [];
+    const creeper = { name: 'creeper', position: V(12, 61, 0) };
+    const bot = { food: 3, health: 11, entity: { position: V(0, 61, 0) }, entities: { 9: creeper },
+        blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {}, setMovements() {}, goto: async (g) => { goals.push(g); throw new Error('Path was stopped before it could be completed!'); } },
+        clearControlStates() {} };
+    const ctx = { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } };
+    const r = await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 90000 });
+    assert.equal(r.deferred, true, JSON.stringify(r));
+    assert.ok(goals.length <= 4, `did not burn through waypoints (${goals.length} legs)`);
+});
+
+test('T-0191: 危急 (food≤3 或 hp≤6) 猎到生猪排 → 先生吃一块再烤 (不让全部生肉进炉、包里零可吃)', async () => {
+    const order = [];
+    const inv = {};
+    const pig = { name: 'pig', position: V(1, 61, 0), isValid: true };
+    const bot = { food: 0, health: 5, entity: { position: V(0, 61, 0) }, entities: { 1: pig },
+        blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {}, setMovements() {}, goto: async () => {} }, clearControlStates() {} };
+    const ctx = { world: { getInventoryCounts: () => ({ coal: 30, ...inv }) },
+        skills: { customSkill: async (_b, name) => { order.push(name); if (name === 'smeltSafe') { inv.cooked_porkchop = (inv.porkchop || 0); inv.porkchop = 0; } },
+                  attackEntity: async () => { inv.porkchop = 3; }, pickupNearbyItems: async () => {},
+                  consume: async (_b, item) => { order.push('eat:' + item); if (inv[item]) inv[item]--; bot.food += 3; } } };
+    await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000 });
+    const iEat = order.indexOf('eat:porkchop'), iCook = order.indexOf('smeltSafe');
+    assert.ok(iEat >= 0 && (iCook < 0 || iEat < iCook), `ate raw before cooking: ${order}`);
+});

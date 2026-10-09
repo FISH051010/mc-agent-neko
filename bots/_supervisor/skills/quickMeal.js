@@ -86,11 +86,12 @@ async function hostileDecision(bot) {
 
 async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
-    let legs = 0, legsFailed = 0, moved = 0, firstErr = null;
+    let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, moved = 0, firstErr = null;
     setSafeMovements(bot);
-    for (const wp0 of scoutWaypoints(origin, scoutRadius, scoutToward)) {
+    const wps = scoutWaypoints(origin, scoutRadius, scoutToward);
+    for (let wi = 0; wi < wps.length; wi++) {
         if (Date.now() - t0 > scoutMs) break;
-        let wp = wp0;
+        let wp = wps[wi];
         const hd = await hostileDecision(bot);
         if (hd.action === 'yield') {
             prog(`scout paused: ${hd.h.name} ${hd.h.dist.toFixed(1)}b (≤6 or closing) — yield to self_preservation, wait ≤15s`);
@@ -107,17 +108,30 @@ async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutT
         //   起点 y — 24-96 格外地形高低不一, 目标点不可达, pathfinder 立即拒绝, 33 个航点 0.2s 全败。改 GoalNearXZ (不限高度);
         //   单段不可达就换下一个点, 记首个失败原因, 全不可达时如实写进日志。
         const p0 = bot.entity.position, x0 = p0.x, z0 = p0.z;
+        let err = null;
         try {
             const r = await race(bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(wp.x), Math.round(wp.z), 3)).then(() => 'ok', (e) => e), legMs);
-            if (r && r !== 'ok') { legsFailed++; if (!firstErr) firstErr = String((r && r.message) || r).slice(0, 80); }
-        } catch (e) { legsFailed++; if (!firstErr) firstErr = String(e && e.message || e).slice(0, 80); }
+            if (r && r !== 'ok') err = String((r && r.message) || r);
+        } catch (e) { err = String(e && e.message || e); }
         try { bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
         const q = bot.entity.position;
         moved += Math.hypot(q.x - x0, q.z - z0);
         legs++;
+        // ★T-0189 补 (23:38:08-26Z 实录: 苦力怕 12.5b, 32 段里 31 段 "Path was stopped before it could be completed" — 反射抢寻路
+        //   把每段一开走就叫停, 侦察把航点一个个烧掉): 被外部叫停 ≠ 不可达 — 不耗航点, 等 1s 重试同一点;
+        //   连续 3 次被叫停且附近有敌对 → 交给保命反射, 按延后返回 (不计 strike)。
+        if (err && /stopped/i.test(err)) {
+            legsStopped++; stoppedRun++;
+            if (stoppedRun >= 3 && hostileWithin(bot, 16)) { prog(`scout deferred: path stopped ${stoppedRun}x by reflexes with hostile near`); return 'hostile'; }
+            await new Promise(r => setTimeout(r, 1000));
+            wi--;   // 重试同一航点
+            continue;
+        }
+        stoppedRun = 0;
+        if (err) { legsFailed++; if (!firstErr) firstErr = err.slice(0, 80); }
     }
     const last = pickHuntTarget(bot, radius, maxDy);
-    if (!last) prog(`scout: ${legs} legs, ${legsFailed} unreachable, moved ${moved.toFixed(0)}b in ${((Date.now() - t0) / 1000).toFixed(1)}s${firstErr ? ` (first fail: ${firstErr})` : ''}`);
+    if (!last) prog(`scout: ${legs} legs, ${legsFailed} unreachable, ${legsStopped} stopped, moved ${moved.toFixed(0)}b in ${((Date.now() - t0) / 1000).toFixed(1)}s${firstErr ? ` (first fail: ${firstErr})` : ''}`);
     return last;
 }
 
@@ -219,6 +233,16 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         if (!gotMeat) prog(`hunt yielded no meat (target escaped / out of reach)`);
         // ★监工拍板: 会话猎杀计数 (world_model 锁存 SESSION_KILL_CAP=6 只后释放, 防打光一片再漫游)
         else if (bot._foodFloorLatch && bot._foodFloorLatch.active) bot._foodFloorLatch.kills = (bot._foodFloorLatch.kills || 0) + 1;
+    }
+
+    // ①.5 ★T-0191 (23:38:53-23:39:35Z 实录: food 0 时猎到 3 猪排全拿去烤, 生肉进了炉包里零可吃, 饥饿掉血 hp 5→2 才烤好):
+    //   危急 (hp≤6 或 food≤3) 先生吃一块保命 (生猪排/牛/羊/兔安全; 生鸡肉排除, RAW 里的 chicken 不在此档), 剩下的再烤。
+    if ((bot.health <= 6 || bot.food <= 3) && skills.consume) {
+        const rawSafe = ['porkchop', 'beef', 'mutton', 'rabbit'].find(n => (inv()[n] || 0) > 0);
+        if (rawSafe) {
+            prog(`critical (hp=${Math.round(bot.health)} food=${bot.food}) — eat 1 raw ${rawSafe} now, cook the rest`);
+            try { await race(skills.consume(bot, rawSafe), 5000); ate++; } catch (e) {}
+        }
     }
 
     // ② 就地烤
