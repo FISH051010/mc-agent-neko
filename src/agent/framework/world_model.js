@@ -24,6 +24,7 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
+import { foodFloorProposal, foodFloorDone } from './food_floor.js';
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -707,6 +708,15 @@ export function proposeTasks(world, bot) {
         push({ kind: PROPOSAL_KIND.REPLENISH_KIT, priority: _pri, skill: 'replenishKit',
                rationale: `supply baseline broken (picks ${pk}/${replenishTargets(w).picksMin}${_tierTag}, planksEq ${pe}/${replenishTargets(w).planksRelease})${_nightAssembly ? ' — night pocket-assembly (craft-only, chop steps self-skip)' : ' — surface + restock wood/spare pick before every consumer yields'}`,
                hints: { picks: pk, planksEq: pe } });
+    }
+
+    // 1d) ★T-0069 FOOD_FLOOR — 食物本能关闭(用户 07-08 令)时的有界兜底: food≤6 且零食物 → 16 格内一次短猎 +
+    //     就地烤 (quickMeal ≤60s)。不漫游、不种田、不追远处动物; 判据见 framework/food_floor.js。
+    {
+        const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
+            actionable: threat.actionable, counts: invCounts(bot), animal: w.landmarks && w.landmarks.animal,
+            botY: bot && bot.entity && bot.entity.position ? bot.entity.position.y : NaN });
+        if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
     }
 
     // 2) Food: stock to a BUFFER, not just survival (user #5: stockpile meat).
@@ -1447,6 +1457,8 @@ export function isGoalDone(kind, world, bot) {
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
+        case PROPOSAL_KIND.FOOD_FLOOR:   // ★T-0069: food 回到地板以上或背包已有可吃的 (与提案同口径)
+            return foodFloorDone({ food: (w.vitals && w.vitals.food != null) ? w.vitals.food : (bot && bot.food) || 20, counts: invCounts(bot) });
         case PROPOSAL_KIND.TOOL_UPKEEP:
             // ★T-0060: done = gate restored OR nothing affordable left to craft (same口径 as the proposal).
             return !needsToolUpkeep({ sufficientForUnderground: !!(w.kit && w.kit.sufficientForUnderground), pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot) })

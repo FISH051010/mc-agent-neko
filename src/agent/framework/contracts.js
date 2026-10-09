@@ -97,6 +97,7 @@ export const PROPOSAL_KIND = Object.freeze({
     GET_DIAMOND: 'GET_DIAMOND',       // ★T-0092 深挖钻石带 (targetY≈-54) → 攒够 DIAMOND_FLOOR
     BANK_GEAR: 'BANK_GEAR',           // ★T-0092 背包有高价值矿且将满 → 回家入库 (bankGear, 死不丢投资) — ★P1-5 提案端已停用: keepInventory=true 下前提为假 (见 world_model.js BANK_GEAR_ENABLED)
     GO_UNDERGROUND: 'GO_UNDERGROUND', // gated by surfaceGate / committed venture
+    FOOD_FLOOR: 'FOOD_FLOOR',         // ★T-0069 食物本能关闭时的有界兜底: food≤6 且零食物 → 16 格内一次短猎+就地烤 (quickMeal, ≤60s, 不漫游)
     TOOL_UPKEEP: 'TOOL_UPKEEP',       // ★镐耐久预算: 备镐+随身补镐kit(台/棍/圆石) — 把 kit.sufficientForUnderground 从"拒绝下矿的门"升级为"主动修复的目标" (craftChain array preset)
     MIGRATE: 'MIGRATE',
     HOLD: 'HOLD',
