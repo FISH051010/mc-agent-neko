@@ -152,6 +152,7 @@ loop:
 | 2fdf12c (worker-tests) | bots/_supervisor/botwatch.mjs + botwatch-trackers.mjs | botwatch 进程 | mobility-stuck / bootstrap-deadlock / false-shelter 判据原样抽出，无行为变化 |
 | 5541484 (worker-tests) | src/agent/agent.js + src/agent/world_scope.js | main.js | keepInventory 只读查询回执分类(T-0071 C344v2)原样抽出为 classifyKeepInvReply，无行为变化 |
 | 2a51597 (worker-tests) | src/agent/modes.js + src/agent/mobility_geom.js | main.js | POCKET 脱困选择(T-0036 C305-A)原样抽出为 planPocketEscape，无行为变化 |
+| 0e81e7a (worker-tests) | src/agent/library/skills.js | main.js | goToPosition 搭路填充块/partial 路径选择(T-0052/T-0053 C319/C320)提为纯函数，无行为变化 |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 
 **部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
