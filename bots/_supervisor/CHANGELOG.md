@@ -2752,3 +2752,9 @@
 - C12 reflex_watchdog: 下次"挨打+静止"是否10s内见 force release？副作用警戒: 正当蹲坑/贴脸开打场景是否被误释放？
 - 死264归因注记: 游泳本能(第4轮C系)本身无罪——录像证明分支逻辑没机会运行,根因是 execute 挂起锁(C12 的靶)。游泳本能条目不动。
 
+
+## 2026-10-09 新世界(新的世界 (11))开局 — 监工
+
+- **C-1009-A 控制面板端口 EACCES 回退** (commit 3016fa9): 证据=agent.log `listen EACCES ::1:8765` + `netsh excludedportrange` 8741-8840 被 winnat 保留 → main.js 崩溃循环。改动=mindserver EACCES 依次试 18765/28765/38765/0, init 返回实际端口。预测: 重启后面板/48909 正常起来(已验: 18765 listening, bot 23:40 入世界)。回滚=revert 3016fa9。测试=test/mindserver_port_fallback.test.mjs。
+- **C-1009-B replenishKit 零镐先造首镐**: 证据=progress.txt 15:45:12 `picks=0 table=0 logs=12 planksEq=50 → ② chopWood need=4`, 首镐被压在凑满 64 板之后。改动=`shouldChopBeforeCrafting`: picks==0 且 planksEq>=12 跳过 ② 直接 ③/③.5/④。预测: 下个新世界开局, 第 3 根原木到手后的那次派发内即出木镐, 不再出现"零镐 + logs>=3 + chopWood"日志行。回滚=删该 if 分支。测试=test/replenish_kit_first_pick.test.mjs。
+- **待查(未改)**: 同一轮合成里冒出 1 个 spruce_pressure_plate(浪费 2 板, 疑 craftRecipeLocal 配方解析误选); ③.5 口袋台 0→1 后 DONE 时 table=0(放下没收回)。交 worker-tier。

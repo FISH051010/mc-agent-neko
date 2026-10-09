@@ -20,6 +20,16 @@ const PICK_RE = /_pickaxe$/;
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry'];
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
 
+// ★2026-10-09 新世界开局实录: 揣 12 原木(planksEq=50)、0 镐 0 台, ② 仍要砍到 planksEq>=64 才肯进
+//   ③/④ 合成 —— 首把镐被压在 "再砍 4 根" 后面, 一轮派发 120s 全烧在砍树上。人类玩家 3 根原木就
+//   先做台+木镐(有镐才谈得上后面的一切)。判据: 零镐且木料已够 台(4)+镐(3)+棍(1)+余量 → 先合成。
+export const FIRST_PICK_PLANKS_EQ = 12;
+export function shouldChopBeforeCrafting({ picks, planksEq }) {
+    if (planksEq >= 64) return false;                                  // 不变量已满足, 不砍
+    if (picks === 0 && planksEq >= FIRST_PICK_PLANKS_EQ) return false; // 零镐: 先把首镐造出来
+    return true;
+}
+
 export default async function replenishKit(bot, ctx, opts = {}) {
     const { skills, world, log } = ctx;
     const BUDGET_MS = 300000;                     // 5min 硬预算
@@ -220,7 +230,9 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     }
 
     // ── ② 地表取木: chopWood 到 logs>=4 (needLogs 关掉它的 planksEq>=8 早退, 我们真要原木)──
-    if (!stop() && !overBudget() && onSurface() && planksEq() < 64) {
+    if (!stop() && !overBudget() && onSurface() && planksEq() < 64 && !shouldChopBeforeCrafting({ picks: picks(), planksEq: planksEq() })) {
+        prog(`replenishKit: ② SKIP chopWood — picks=0 且 planksEq=${planksEq()}>=${FIRST_PICK_PLANKS_EQ}, 先造台+首镐 (余木下轮再补)`);
+    } else if (!stop() && !overBudget() && onSurface() && planksEq() < 64) {
         if (isNight() && hostilesNear(16) > 0) {
             prog(`replenishKit: ② SKIP chopWood — night+hostiles16=${hostilesNear(16)}, 取木不值一条命 (delta 留给其他步)`);
         } else {
