@@ -23,7 +23,7 @@ import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
-import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible } from './kit_gate.js';
+import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE } from './food_floor.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
@@ -259,6 +259,11 @@ export function strandedFurnaceInReach(world, reach = STRANDED_REACH) {
             .filter(s => s && Number.isFinite(s.x) && Date.now() - (s.at || 0) <= STRANDED_MAX_AGE_MS && d(s) <= reach)
             .sort((a, b) => d(a) - d(b))[0] || null;
     } catch (e) { return null; }
+}
+/** ★T-0176: 有粗铁、锭不足 3、燃料熔不出差额 → GET_IRON_TOOLS 的熔炼一步必拒 (提案门 + isGoalDone 同谓词)。 */
+export function ironSmeltFuelBlocked(bot) {
+    const ingots = invCount(bot, /^iron_ingot$/), raw = invCount(bot, /^raw_iron$/);
+    return ingots < 3 && raw > 0 && ingots + raw >= 3 && smeltableUnits(invCounts(bot)) < 3 - ingots;
 }
 function ironArmorGoalDone(world, bot) {
     const pieces = Math.min(4, (world.vitals && world.vitals.armor) || 0);
@@ -938,10 +943,15 @@ export function proposeTasks(world, bot) {
             const ingots = invCount(bot, /^iron_ingot$/);
             const rawIron = invCount(bot, /^raw_iron$/);
             if (ingots < 3 && rawIron > 0) {
-                push({ kind: PROPOSAL_KIND.GET_IRON_TOOLS, priority: 47, skill: 'smeltSafe',
-                       args: ['raw_iron', Math.min(rawIron, 5)],
-                       rationale: `stone tier + ${rawIron} raw_iron — smelt it (need ingots for an iron pickaxe to unlock diamonds)`,
-                       hints: { tier: tier.level, rawIron } });
+                // ★T-0176 (22:25:59-22:26:16Z 实录: 7 粗铁, 0 煤 0 原木 1 板 → smeltSafe ×3 秒败冷却): 燃料够熔出凑满 3 锭才提,
+                //   否则不提 (技能必拒 = 铁律 2), 让挖矿继续攒煤/木; 熔炼量按燃料封顶。口径同夜间 SMELT_IRON (T-0150 smeltableUnits)。
+                const _fuel = smeltableUnits(invCounts(bot));
+                if (_fuel >= 3 - ingots) {
+                    push({ kind: PROPOSAL_KIND.GET_IRON_TOOLS, priority: 47, skill: 'smeltSafe',
+                           args: ['raw_iron', Math.min(rawIron, 5, _fuel)],
+                           rationale: `stone tier + ${rawIron} raw_iron — smelt it (need ingots for an iron pickaxe to unlock diamonds)`,
+                           hints: { tier: tier.level, rawIron, fuel: _fuel } });
+                }
             } else {
                 push({ kind: PROPOSAL_KIND.GET_IRON_TOOLS, priority: 47, skill: 'craftChain',
                        args: ['iron_tier'],
@@ -1608,7 +1618,7 @@ export function isGoalDone(kind, world, bot) {
         case PROPOSAL_KIND.MIGRATE:       return !w.migration.recommend;     // arrived at a livable biome
         // ── ★T-0093 tier chain completion. ──
         // GET_IRON_TOOLS done = an iron+ pickaxe is now in hand (the rung was about crafting it).
-        case PROPOSAL_KIND.GET_IRON_TOOLS:   return hasIronTierPick(w);
+        case PROPOSAL_KIND.GET_IRON_TOOLS:   return hasIronTierPick(w) || ironSmeltFuelBlocked(bot);   // ★T-0176 缺燃料熔不出 3 锭即释放 (否则 holding commitment 继续派 smeltSafe 必拒)
         // ★T-0097 NIGHT_SMELT_IRON done = same target (an iron-tier pick exists) — holds the night
         // commitment sticky across the smelt→craft hand-off until the iron pickaxe is actually crafted.
         case TASK.NIGHT_SMELT_IRON:          if (hasIronTierPick(w)) return !nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot), { withSword: true });   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
