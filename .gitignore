@@ -52,6 +52,7 @@ bots/_supervisor/*
 !bots/_supervisor/bot-medic.mjs
 !bots/_supervisor/oracle_shared.mjs
 !bots/_supervisor/ore-oracle-worker.mjs
+!bots/_supervisor/botwatch-trackers.mjs
 !bots/_supervisor/test/
 bots/_supervisor/test/*
 !bots/_supervisor/test/*.test.mjs

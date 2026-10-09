@@ -38,6 +38,8 @@ import http from 'http';
 // shared black-box read layer (paths/parse/omniscient-fuse) — same readers overseer-snapshot uses,
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState } from './bb-readers.mjs';
+// tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive } from './botwatch-trackers.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -79,14 +81,7 @@ function progressStaleMs(s, t) {
 //    the broadcast loop keeps stamping a FRESH vitals.ts while the bot's real state is dead-pinned
 //    (pos+hp unchanged, events.log silent). STALE_SEC (ts age) + watchdog (process alive) both pass.
 //    Track how long pos+hp have been identical, plus events.log silence age. ──
-let _frozenKey = null, _frozenSince = now();
-function frozenAliveMs(s, t) {
-    const key = s.v ? `${s.v.x},${s.v.y},${s.v.z}|${s.hp}` : null;
-    if (key !== _frozenKey) { _frozenKey = key; _frozenSince = t; }
-    let eventsAgeS = 1e9;
-    try { eventsAgeS = (t - fs.statSync(path.join(DIR, 'events.log')).mtimeMs) / 1000; } catch {}
-    return { frozenMs: key ? (t - _frozenSince) : 0, eventsAgeS };
-}
+const frozenAliveMs = makeFrozenAliveTracker(() => fs.statSync(path.join(DIR, 'events.log')).mtimeMs);
 
 // ── WEDGE / FALSE-HOLD tracker (T-0062, screenshot-confirmed 2026-06-21 [validation-not-mock]):
 //    the bot self-reports "Covered night hold staying sealed" / mob=POCKET while ACTUALLY wedged in
@@ -95,14 +90,7 @@ function frozenAliveMs(s, t) {
 //    "covered"=1-block-above self-report masks it. The tell a LEGIT safe hold CANNOT fake: HP DROP
 //    while pinned (a real shelter takes zero damage). Track pos-pinned time (pos-only key so an hp
 //    change doesn't reset it, unlike frozenAlive's pos+hp key) + max-hp-during-pin → hpDrop. ──
-let _wedgeKey = null, _wedgeSince = now(), _wedgeHpMax = 0;
-function wedgePinnedMs(s, t) {
-    // ~3-block cell so micro-jitter (bobbing in a niche / edge-wedge) still counts as pinned
-    const key = s.v ? `${Math.round(s.v.x / 3)},${Math.round(s.v.y / 3)},${Math.round(s.v.z / 3)}` : null;
-    if (key !== _wedgeKey) { _wedgeKey = key; _wedgeSince = t; _wedgeHpMax = s.hp || 0; }
-    else if ((s.hp || 0) > _wedgeHpMax) _wedgeHpMax = s.hp;   // track the peak so falls/hits show as a drop
-    return { pinnedMs: key ? (t - _wedgeSince) : 0, hpDrop: Math.max(0, _wedgeHpMax - (s.hp || 0)) };
-}
+const wedgePinnedMs = makeWedgeTracker();
 
 // ── SURVIVAL-CHURN tracker (T-0073): a HEALTHY + FREE bot stuck in a survival-reflex loop
 //    (kiting mobs / circling a canyon / digging in pits all night) MAKING NO TIER PROGRESS.
@@ -139,7 +127,7 @@ const D = [
         // when vitals IS fresh (the else branch), so it catches exactly the writer-outlived-the-loop case.
         // Legit night-holds keep EMITTING events (table-recovery / Pocketed every 2-15s) → events.log stays
         // fresh → they don't trip this (宁缺毋滥, no T-0027-style false-fire on a healthy sealed hold).
-        active: (s) => !!(s._frozen && s._frozen.frozenMs >= 2 * 60000 && s._frozen.eventsAgeS >= 120),
+        active: frozenAliveActive,
         ticket: (s, dur) => ({
             type: 'stuck', severity: 'critical', dedupKey: 'frozen-alive-hang',
             title: `冻结假活 ${Math.round(dur / 60000)}min — pos/hp死钉+events静默,vitals ts仍刷新 @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'} hp=${s.hp}`.slice(0, 140),
@@ -155,9 +143,7 @@ const D = [
         // 被 falls/怪掉血。FROZEN-ALIVE 漏(events 在刷,其 events-silent 门不 trip)、NO-PROGRESS 被微动
         // 清、"covered"(头顶1块)自报骗过监控。真安全 hold 学不来的破绽=钉死期间掉血(真庇护零伤害)。
         // fire: pinned>=10min AND (hpDrop>=3 OR pinned>=20min), 不管 events/covered。frame 自动附 → 必看。
-        active: (s) => !!(s._wedge && s._wedge.pinnedMs >= 10 * 60000
-            && (s._wedge.hpDrop >= 3 || s._wedge.pinnedMs >= 20 * 60000)
-            && !/sleep|^bed$/i.test(s.skill || '')),
+        active: falseHoldActive,
         ticket: (s, dur) => ({
             type: 'stuck', severity: 'high', dedupKey: 'false-hold-wedge',
             title: `假庇护/楔死 ${Math.round(s._wedge.pinnedMs / 60000)}min — 自报covered/hold但pos钉死@${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'}且掉血${s._wedge.hpDrop}`.slice(0, 140),

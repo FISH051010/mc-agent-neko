@@ -25,7 +25,9 @@ function collect (dir) {
 
 const files = process.argv.slice(2).length
   ? process.argv.slice(2).map((f) => path.resolve(f))
-  : collect(testDir).sort();
+  // bots/_supervisor/test/ holds the hot-load skill tests (mineDown/forage/oracle…); they were never
+  // in the old "test/**" glob, so they silently never ran under npm test.
+  : [...collect(testDir), ...collect(path.join(testDir, '..', 'bots', '_supervisor', 'test'))].sort();
 
 const home = mkdtempSync(path.join(tmpdir(), 'neko-test-home-'));
 mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
