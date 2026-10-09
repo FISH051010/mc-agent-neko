@@ -56,19 +56,16 @@ test('T-0175: 石镐到手或天亮即释放; 承诺算夜挖 (反射预防性�
 test('T-0175: computeNightPlan 链序 — STONE_BOOTSTRAP 在整夜下矿之后、挖三填一之前, 带安全门', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const fn = src.slice(src.indexOf('const computeNightPlan = () =>'));
-    const iMine = fn.indexOf("decision: 'MINE_THROUGH_NIGHT'"), iBoot = fn.indexOf("decision: 'STONE_BOOTSTRAP'"), iDig = fn.indexOf("decision: 'DIG_ONE_CAP'");
+    const iMine = fn.indexOf("decision: 'MINE_THROUGH_NIGHT'"), iBoot = fn.indexOf("{ decision: 'STONE_BOOTSTRAP',"), iDig = fn.indexOf("{ decision: 'DIG_ONE_CAP',");
     assert.ok(iMine > 0 && iBoot > iMine && iDig > iBoot, `order mine=${iMine} boot=${iBoot} dig=${iDig}`);
-    const gate = fn.slice(fn.lastIndexOf('if (', iBoot), iBoot);
+    const gate = fn.slice(iBoot, iDig);
     for (const g of ['!durablePick', 'hasTablePath', '_hpOkForNightMine', 'actionable === 0', '_gravityPitTrap()'])
         assert.ok(gate.includes(g), `gate has ${g}`);
 });
 
-test('T-0185: NIGHT_STONE_BOOTSTRAP 冷却中 → computeNightPlan 跳过它落到挖三填一 (不留整夜无计划的洞)', () => {
+test('T-0185/T-0186: computeNightPlan 整条链经 pickFirstNotCooled (按 bot._kindCooldownUntil 跳过冷却档)', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
-    const fn = src.slice(src.indexOf('const computeNightPlan = () =>'));
-    const iBoot = fn.indexOf("decision: 'STONE_BOOTSTRAP'");
-    const gate = fn.slice(fn.lastIndexOf('if (', iBoot), iBoot);
-    assert.ok(/_nsbCooled/.test(gate) && /!_nsbCooled/.test(gate), 'gate checks the kind cooldown');
-    const def = fn.slice(0, iBoot);
-    assert.ok(/_kindCooldownUntil\.NIGHT_STONE_BOOTSTRAP > Date\.now\(\)/.test(def), 'cooldown read from bot._kindCooldownUntil');
+    const fn = src.slice(src.indexOf('const computeNightPlan = () =>'), src.indexOf('const computeNightPlan = () =>') + 12000);
+    assert.ok(/return pickFirstNotCooled\(\[/.test(fn), 'chain wrapped');
+    assert.ok(/\], bot\._kindCooldownUntil\);/.test(fn), 'cooldown map passed');
 });

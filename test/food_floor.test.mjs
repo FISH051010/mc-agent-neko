@@ -259,10 +259,11 @@ test('监工拍板: FOOD_FLOOR 迟滞 — food≤6 触发, 补到 ≥18 且熟�
 test('监工加急#6: 夜链 MINE_THROUGH_NIGHT 也受 hp<10 门 (否则剔掉夜挖后夜里无提案)', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const i = src.indexOf("decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget");
-    const line = src.slice(src.lastIndexOf('\n', i), i);
+    // T-0186: 夜链改候选数组 (when 与 build 分行) — 在该候选块内找 hp 门
+    const line = src.slice(src.lastIndexOf("{ decision: 'MINE_THROUGH_NIGHT', when", i), i);
     assert.ok(/_hpOkForNightMine/.test(line), 'canMineWholeNight branch is hp-gated');
     const j = src.indexOf("keep mining, don't surface-bootstrap");
-    assert.ok(/_hpOkForNightMine/.test(src.slice(src.lastIndexOf('\n', j), j)), 'alreadyDeepEnclosed branch is hp-gated');
+    assert.ok(/_hpOkForNightMine/.test(src.slice(src.lastIndexOf("{ decision: 'MINE_THROUGH_NIGHT', when", j), j)), 'alreadyDeepEnclosed branch is hp-gated');
     assert.ok(/import \{ DESCENT_MIN_HP \} from '\.\/framework\/food_floor\.js'/.test(src));
 });
 

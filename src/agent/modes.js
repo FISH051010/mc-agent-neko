@@ -34,7 +34,7 @@ import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep
 import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
-import { decisionOwnsNightMining } from './framework/night_owner.js';
+import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -6582,44 +6582,53 @@ const modes_list = [
                     // (0) 贴脸能打的怪 → 让位常驻防御反射 (只是"本 tick 不派夜间任务"的协调, 不新增行为; self_defense 反射另在别处常驻).
                     if (commitToFight) return { decision: 'FIGHT', reason: `point-blank melee d=${Number.isFinite(closest) ? closest.toFixed(1) : '?'}` };
                     // ── 用户令 2026-07-08 夜间行为白名单 (有优先级): 近床(≤15) > [炼铁·保留] > 下矿 > 挖三填一(就地|≤15格找地) > 黄昏远床 > 裸hold ──
-                    // ① 近床(≤15格, 寻路可达, 可睡)或近地表背包床 → 睡到天亮. 最高优先级 (原 ≤6 → 15). 睡觉直接跳过夜险+断粮死环.
-                    if (nearBed)
-                        return { decision: 'GO_BED', reason: (_bedLm && Number.isFinite(_bedLm.dist) && _bedLm.dist <= NEAR_BED) ? `bed ${_bedLm.dist}b ≤${NEAR_BED} — sleep to dawn (highest priority)` : 'bed in pack — place & sleep (near, zero-walk)', target: _bedLm };
-                    // ★炼铁保留 (用户令 2026-07-08: 夜间炼铁/升级铁装保留). 仍排在下矿之上 (T-0097: 先把囤铁锁成铁镐/剑/盾, 再多挖).
-                    if (smeltIronWarranted) return { decision: 'SMELT_IRON', reason: `${_ironIngotsDec >= 3 ? _ironIngotsDec + ' ingots' : _rawIronDec + ' raw_iron'} + no iron pick — lock in iron tier (persistent + iron sword/shield)`, targetY: y };
-                    if (_armorNightWarranted) return { decision: 'SMELT_IRON', reason: `armor before diamonds: iron pick + ${_rawIronDec + _ironIngotsDec} iron → craft protection-first & wear (T-0151)`, targetY: y };
-                    // ② 镐(资源)充足 → 整夜下矿.
+                    // ★T-0186 (监工: T-0185 推广到整条链): 链写成候选数组, pickFirstNotCooled 挑第一个"条件成立且 kind 未在派发冷却"的档 —
+                    //   否则某档冷却时决策仍返它 → 提案被冷却过滤 → 整夜无夜计划。条件保持懒求值 (冷却档的扫描不跑)。链序/条件/理由与原链一致。
                     // ★监工加急#6 (18:26:50Z 实录: hp=1 夜链选 MINE_THROUGH_NIGHT → mineDiamonds): 下矿门同口径 hp<10 关 —
                     //   回落到挖三填一封闭; 否则提案端剔掉夜挖后夜里无提案 = 站在外面过夜。
                     const _hpOkForNightMine = !Number.isFinite(bot.health) || bot.health >= DESCENT_MIN_HP;
-                    if (canMineWholeNight && _hpOkForNightMine) return { decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget=${picksBudget}>=${cfg.mineNightPickBudget}`, targetY: 12 };
-                    if (alreadyDeepEnclosed && _hpOkForNightMine) return { decision: 'MINE_THROUGH_NIGHT', reason: `already deep/enclosed y=${y} pick=${picks} — keep mining, don't surface-bootstrap`, targetY: 12 };
-                    // ★T-0175 (监工, 第十四夜实录 -15,63,11: 2 木镐 + 8 板 + 3 原木整夜 DIG_ONE_CAP 零产出): 木镐预算 ~118 < 200 夜挖门。
-                    //   人类: 坑底往下挖几格拿圆石, 用木板现做台, 当场造石镐(+石剑), 整夜靠石镐挖。排在挖三填一之前;
-                    //   无怪 + 不在重力柱上 + 非封死 + 血/食够 (同夜挖门) 才做, 否则照旧挖三填一封坑。
-                    // ★T-0185 (23:06:36-51Z 实录: -8,69,-8 空洞上 mineDown dug=0 ×3 → NIGHT_STONE_BOOTSTRAP 冷却): 冷却中
-                    //   决策仍返 STONE_BOOTSTRAP 则提案被过滤 → 整夜无夜计划 (挖三填一被挡)。冷却中跳过, 落到挖三填一。
-                    const _nsbCooled = !!(bot._kindCooldownUntil && bot._kindCooldownUntil.NIGHT_STONE_BOOTSTRAP > Date.now());
-                    if (!_nsbCooled && !durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
-                        && y > 20 && !/ENTOMBED|SEALED/.test(mob || '') && !_gravityPitTrap())
-                        return { decision: 'STONE_BOOTSTRAP', reason: `wood picks only (budget ${picksBudget}) — dig down for cobble, craft stone pick+sword in place, then mine the night`, targetY: Math.max(17, y - 6) };
-                    // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
-                    //     lazy 扫描: 只在链子走到这里(近床/炼铁/下矿都没命中)时才扫, 命中即停. 硬门 picks>=1 卡在 if 里(不在扫描函数内) —
-                    //     §7.3 红线: 无镐 bot 走 dig_one 会徒手挖软土把自己埋到树底 → 天亮树抬高不可达 → wood=0 bootstrap 死锁. 与 digOneViable 同守卫.
-                    if (digOneViable || (picks >= 1 && y > 16 && _hasDiggableGroundWithin(DIG_SEARCH)))
-                        return { decision: 'DIG_ONE_CAP', reason: digOneViable ? `dig-one shelter y=${y}` : `dig-one via ≤${DIG_SEARCH}b ground search` };
-                    // 背包床兜底: 深处/够不到别的但背包里【有床】→ 就地放床睡 (零步无跋涉, 不受第⑤项"仅黄昏"限 —— 那是给"走去远床"的跋涉风险设的).
-                    //   排在下矿/挖三填一【之下】(深处矿工先挖), 黄昏远床【之上】(就地放床比走去远床更安全). 近地表背包床已在上面 nearBed 走最高优.
-                    if (_bedInPack && bedAffordable) return { decision: 'GO_BED', reason: 'pack bed — place & sleep in place (zero-walk, last resort before dusk-travel/hold)', target: _bedLm };
-                    // ⑤ 黄昏才前往"远床"(>15格, ≤${cfg.bedReachDist}): 趁天光去更远的已知床 (用户令: 黄昏可去更远找床). 深夜【绝不】奔远床 (跨图风筝死环). 最低优先.
-                    if (phase === 'dusk' && bedAffordable) return { decision: 'GO_BED', reason: `dusk far bed@${_bedReachCost}b (>${NEAR_BED}, dusk-only)`, target: _bedLm };
-                    // ★SURFACE WALL-BOX ("seal"/封箱) 仍禁用 — 用户令 2026-07-07 维持 + 07-08 复述"shelter机制临时禁用" (docs/shelter-mechanism-disabled.md).
-                    //   终兜底照旧返回 SEAL_FORT (勿改 NONE / 勿盲转 DIG_ONE_CAP — 见红线):
-                    //     • SEAL_FORT@91 必须压过白天 BOOTSTRAP_KIT@90 (world_model §night switch), 否则无镐/无床 bot 夜里没提案 → 黑灯砍树;
-                    //     • unstuck 抑制门 (~modes.js:2802) 认 NIGHT_SEAL 提交, 阻止看门狗把 bot 从 hold 里拖出去。
-                    //   执行层 nightShelter('seal') 不砌墙 = 原地【裸 hold】(站住/饿了吃/挨打即让位 self-defense 反射)。
-                    //   挖三填一(③④) 已优先且带 15 格找地, 这里只剩"无镐/无软土可迁/无床"的物理下限 (§7 已知并接受的 stranding gap).
-                    return { decision: 'SEAL_FORT', reason: 'hold in place — surface wall-box disabled (dig_one preferred when viable)' };
+                    return pickFirstNotCooled([
+                        // ① 近床(≤15格, 寻路可达, 可睡)或近地表背包床 → 睡到天亮. 最高优先级 (原 ≤6 → 15). 睡觉直接跳过夜险+断粮死环.
+                        { decision: 'GO_BED', when: nearBed,
+                          build: () => ({ decision: 'GO_BED', reason: (_bedLm && Number.isFinite(_bedLm.dist) && _bedLm.dist <= NEAR_BED) ? `bed ${_bedLm.dist}b ≤${NEAR_BED} — sleep to dawn (highest priority)` : 'bed in pack — place & sleep (near, zero-walk)', target: _bedLm }) },
+                        // ★炼铁保留 (用户令 2026-07-08: 夜间炼铁/升级铁装保留). 仍排在下矿之上 (T-0097: 先把囤铁锁成铁镐/剑/盾, 再多挖).
+                        { decision: 'SMELT_IRON', when: smeltIronWarranted,
+                          build: () => ({ decision: 'SMELT_IRON', reason: `${_ironIngotsDec >= 3 ? _ironIngotsDec + ' ingots' : _rawIronDec + ' raw_iron'} + no iron pick — lock in iron tier (persistent + iron sword/shield)`, targetY: y }) },
+                        { decision: 'SMELT_IRON', when: _armorNightWarranted,
+                          build: () => ({ decision: 'SMELT_IRON', reason: `armor before diamonds: iron pick + ${_rawIronDec + _ironIngotsDec} iron → craft protection-first & wear (T-0151)`, targetY: y }) },
+                        // ② 镐(资源)充足 → 整夜下矿.
+                        { decision: 'MINE_THROUGH_NIGHT', when: canMineWholeNight && _hpOkForNightMine,
+                          build: () => ({ decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget=${picksBudget}>=${cfg.mineNightPickBudget}`, targetY: 12 }) },
+                        { decision: 'MINE_THROUGH_NIGHT', when: alreadyDeepEnclosed && _hpOkForNightMine,
+                          build: () => ({ decision: 'MINE_THROUGH_NIGHT', reason: `already deep/enclosed y=${y} pick=${picks} — keep mining, don't surface-bootstrap`, targetY: 12 }) },
+                        // ★T-0175 (监工, 第十四夜实录 -15,63,11: 2 木镐 + 8 板 + 3 原木整夜 DIG_ONE_CAP 零产出): 木镐预算 ~118 < 200 夜挖门。
+                        //   人类: 坑底往下挖几格拿圆石, 用木板现做台, 当场造石镐(+石剑), 整夜靠石镐挖。排在挖三填一之前;
+                        //   无怪 + 不在重力柱上 + 非封死 + 血/食够 (同夜挖门) 才做, 否则照旧挖三填一封坑。(T-0185 冷却回落由 pickFirstNotCooled 统一管)
+                        { decision: 'STONE_BOOTSTRAP',
+                          when: () => !durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
+                              && y > 20 && !/ENTOMBED|SEALED/.test(mob || '') && !_gravityPitTrap(),
+                          build: () => ({ decision: 'STONE_BOOTSTRAP', reason: `wood picks only (budget ${picksBudget}) — dig down for cobble, craft stone pick+sword in place, then mine the night`, targetY: Math.max(17, y - 6) }) },
+                        // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
+                        //     lazy 扫描: 只在链子走到这里(近床/炼铁/下矿都没命中)时才扫, 命中即停. 硬门 picks>=1 卡在 when 里(不在扫描函数内) —
+                        //     §7.3 红线: 无镐 bot 走 dig_one 会徒手挖软土把自己埋到树底 → 天亮树抬高不可达 → wood=0 bootstrap 死锁. 与 digOneViable 同守卫.
+                        { decision: 'DIG_ONE_CAP', when: () => digOneViable || (picks >= 1 && y > 16 && _hasDiggableGroundWithin(DIG_SEARCH)),
+                          build: () => ({ decision: 'DIG_ONE_CAP', reason: digOneViable ? `dig-one shelter y=${y}` : `dig-one via ≤${DIG_SEARCH}b ground search` }) },
+                        // 背包床兜底: 深处/够不到别的但背包里【有床】→ 就地放床睡 (零步无跋涉, 不受第⑤项"仅黄昏"限 —— 那是给"走去远床"的跋涉风险设的).
+                        //   排在下矿/挖三填一【之下】(深处矿工先挖), 黄昏远床【之上】(就地放床比走去远床更安全). 近地表背包床已在上面 nearBed 走最高优.
+                        { decision: 'GO_BED', when: _bedInPack && bedAffordable,
+                          build: () => ({ decision: 'GO_BED', reason: 'pack bed — place & sleep in place (zero-walk, last resort before dusk-travel/hold)', target: _bedLm }) },
+                        // ⑤ 黄昏才前往"远床"(>15格, ≤${cfg.bedReachDist}): 趁天光去更远的已知床 (用户令: 黄昏可去更远找床). 深夜【绝不】奔远床 (跨图风筝死环). 最低优先.
+                        { decision: 'GO_BED', when: phase === 'dusk' && bedAffordable,
+                          build: () => ({ decision: 'GO_BED', reason: `dusk far bed@${_bedReachCost}b (>${NEAR_BED}, dusk-only)`, target: _bedLm }) },
+                        // ★SURFACE WALL-BOX ("seal"/封箱) 仍禁用 — 用户令 2026-07-07 维持 + 07-08 复述"shelter机制临时禁用" (docs/shelter-mechanism-disabled.md).
+                        //   终兜底照旧返回 SEAL_FORT (勿改 NONE / 勿盲转 DIG_ONE_CAP — 见红线; 冷却也照返, terminal):
+                        //     • SEAL_FORT@91 必须压过白天 BOOTSTRAP_KIT@90 (world_model §night switch), 否则无镐/无床 bot 夜里没提案 → 黑灯砍树;
+                        //     • unstuck 抑制门 (~modes.js:2802) 认 NIGHT_SEAL 提交, 阻止看门狗把 bot 从 hold 里拖出去。
+                        //   执行层 nightShelter('seal') 不砌墙 = 原地【裸 hold】(站住/饿了吃/挨打即让位 self-defense 反射)。
+                        //   挖三填一(③④) 已优先且带 15 格找地, 这里只剩"无镐/无软土可迁/无床"的物理下限 (§7 已知并接受的 stranding gap).
+                        { decision: 'SEAL_FORT', terminal: true,
+                          build: () => ({ decision: 'SEAL_FORT', reason: 'hold in place — surface wall-box disabled (dig_one preferred when viable)' }) },
+                    ], bot._kindCooldownUntil);
                 };
                 const nightPlan = computeNightPlan();
                 // ── computeOpening(): bootstrap-phase intent (SCOUT/WOOD_BUFFER/VILLAGE_HARVEST/DONE).

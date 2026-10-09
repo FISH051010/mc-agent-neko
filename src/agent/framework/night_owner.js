@@ -15,3 +15,31 @@ export function decisionOwnsNightMining(bot, { hostilesNear = 0, now = Date.now(
         return hostilesNear === 0;
     } catch (e) { return false; }
 }
+
+// ★T-0186 (监工: 把 T-0185 从 STONE_BOOTSTRAP 一档推广到整条夜链)。computeNightPlan 每档决策对应 world_model 夜 switch
+// 里 push 的 kind; 某档 kind 在派发冷却中时, 返回它 = 提案被 proposeTasks 的冷却过滤剔掉 = 整夜没有夜计划。
+// 统一: 按链序挑第一个"条件成立且 kind 未冷却"的候选; 链尾 (SEAL_FORT 物理下限) 是终兜底, 冷却也照返 (不改 NONE, 见 modes.js 红线)。
+export const NIGHT_DECISION_KIND = Object.freeze({
+    GO_BED: 'DUSK_GO_BED',
+    SMELT_IRON: 'NIGHT_SMELT_IRON',
+    MINE_THROUGH_NIGHT: 'DUSK_MINE_NIGHT',
+    STONE_BOOTSTRAP: 'NIGHT_STONE_BOOTSTRAP',
+    DIG_ONE_CAP: 'NIGHT_DIG_ONE',
+    SEAL_FORT: 'NIGHT_SEAL',
+});
+export function nightDecisionCooled(decision, cooldownUntil, now = Date.now()) {
+    const k = NIGHT_DECISION_KIND[decision];
+    return !!(k && cooldownUntil && cooldownUntil[k] > now);
+}
+/** candidates: [{ decision, when: bool | () => bool (懒求值, 只在走到这一档才算), build: () => plan, terminal? }]。
+ *  先看冷却再求 when (冷却档的昂贵扫描不跑)。 */
+export function pickFirstNotCooled(candidates, cooldownUntil, now = Date.now()) {
+    for (const c of candidates || []) {
+        if (!c) continue;
+        if (c.terminal) return { ...c.build(), ...(nightDecisionCooled(c.decision, cooldownUntil, now) ? { cooled: true } : {}) };
+        if (nightDecisionCooled(c.decision, cooldownUntil, now)) continue;
+        const ok = typeof c.when === 'function' ? c.when() : !!c.when;
+        if (ok) return c.build();
+    }
+    return { decision: 'NONE', reason: 'all night plans unavailable or cooled' };
+}
