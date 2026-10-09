@@ -470,6 +470,12 @@ export async function craftRecipe(bot, itemName, num=1) {
 //     ② 几何兜底(_mobility 未 populated 时): 数脚位四正交邻格里"人能站进去"的开口. 正常 1 宽
 //        隧道沿掘进向仍有前后 2 开口 → 不误伤 T-0079 随身台复用; 只有真·死角(≤1 开口)才触发,
 //        那里敲碎的掉落物必弹进不可达墙角。
+// ★T-0079: reclaim ONLY a table this call put down from the carried stack (count dropped) — never a
+// pre-existing home/work-area table that placeCraftingTableWithinReach merely reused. PURE.
+export function tablePlacedFromCarry({ table, tblBefore, tblAfter }) {
+    return !!table && tblAfter < tblBefore;
+}
+
 export function inConstrainedPocket(bot) {
     try {
         if (!bot || !bot.entity || !bot.entity.position) return false;
@@ -525,7 +531,7 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
             // placeCraftingTableWithinReach returns an in-range existing table without placing — only
             // reclaim a table WE put down, never someone else's / a home/work-area table.
             const tblAfter = world.getInventoryCounts(bot)['crafting_table'] || 0;
-            if (craftingTable && tblAfter < tblBefore) { placedTableFromCarry = true; placedTablePos = craftingTable.position; }
+            if (tablePlacedFromCarry({ table: craftingTable, tblBefore, tblAfter })) { placedTableFromCarry = true; placedTablePos = craftingTable.position; }
         } else {
             const near = await world.getNearestBlockAsync(bot, 'crafting_table', 4);
             if (near && bot.entity.position.distanceTo(near.position) <= 4.5) craftingTable = near;
