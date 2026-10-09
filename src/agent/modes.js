@@ -3968,27 +3968,34 @@ const modes_list = [
         }
     },
     {
+        name: 'mobility_observer',
+        description: 'Always-on mobility classifier (state/exits/enclosed → bot._mobility); never moves the body.',
+        interrupts: [],
+        on: true,
+        active: false,
+        always: true,   // ★T-0166 pure observer: must tick even while self_preservation/another mode is active
+        update: async function (agent) {
+            const mob = modes_list.find(m => m.name === 'mobility');
+            if (!mob || !mob.on || mob.active) return;   // own burst running: its state stays as the burst saw it
+            const now = Date.now();
+            if (now - (mob._classifiedAt || 0) < 2000) return;
+            mob.classify(agent, now);
+        }
+    },
+    {
         name: 'mobility',
         maxBurstMs: 90000,   // ★T-0122: longest legit burst ≈ 2×20s capped digs + acquire; past this it's a hung await (mode_latch.js)
         description: 'Continuous god-view modeling of the bot\'s freedom of movement; instant dig-out when entombed.',
         interrupts: ['all'],
         on: true,
         active: false,
-        lastEval: 0, lastState: '', stateSince: 0,
-        update: async function (agent) {
-            // ★机动性状态机 (用户: "bot应该通过上帝视角时刻对周围环境程序化建模,维护
-            // 一个状态机" — 活埋事故的机理: 身体两格是空气(窒息反射不触发)但四面+顶
-            // 全实心(一切移动失败),这个状态在bot的认知里根本不存在,于是它"转身但出
-            // 不去"几小时。blockAt 就是零成本上帝视角 — 每2秒分类:
-            //   FREE     有≥1个可走出口(2高空间+4内落脚)     → 正常
-            //   POCKET   无水平出口但头顶开(可垫/可跳)        → 60s未变则垫/挖上
-            //   ENTOMBED 出口零且头顶实心(活埋)               → 立即挖,不等任何计时
-            //   SWIM     在水里                                → 交给游泳本能
-            // 状态写 bot._mobility(vitals广播给监工),变化记 progress。)
+        lastEval: 0, lastState: '', stateSince: 0, _classifiedAt: 0, _classifiedSt: null,
+        // ★T-0166: classification (state/exits/enclosed → bot._mobility) split from the reflex actions. It never
+        //   touches the body; the always-on mobility_observer calls it every 2s so an active earlier mode
+        //   (self_preservation swim/night hold) can no longer starve it (live 20:46:43: stale 460s+). update() reuses
+        //   the same-tick result. Returns st, or null when classification threw (T-0124 logging kept).
+        classify: function (agent, now = Date.now()) {
             const bot = agent.bot;
-            const now = Date.now();
-            if (now - this.lastEval < 2000) return;
-            this.lastEval = now;
             // ★MAROONED detection inputs (用户: "FREE只管了最小的——寻路找不到路径持续
             // 原地打转怎么判?" 答案=bot自己已有的两个信号流的交集):
             //   ① pathfinder 失败流: path_update 事件里 noPath/timeout 的滚动计数
@@ -4232,8 +4239,29 @@ const modes_list = [
                     try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★CLASSIFY ERROR — state machine not updating: ${e && e.stack ? e.stack.split('\n').slice(0, 2).join(' | ') : e}\n`); } catch (e2) {}
                 }
                 try { bot._mobility = { ...(bot._mobility || {}), state: '?', since: now }; } catch (e2) {}
-                return;
+                return null;
             }
+            this._classifiedAt = now; this._classifiedSt = st;
+            return st;
+        },
+        update: async function (agent) {
+            // ★机动性状态机 (用户: "bot应该通过上帝视角时刻对周围环境程序化建模,维护
+            // 一个状态机" — 活埋事故的机理: 身体两格是空气(窒息反射不触发)但四面+顶
+            // 全实心(一切移动失败),这个状态在bot的认知里根本不存在,于是它"转身但出
+            // 不去"几小时。blockAt 就是零成本上帝视角 — 每2秒分类:
+            //   FREE     有≥1个可走出口(2高空间+4内落脚)     → 正常
+            //   POCKET   无水平出口但头顶开(可垫/可跳)        → 60s未变则垫/挖上
+            //   ENTOMBED 出口零且头顶实心(活埋)               → 立即挖,不等任何计时
+            //   SWIM     在水里                                → 交给游泳本能
+            // 状态写 bot._mobility(vitals广播给监工),变化记 progress。)
+            const bot = agent.bot;
+            const now = Date.now();
+            if (now - this.lastEval < 2000) return;
+            this.lastEval = now;
+            // ★T-0166: mobility_observer (always-on, runs first in the tick) normally classified just now — reuse it;
+            //   re-classifying would double-advance the debounce/ledger side effects. Fallback: classify here.
+            let st = (now - (this._classifiedAt || 0) < 1000) ? this._classifiedSt : this.classify(agent, now);
+            if (st == null) return;
             if (famineBodyFreeze(agent, 'mobility')) return;
             // ★C294: terracotta + sandstone are PICK-REQUIRED (badlands/mesa terrain) but were absent
             // here, so canMarchDig() read them as bare-handable → a pickless MAROONED bot endlessly

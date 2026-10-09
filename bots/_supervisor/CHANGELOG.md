@@ -2905,6 +2905,8 @@
 
 - **★C394-S 浅水上岸台阶: 相邻水格垫块再游跳上去(T-0165)**（2026-10-10，worker-stuck，T-0165）: 实录 10-09 20:42:39→20:46:06 @-40,62,21 1 格深池塘 (底 y61 dirt, 水面 y62, +z 2 格高 spruce_log 树桩挡住游向岸) — swim 反射 stall/i≥30 走脚下垫块 placeBlockUnderFeet, 需脚 ≥y+0.92 而水面漂浮最高 ~y+0.83, ~90 次 exhausted-retries, x,z 3.5min 不变, reflex_watchdog idleWedge 每 20s 打断重进。修: mobility_geom.planWaterStep (相邻 'water' 格 + 底实心 + 上两格空 + 自身 y+2 空, 偏向岸目标) + skills.climbOutViaWaterStep (placeBlock positioning:false 垫台阶 → 朝台阶 forward+jump ≤2.5s 直到 onGround 且出水); swim 反射非深水分支先试台阶再退回垫脚。深水 (无底) / 低顶 → null 照旧。测试 test/water_step_out.test.mjs。
 
+- **★C395-S mobility 分类拆为 always-on 观察者(T-0166, 监工提案接 T-0122)**（2026-10-10，worker-stuck，T-0166）: 实录 10-09 20:46:43 起 bot._mobility 停更 460s+ — ModeController 遇前序 active mode (self_preservation 游泳/过夜守候) 即 break, 排在后面的 mobility 整夜不被调用, vitals.mob/botwatch/watchdog/仲裁快照读陈旧值。修: 分类代码原样搬进 `mobility.classify(agent, now)` (只写 bot._mobility/状态账, 不碰身体, 出错返回 null 保留 T-0124 日志); 新增 always-on `mobility_observer` 每 2s 调 classify (mobility 关或自身 burst 执行中跳过, 免得中途改它的状态账); `mobility.update` 复用同拍 (<1s) 分类结果, 否则自己 classify, 动作分支不变。目标 mobAge ≤2s (自身 burst 期间除外)。测试 test/mobility_observer.test.mjs。
+
 ---
 
 ---
