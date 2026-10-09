@@ -2907,6 +2907,8 @@
 
 - **★C395-S mobility 分类拆为 always-on 观察者(T-0166, 监工提案接 T-0122)**（2026-10-10，worker-stuck，T-0166）: 实录 10-09 20:46:43 起 bot._mobility 停更 460s+ — ModeController 遇前序 active mode (self_preservation 游泳/过夜守候) 即 break, 排在后面的 mobility 整夜不被调用, vitals.mob/botwatch/watchdog/仲裁快照读陈旧值。修: 分类代码原样搬进 `mobility.classify(agent, now)` (只写 bot._mobility/状态账, 不碰身体, 出错返回 null 保留 T-0124 日志); 新增 always-on `mobility_observer` 每 2s 调 classify (mobility 关或自身 burst 执行中跳过, 免得中途改它的状态账); `mobility.update` 复用同拍 (<1s) 分类结果, 否则自己 classify, 动作分支不变。目标 mobAge ≤2s (自身 burst 期间除外)。测试 test/mobility_observer.test.mjs。
 
+- **★C396-S 换址隧道步进遇服务端 ghost 方块: 停滞即补挖重走(T-0161 续)**（2026-10-10，worker-stuck，T-0161）: 诊断 (519d1d6) 实录 10-09 21:06:30-51 @0..6,59,37 ×4 'walk stopped early: cell k/9 … feet=air head=air floor=stone ground=true', bot 停在下一格墙面前 (pos 0.78/2.63/5.63 = 格面-0.3) — 挖掘只在客户端生效, 服务端仍实心。walkDugPath 没有 mineDown 楼梯步进那样的 forceUnghost, 3 次失败 → DUSK_MINE_NIGHT 冷却 5min; 且旧 0.8 到达容差恰好放行"贴在 ghost 面前"的身体 (面前 = 0.8), 失败落到下一格。修: 每格行走带停滞检测 (0.5s 无进展), 未到格则对脚/头格做 ghost 挖 (客户端 air 也 bot.dig, 2s race + stopDigging) 等 250ms 服务端纠正后重走, 每格 ≤2 次; 到达门 0.8→0.6。测试 test/walk_dug_path_ghost.test.mjs。
+
 ---
 
 ---

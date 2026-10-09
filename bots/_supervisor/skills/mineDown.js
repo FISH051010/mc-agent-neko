@@ -50,23 +50,49 @@ function stairSafety(reads) {
 //      viable stair heading from there. Returns null when nothing safe is in reach (honest abort).
 /** Walk a planned same-level line cell by cell, breaking feet/head blocks first (shared by void hop + relocate). */
 export async function walkDugPath(bot, skills, Vec3, bn, path) {
-    for (const [tx, tz] of path) {
+    const dist = (tx, tz) => { const pp = bot.entity.position; return Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)); };
+    for (let ci = 0; ci < path.length; ci++) {
+        const [tx, tz] = path[ci];
         const cyf = Math.floor(bot.entity.position.y);
         for (const by of [cyf + 1, cyf]) {
             const b = bn(tx, by, tz);
             if (b && b.boundingBox === 'block') { try { await skills.breakBlockAt(bot, tx, by, tz); } catch (e) {} }
         }
-        try {
-            await bot.lookAt(new Vec3(tx + 0.5, cyf + 0.5, tz + 0.5), true);
-            bot.setControlState('forward', true);
-            const t0 = Date.now();
-            while (Date.now() - t0 < 1500) { const pp = bot.entity.position; if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) < 0.45) break; await new Promise(r => setTimeout(r, 100)); }
-        } finally { try { bot.setControlState('forward', false); } catch (e) {} }
-        const pp = bot.entity.position;
-        if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) > 0.8) {
-            // diag (T-0161 live 20:33:31 'walk stopped early' at 2.1b, cause unknown): which cell, what blocks it
+        // ★T-0161 ghost (live 21:06:30-51: 'walk stopped early … feet=air head=air', body parked at the next cell's
+        //   face): the dig landed client-side only. Walk until arrived or STALLED (no progress 0.5s); a stall short of
+        //   the cell = server-solid ghost → dig the 'air' cells (the server answers with the real block / breaks it),
+        //   then walk again. ≤2 ghost digs per cell; 0.6 arrival bar (the old 0.8 let a face-parked body "arrive").
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await bot.lookAt(new Vec3(tx + 0.5, cyf + 0.5, tz + 0.5), true);
+                bot.setControlState('forward', true);
+                const t0 = Date.now();
+                let best = dist(tx, tz), bestAt = t0;
+                while (Date.now() - t0 < 1500) {
+                    const d = dist(tx, tz);
+                    if (d < 0.45) break;
+                    if (d < best - 0.05) { best = d; bestAt = Date.now(); }
+                    else if (Date.now() - bestAt > 500) break;      // stalled
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            } finally { try { bot.setControlState('forward', false); } catch (e) {} }
+            if (dist(tx, tz) < 0.45 || attempt === 2) break;
+            for (const by of [cyf + 1, cyf]) {
+                const g = bn(tx, by, tz);
+                if (!g || /water|lava|bedrock/.test(g.name || '')) continue;
+                try {
+                    await bot.lookAt(new Vec3(tx + 0.5, by + 0.5, tz + 0.5), true);
+                    if (g.boundingBox === 'block') await skills.breakBlockAt(bot, tx, by, tz);
+                    else { const dp = bot.dig(g, true); if (dp && dp.catch) dp.catch(() => {}); await Promise.race([dp, new Promise(r => setTimeout(r, 2000))]); }
+                } catch (e) {}
+                try { bot.stopDigging(); } catch (e) {}
+            }
+            await new Promise(r => setTimeout(r, 250));   // let the server's block_change correction land
+        }
+        if (dist(tx, tz) > 0.6) {
+            const pp = bot.entity.position;
             const nmB = (b) => (b && b.name) || '?';
-            bot._walkDugFail = `cell ${path.indexOf(path.find(c => c[0] === tx && c[1] === tz)) + 1}/${path.length} @${tx},${cyf},${tz} feet=${nmB(bn(tx, cyf, tz))} head=${nmB(bn(tx, cyf + 1, tz))} floor=${nmB(bn(tx, cyf - 1, tz))} pos=${pp.x.toFixed(2)},${pp.y.toFixed(2)},${pp.z.toFixed(2)} ground=${!!bot.entity.onGround}`;
+            bot._walkDugFail = `cell ${ci + 1}/${path.length} @${tx},${cyf},${tz} feet=${nmB(bn(tx, cyf, tz))} head=${nmB(bn(tx, cyf + 1, tz))} floor=${nmB(bn(tx, cyf - 1, tz))} pos=${pp.x.toFixed(2)},${pp.y.toFixed(2)},${pp.z.toFixed(2)} ground=${!!bot.entity.onGround}`;
             return false;
         }
     }
