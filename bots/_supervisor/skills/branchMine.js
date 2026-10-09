@@ -42,6 +42,24 @@ export async function pickOreHeading(me, eyePos, pool, reachable) {
     return null;
 }
 
+/**
+ * ★T-0180 ① (death #12 10-10 23:55: night branchMine at y10-14 broke into a dripstone cave holding a zombie +
+ * skeleton; the fight and the flee into the cavity killed it). Did the step just open onto a natural cavity?
+ * Count open cells (air/cave_air/water) in the 3×3×3 box centred two cells ahead along the tunnel heading.
+ * A dug 1×2 tunnel contributes ≤2; a real cave fills the box. ≥8 open → breach.
+ * @param bn (x,y,z) => block ; p feet cell {x,y,z} ; dx,dz heading
+ */
+const BREACH_OPEN_RE = /^(air|cave_air|void_air|water|flowing_water)$/;
+export function cavityBreach(bn, p, dx, dz, threshold = 8) {
+    const cx = p.x + dx * 2, cz = p.z + dz * 2;
+    let open = 0;
+    for (let ox = -1; ox <= 1; ox++) for (let oy = 0; oy <= 2; oy++) for (let oz = -1; oz <= 1; oz++) {
+        const b = bn(cx + ox, p.y + oy, cz + oz);   // feet..feet+2 band
+        if (BREACH_OPEN_RE.test((b && b.name) || 'air')) open++;
+    }
+    return open >= threshold;
+}
+
 export default async function branchMine(bot, ctx, length = 24, targetY = null) {
     const { skills, world, mc, Vec3, log } = ctx;
     // ★方案A (2026-07-06, [[spec-pickaxe-stockpile-redesign]]): 取"够用的最低品级 + 同级剩余耐久最低"的镐
@@ -885,6 +903,31 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
         const beforePos = `${p.x},${p.z}`;
         const ok = await stepInto(new Vec3(p.x + dx, p.y, p.z + dz), dx, dz, `tunnel-step ${i + 1}/${length}`);
         if (!ok) stale++; else tunnelStepsOk++;
+        // ★T-0180 ①: broke into a natural cavity with a hostile around → plug the breach (feet+head of the next cell
+        //   toward the cave), mark the heading, and back off this tunnel instead of walking into an unexplored,
+        //   mob-filled cave (death #12). Human: you hear/see a cave full of mobs → wall it off and mine elsewhere.
+        try {
+            const fp = bot.entity.position.floored();
+            const _bn = (x, y, z) => bot.blockAt(new Vec3(x, y, z));
+            const _hostile16 = Object.values(bot.entities || {}).some(e => { try { return e && e !== bot.entity && e.position && mc && mc.isHostile && mc.isHostile(e) && e.position.distanceTo(bot.entity.position) <= 16; } catch (e2) { return false; } });
+            if (_hostile16 && cavityBreach(_bn, fp, dx, dz)) {
+                const mat = (skills.resolveCapBlock && skills.resolveCapBlock(bot)) || null;
+                let sealed = 0;
+                if (mat) {
+                    for (const yy of [fp.y, fp.y + 1]) {
+                        const c = _bn(fp.x + dx, yy, fp.z + dz);
+                        if (c && BREACH_OPEN_RE.test(c.name || '')) {
+                            try { if (await skills.placeBlock(bot, mat, fp.x + dx, yy, fp.z + dz, 'side', true, { positioning: false })) sealed++; } catch (e) {}
+                        }
+                    }
+                }
+                try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx: dx, sz: dz, at: Date.now() }); } catch (e) {}
+                log(bot, `branchMine: broke into a cavity with a hostile ≤16b — sealed ${sealed} cell(s) with ${mat || 'nothing'}, abandoning heading ${dx},${dz} (T-0180)`);
+                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [branchMine] ★cavity breach + hostile ≤16b @${fp.x},${fp.y},${fp.z} heading ${dx},${dz} — sealed ${sealed} with ${mat || '-'}, backing off (T-0180)\n`); } catch (e) {}
+                motion('branchMine.tunnel.stop', { reason: 'cavity-breach-hostile', step: i + 1, length, sealed });
+                return runProgress();
+            }
+        } catch (e) {}
         if ((await mineNearby()) === false) return false;
         // Standard branch-mining rib: glance down both side walls periodically so flanking
         // seams get exposed/mined, not just the ore the spine happens to slice through.

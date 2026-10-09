@@ -28,7 +28,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
@@ -718,7 +718,16 @@ const modes_list = [
                 drop: droppy(ux, uz),
             });
             // (fan-out heading choice lives in mobility_geom.chooseFleeHeading — pinned by test/flee_heading.test.mjs)
-            const { hx, hz, needJump, found: _found } = chooseFleeHeading(dx, dz, probe);
+            const { hx, hz, needJump, found: _found, hold: _edgeHold } = chooseFleeHeading(dx, dz, probe);
+            if (_edgeHold) {
+                // ★T-0180: boxed in AND the only push direction is a cliff → stop at the edge, never sprint off it.
+                try { bot.setControlState('forward', false); bot.setControlState('sprint', false); bot.setControlState('jump', false); } catch (e) {}
+                if (Date.now() - (this._edgeHoldLogAt || 0) > 5000) {
+                    this._edgeHoldLogAt = Date.now();
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] flee: every heading blocked/droppy and straight ahead is a drop — holding at the edge, not jumping (T-0180) hp=${Math.round(bot.health)}\n`); } catch (e) {}
+                }
+                return;
+            }
             // ★C334-A 真逼角(全 360° head 全堵/全 droppy)+有镐 → "翻越"=向 away 方向凿穿头层 1 格开口
             // (旧 fallback 只撞墙)。让被 2 格墙完全箱住的 bot 自己挖出逃生口而非原地被压死。一次一格,
             // 数拍凿通; 无镐则退回撞墙 fallback(总比不动强)。掘进方向=最贴近 away 的朝向(dx,dz)。
@@ -774,6 +783,22 @@ const modes_list = [
             //   (≤4s), 投射一个 24 格远点当伪目标 → 继续朝原方向冲。此赋值在 for 循环外只算一次 = 入口快照,
             //   不被逃跑自身位移污染。仍受下方 towardThreat 守卫: 该方向正对近处威胁(迎面遇怪)才改逃离,
             //   怪在身后(行军被追的最常见形态)则照冲原向 → 正是用户要的"继续朝目标, 不乱窜"。
+            // ★T-0180 ③: UNDERGROUND, back off along our own breadcrumbs (walked = no unknown drops / pointed
+            //   dripstone) instead of continuing the pre-hit heading — death #12's pre-hit heading WAS into the cave.
+            try {
+                const _mePos = bot.entity.position;
+                const _underground = _mePos.y < 50 || !!(bot._mobility && bot._mobility.enclosed);
+                if (_underground) {
+                    const _hs0 = this.nearbyHostiles(bot);
+                    let _thr = null, _td = Infinity;
+                    for (const e of _hs0) { if (e && e.position) { const d = e.position.distanceTo(_mePos); if (d < _td) { _td = d; _thr = { x: e.position.x, z: e.position.z }; } } }
+                    const _bt = backtrackTarget(bot._breadcrumbs, _mePos, _thr);
+                    if (_bt) {
+                        goalPt = { x: _bt.x, y: _bt.y, z: _bt.z };
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] flee underground → backtrack along own path to ${Math.round(_bt.x)},${Math.round(_bt.y)},${Math.round(_bt.z)} (T-0180)\n`); } catch (e) {}
+                    }
+                }
+            } catch (e) {}
             if (!goalPt) {
                 try {
                     if (bot._recentMoveDir && Date.now() - (bot._recentMoveDirAt || 0) < 4000) {
@@ -3405,6 +3430,16 @@ const modes_list = [
                 const p = bot && bot.entity && bot.entity.position;
                 if (!p) return;
                 const now = Date.now();
+                // ★T-0180 ③ breadcrumbs: cells we actually walked (every ≥2b, on ground, last 40) — sprintFlee backtracks
+                //   along these underground instead of charging into an unexplored cave.
+                try {
+                    const bc = (bot._breadcrumbs = bot._breadcrumbs || []);
+                    const lastC = bc[bc.length - 1];
+                    if (bot.entity.onGround && (!lastC || Math.hypot(p.x - lastC.x, p.y - lastC.y, p.z - lastC.z) >= 2)) {
+                        bc.push({ x: p.x, y: p.y, z: p.z, t: now });
+                        if (bc.length > 40) bc.shift();
+                    }
+                } catch (e) {}
                 this._trail.push({ x: p.x, z: p.z, t: now });
                 while (this._trail.length && now - this._trail[0].t > 1200) this._trail.shift();
                 const old = this._trail.find(q => now - q.t >= 500);
@@ -6582,7 +6617,7 @@ const modes_list = [
                     // (0) 贴脸能打的怪 → 让位常驻防御反射 (只是"本 tick 不派夜间任务"的协调, 不新增行为; self_defense 反射另在别处常驻).
                     if (commitToFight) return { decision: 'FIGHT', reason: `point-blank melee d=${Number.isFinite(closest) ? closest.toFixed(1) : '?'}` };
                     // ── 用户令 2026-07-08 夜间行为白名单 (有优先级): 近床(≤15) > [炼铁·保留] > 下矿 > 挖三填一(就地|≤15格找地) > 黄昏远床 > 裸hold ──
-                    // ★T-0186 (监工: T-0185 推广到整条链): 链写成候选数组, pickFirstNotCooled 挑第一个"条件成立且 kind 未在派发冷却"的档 —
+                    // ★T-0180 (监工: T-0185 推广到整条链): 链写成候选数组, pickFirstNotCooled 挑第一个"条件成立且 kind 未在派发冷却"的档 —
                     //   否则某档冷却时决策仍返它 → 提案被冷却过滤 → 整夜无夜计划。条件保持懒求值 (冷却档的扫描不跑)。链序/条件/理由与原链一致。
                     // ★监工加急#6 (18:26:50Z 实录: hp=1 夜链选 MINE_THROUGH_NIGHT → mineDiamonds): 下矿门同口径 hp<10 关 —
                     //   回落到挖三填一封闭; 否则提案端剔掉夜挖后夜里无提案 = 站在外面过夜。

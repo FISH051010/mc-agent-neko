@@ -308,3 +308,26 @@ test('T-0174 hotfix: stale bot.oxygenLevel on dry land is not "drowning" (23:03:
     assert.equal(drowningPriority({ headInWater: false, feetInWater: true, oxygen: 6 }), true);
     assert.equal(drowningPriority({ headInWater: true, feetInWater: true, oxygen: 20 }), true);
 });
+
+test('T-0180: boxed-in flee never sprints off a ledge — hold at the edge (death #12: hp5.7, ~8-block cave drop)', async () => {
+    const { chooseFleeHeading } = await import('../src/agent/mobility_geom.js');
+    // every heading: head blocked except straight ahead, which is a drop → no safe heading
+    const probe = (ux, uz) => (Math.abs(ux - 1) < 1e-6 && Math.abs(uz) < 1e-6)
+        ? { foot: false, head: false, above: false, water: false, drop: true }
+        : { foot: true, head: true, above: true, water: false, drop: false };
+    const r = chooseFleeHeading(1, 0, probe);
+    assert.equal(r.found, false);
+    assert.equal(r.hold, true, 'straight push direction is a cliff → hold');
+    // boxed in by WALLS only (no drop) → keep the old push/dig-through fallback
+    const walls = () => ({ foot: true, head: true, above: true, water: false, drop: false });
+    assert.equal(chooseFleeHeading(1, 0, walls).hold, false);
+});
+
+test('T-0180③: underground flee backtracks along cells we walked, never back into the mob (death #12 charged into the cave)', async () => {
+    const { backtrackTarget } = await import('../src/agent/mobility_geom.js');
+    const crumbs = [{ x: -20, y: 12, z: 0 }, { x: -12, y: 12, z: 0 }, { x: -6, y: 12, z: 0 }, { x: -2, y: 12, z: 0 }];
+    const me = { x: 0, y: 12, z: 0 };
+    assert.deepEqual(backtrackTarget(crumbs, me, { x: 4, z: 0 }), { x: -6, y: 12, z: 0 }, 'nearest walked cell ≥6b away, away from the mob');
+    assert.equal(backtrackTarget(crumbs, me, { x: -10, z: 0 }), null, 'the way back is where the mob is → no backtrack');
+    assert.equal(backtrackTarget([], me, null), null);
+});

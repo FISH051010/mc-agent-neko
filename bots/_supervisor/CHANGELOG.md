@@ -12,7 +12,15 @@
 
 ---
 
-## C377. ★让位普查首批 + 陈旧 O2 误判: 4 处高危让位补"接收方就绪"前提, C376 兜底按实效判掌舵, O2 只在身体在水里时可信（modes.js + framework/mobility_signals + skills.drowningPriority 需重启,T-0182/T-0174,worker-death,⏳待重启）
+## C378. ★破入洞穴三件套: 挖穿有怪空腔→封口弃向; 地下逃跑沿来路回撤; 无路可逃时不跳崖（branchMine.js 热加载 + modes.js/mobility_geom.js 需重启,T-0180 复发,worker-death,⏳待重启）
+
+**证据**: death #12 10-09 23:55:25Z cause=unknown @-1,-7,-30 夜 0 甲 石剑, 背包 raw_iron 29 全失。branchMine 在 y10-14 挖铁破入钟乳石洞(dig dripstone_block)内有僵尸+骷髅; 23:55:11→13 y12.8→4 坠落 -5hp; 23:55:19 交战 hp5.7; 23:55:21-24 self_preservation forward,sprint 冲向洞穴深处 y1.2→-1.2→死(~8 格落差/尖钟乳石)。监工: T-0180 复发, 约定的① 必做 + ③。
+**机理**: ① branchMine 的夜间敌对检查 y<50 直接返回 null, 地下无"破口"概念, 挖穿天然空腔照走。③ sprintFlee 地下沿"挨打前的行进方向"冲 —— 那正是空腔方向(未知落差)。另: chooseFleeHeading 全向不通时的兜底"直冲+跳"不看直冲方向是不是悬崖 → 冲下 8 格。
+**改动**: branchMine.js 纯函数 `cavityBreach(bn,p,dx,dz)`(前方两格为中心 3×3×3 内空气/水 ≥8 格) — 隧道每步后: 挖穿空腔 且 16b 内有敌对 → 用 resolveCapBlock 料补封前方脚/头两格(positioning:false), 记入 `_mineDownFluidAvoid` 弃向, 停止本隧道。mobility_geom `backtrackTarget(crumbs, me, threat)` + heading_tracker 记面包屑(落地每 ≥2b, 留 40); sprintFlee 地下(y<50 或封闭)优先回撤到 6-20b 外、离怪更远的面包屑。`chooseFleeHeading` 兜底方向本身是落差 → 返回 hold, fleeMove 原地停住不跳崖。
+**可证伪预测**: 地下挖穿有怪洞穴出 `★cavity breach + hostile ≤16b … sealed N … backing off (T-0180)`; 地下逃跑出 `flee underground → backtrack along own path`; 全向不通且前方悬崖出 `holding at the edge, not jumping`。不再出现"逃跑冲下洞穴摔死"。
+**回滚**: revert(branchMine 热加载; modes/mobility_geom 需重启)。回归 test/branchmine_breach.test.mjs + seal_cap_geometry 'T-0180: boxed-in flee…' / 'T-0180③…'。
+
+## C377. ★让位普查首批 + 陈旧 O2 误判: 4 处高危让位补"接收方就绪"前提, C376 兜底按实效判掌舵, O2 只在身体在水里时可信（modes.js + framework/mobility_signals + skills.drowningPriority 需重启,T-0182/T-0174,worker-death,🟡已上线 23:05:50Z）
 
 **证据**: (a) 让位普查(Explore, 37 处, 大多不核对接收方): 高危 #10 armoredZombieBrawl(穿甲无武器/一群也"死战不逃", self_defense 无武器不打 = death #8 形状)、#13/#23 swarm 计数口径不一(self_defense 原始 isHostile vs self_preservation 过滤后 → 两边都不接)、#1 self_preservation 对 MAROONED/ENTOMBED 整体让位连岩浆/着火/开放水溺水分支也跳过、#3 tableRecoveryHold 无 O2/受伤检查把 ENTOMBED 挖出原地 park、#36 C376 兜底"有 mode active/按着键/寻路 isMoving 即算掌舵"太宽、bunker 动作在 45s 冷却内是 no-op。(b) 23:03 实机: 陆地 y68 满血, bot.oxygenLevel 溺死重生后陈旧停在 -1..2 → C373 drowningPriority(O2<12) 误判 → mineDown 三连中止 → GO_UNDERGROUND 冷却(4532302 已先热修 mineDown)。
 **改动**: mobility_signals 纯函数 `dangerBlocksHold`(头在水里/3s 内掉血 → 不许 hold)、`brawlHandoffReady`(有武器含后备镐 且 贴脸僵尸 1..2)、`marchYieldAllowed`(近身威胁/着火岩浆/开放水溺水不让位)。modes: tableRecoveryHold 用 dangerBlocksHold; armoredZombieBrawl 用 brawlHandoffReady; sp 的 MAROONED/ENTOMBED 让位用 marchYieldAllowed; self_defense swarmed 改用 self_preservation.nearbyHostiles 同口径。C376 兜底"掌舵"改为实效(3s 内位移≥0.8b 或正在挖), bunker 前清 bunkerCooldownUntil。skills.drowningPriority 加 feetInWater(O2 仅在脚/头在水里时算), guardedDig 调用补脚格; dangerBlocksHold 不看 O2。

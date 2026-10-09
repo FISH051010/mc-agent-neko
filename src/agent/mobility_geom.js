@@ -65,6 +65,26 @@ export function sealedEscapeStep({ episode, sr, enc, night, now, debounceSealed,
 
 // fleeMove heading choice (moved verbatim from modes.js). dx,dz = unit vector away from the threat;
 // probe(ux,uz) → {foot, head, above, water, drop}. Returns {hx, hz, needJump, found}.
+/**
+ * ★T-0180 ③ (death #12 10-10 23:55: night branchMine broke into a dripstone cave; self_preservation then sprinted
+ * DEEPER into the unexplored cavity — unknown drops/pointed dripstone — and died at y-7). Underground, flee back
+ * along the way we came: pick the most recent breadcrumb (cells we actually walked) 6..20b away that is farther
+ * from the nearest threat than we are now. null → caller keeps its old target logic.
+ * @param crumbs [{x,y,z,t}] oldest→newest ; me {x,y,z} ; threat {x,z}|null
+ */
+export function backtrackTarget(crumbs, me, threat) {
+    if (!Array.isArray(crumbs) || !crumbs.length || !me) return null;
+    const dMe = threat ? Math.hypot(me.x - threat.x, me.z - threat.z) : 0;
+    for (let i = crumbs.length - 1; i >= 0; i--) {
+        const c = crumbs[i];
+        const d = Math.hypot(c.x - me.x, c.z - me.z);
+        if (d < 6 || d > 20) continue;
+        if (threat && Math.hypot(c.x - threat.x, c.z - threat.z) <= dMe) continue;   // don't run back INTO the mob
+        return c;
+    }
+    return null;
+}
+
 export function chooseFleeHeading(dx, dz, probe) {
     let hx = dx, hz = dz, needJump = true;   // boxed-in fallback: jump + push straight
     let _found = false;
@@ -87,7 +107,13 @@ export function chooseFleeHeading(dx, dz, probe) {
             if (!p.head && !p.drop && (!pass.dry || !p.water) && !(p.foot && p.above)) { hx = ux; hz = uz; needJump = p.foot; _found = true; break; }   // head clear + no ledge (+dry) + 非2格唇 → run
         }
     }
-    return { hx, hz, needJump, found: _found };
+    // ★T-0180 (death #12 10-10 23:55:25 @y-7, hp5.7: every heading blocked/droppy → the boxed-in fallback pushed
+    //   forward+sprint+jump straight off an ~8-block cave drop). The fallback is for WALLS (push / dig through);
+    //   if the straight heading is itself a LEDGE, hold at the edge instead — a fleeing human stops at a cliff,
+    //   they don't jump it. Callers stop moving on `hold` and let fight/bunker handle the threat.
+    let hold = false;
+    if (!_found) { try { hold = !!probe(hx, hz).drop; } catch (e) {} }
+    return { hx, hz, needJump, found: _found, hold };
 }
 
 // ★C305-A (T-0036) POCKET escape plan, PURE (choice logic moved verbatim from modes.js mobility POCKET branch).
