@@ -6449,6 +6449,27 @@ export function breakWouldFlood(blockAt, pos) {
 }
 
 /**
+ * ★T-0172 ③ 重力族总闸判据 (death #3/#7/#9 + 普查: 11 处"挖头顶/挖了往上爬"调用点无重力检查 —
+ * pillarUp/goToSurface/stepEdgeAssist/placeBlockNearby 垫柱/chopWood digToSurface/edge_unstick/unstuck…)。
+ * 被挖格在 bot 身体所占列 (碰撞箱 ±0.3) 的脚上方 2..4 格, 且它本身或其上 3 格内有重力块 → 挖了整列
+ * 塌进 bot 身上。头格 (脚+1) 不拦: 那格实心说明已在窒息, 不能挡自救。
+ * @param botPos bot.entity.position (浮点) ; blockPos 被挖方块坐标 (整数)
+ */
+export function overheadGravityRisk(blockAt, botPos, blockPos) {
+    if (!botPos || !blockPos) return false;
+    const feetY = Math.floor(botPos.y);
+    const dy = blockPos.y - feetY;
+    if (dy < 2 || dy > 4) return false;
+    const xs = new Set([Math.floor(botPos.x - 0.3), Math.floor(botPos.x + 0.3)]);
+    const zs = new Set([Math.floor(botPos.z - 0.3), Math.floor(botPos.z + 0.3)]);
+    if (!xs.has(blockPos.x) || !zs.has(blockPos.z)) return false;
+    for (let y = blockPos.y; y <= blockPos.y + 3; y++) {
+        if (GRAVITY_BLOCK_RE.test(((blockAt(new Vec3(blockPos.x, y, blockPos.z)) || {}).name) || '')) return true;
+    }
+    return false;
+}
+
+/**
  * ★T-0172 ② (death #9 窒息自救: reflex_watchdog 'SUFFOCATION self-rescue: head=gravel' 每 1.5s 原地挖头顶
  * 砂砾 ×6, 每挖一块上面又落一块, hp13→1→死)。头格是重力块且其上还压着重力块 = 原地挖永远挖不完;
  * 人类横跨一步离开柱子底下。选相邻列: 脚/头非液体非重力、脚下有实心、该列上方 3 格无重力块; 空格优先。

@@ -12,6 +12,14 @@
 
 ---
 
+## C372. ★★重力族收口: bot.dig 总闸拒挖"压在自己头顶的重力列"（modes.js bot.dig master gate + skills.overheadGravityRisk 需重启,T-0172③,worker-death,⏳待重启）
+
+**证据**: 重力块致死已 4 次换入口(death #3 SEALED 脱困 C363 / #7 mineDown C367 / #9 surfaceUp C370 + 窒息自救 C371)。全仓普查(Explore agent)另有 11 处"挖头顶/挖了往上爬"调用点无重力检查: skills.pillarUp clearJumpColumn(goToSurface/溺水石穴/prepNether/slayDragon 共用)、stepEdgeAssist own-above-notch(goToGoal 卡住处理/branchMine)、placeBlockNearby 两处垫柱、chopWood digToSurface 簇(816/849/880/774/905/499)/LEASH coffin/pinned-stair、modes edge_unstick capped-head/headroom-break、unstuck step-edge notch、rubberband resync、self_preservation 溺水上挖+pillarUp; 另 mineflayer-pathfinder 自身挖路也走 bot.dig。
+**机理**: 每个调用点各写各的"挖头顶", 重力判据只在被死亡点名的那一处补过 —— 补丁永远追不上入口。所有挖掘最终都经 modes 的 bot.dig 总闸(C360-XR/PICK-TIER 已在此兜底), 判据应下沉到这里一份。
+**改动**: skills.js 纯函数 `overheadGravityRisk(blockAt, botPos, blockPos)`: 被挖格在 bot 碰撞箱(±0.3)所占列、脚上方 2..4 格, 且其本身或其上 3 格有重力块 → true。modes bot.dig 总闸在 x-ray 闸之后: true → 记 progress(5s 节流) + throw `overhead gravity column … sidestep first`(调用方按挖掘失败处理/换方向)。头格(脚+1)不拦(已在窒息, 不挡自救; 砂砾柱下自救走 C371 横跨)。
+**可证伪预测**: progress 出 `[dig-gate] ★overhead gravity column — refused dig …`; 此后无 suffocation 死亡来自"挖自己头顶"。风险: 寻路器在砂砾区 tower 失败重算/某技能在砂砾井里原地重试空转 —— 若出现同坐标 refused 刷屏 + 零位移, 给该调用点补横挪(参照 C370 sidestepOutOfGravity)。
+**回滚**: revert 本提交, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0172③: …'。
+
 ## C371. ★窒息自救不在砂砾柱下原地挖头: 头格+上方仍是重力块 → 横跨一步出柱（modes.js reflex_watchdog + skills.suffocationEscapeDir 需重启,T-0172②,worker-death,⏳待重启）
 
 **证据**(监工): death #9 10-09 21:46:04-15Z `reflex_watchdog ★SUFFOCATION self-rescue: head=gravel` 约每 1.5s ×6, hp13→10→7→4→1→0; 每挖掉头顶一块砂砾上面又落一块。

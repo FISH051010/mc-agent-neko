@@ -5395,6 +5395,23 @@ const modes_list = [
                         }
                     }
                 }
+                // ★T-0172③ OVERHEAD-GRAVITY 总闸 (重力族第 4 次换入口出事后的收口: death #3 SEALED / #7 mineDown /
+                //   #9 surfaceUp+窒息自救; 普查 11 处挖头顶/挖了往上爬的调用点无重力检查)。挖 bot 身体所占列脚上方
+                //   2..4 格、且其本身或上方 3 格有重力块 = 整列塌进身上 → 拒挖 (throw, 调用方按挖掘失败换路/横挪)。
+                //   头格(脚+1)不拦 (已在窒息, 不挡自救)。
+                if (block && block.position) {
+                    let _ogr = false;
+                    try { _ogr = skills.overheadGravityRisk((p) => bot.blockAt(p), bot.entity.position, block.position); } catch (e) {}
+                    if (_ogr) {
+                        if (Date.now() - (bot._ogrLogAt || 0) > 5000) {
+                            bot._ogrLogAt = Date.now();
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [dig-gate] ★overhead gravity column — refused dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} above own feet y=${Math.floor(bot.entity.position.y)} skill=${bot._currentSkill || '-'} (T-0172)\n`); } catch (e) {}
+                        }
+                        const err = new Error(`overhead gravity column: ${block.name} above own head — sidestep first`);
+                        write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
+                        throw err;
+                    }
+                }
                 // ★2026-07-14 PICK-TIER ORE GATE (用户: "偶发性用石镐挖钻石"): 破坏矿石(_ore/ancient_debris)时,
                 //   手上的镐必须能【真正采下】它 —— 石镐挖钻矿/金矿/红石矿会把方块敲碎且零掉落 = 纯浪费。这是
                 //   bot.dig 总闸的 BACKSTOP: 技能层(skills.js breakBlockAt 干净 return false / safeDig 返回

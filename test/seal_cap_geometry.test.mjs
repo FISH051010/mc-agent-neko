@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon, suffocationEscapeDir } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon, suffocationEscapeDir, overheadGravityRisk } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -229,4 +229,21 @@ test('T-0172②: suffocating under a gravel COLUMN → step sideways, not dig th
     // a single gravel block on the head (nothing above) → null: digging it once clears it
     const single = (p) => (p.x === 0 && p.z === 0 && p.y === 47) ? { name: 'air', boundingBox: 'empty' } : blockAt(p);
     assert.equal(suffocationEscapeDir(single, new Vec3(0, 45, 0)), null);
+});
+
+test('T-0172③: master dig gate refuses digging a gravity column standing over the bot (11 unguarded dig-up sites)', () => {
+    const pos = new Vec3(10.5, 45, 20.5);   // feet y45, own column (10,20)
+    const col = (over) => (p) => ({ name: over[`${p.x},${p.y},${p.z}`] || 'stone', boundingBox: 'block' });
+    // gravel two above the head: digging it drops the column onto us
+    assert.equal(overheadGravityRisk(col({ '10,47,20': 'gravel' }), pos, new Vec3(10, 47, 20)), true);
+    // stone at feet+2 holding gravel at feet+3 — removing the stone releases the gravel
+    assert.equal(overheadGravityRisk(col({ '10,48,20': 'gravel' }), pos, new Vec3(10, 47, 20)), true);
+    // plain stone overhead → fine
+    assert.equal(overheadGravityRisk(col({}), pos, new Vec3(10, 47, 20)), false);
+    // head cell (feet+1) is never gated — that is already suffocation self-rescue
+    assert.equal(overheadGravityRisk(col({ '10,46,20': 'gravel', '10,47,20': 'gravel' }), pos, new Vec3(10, 46, 20)), false);
+    // a gravel column in a NEIGHBOURING column (tunnelling sideways) is not ours
+    assert.equal(overheadGravityRisk(col({ '12,47,20': 'gravel' }), pos, new Vec3(12, 47, 20)), false);
+    // straddling a cell edge (x=10.75 → body spans x10..11): the neighbouring column counts
+    assert.equal(overheadGravityRisk(col({ '11,47,20': 'gravel' }), new Vec3(10.75, 45, 20.5), new Vec3(11, 47, 20)), true);
 });
