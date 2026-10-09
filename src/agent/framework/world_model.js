@@ -765,7 +765,7 @@ export function proposeTasks(world, bot) {
         preIronDescend: !hasIronTierPick(w),
         diamondYield: hasIronTierPick(w) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < DIAMOND_FLOOR,
     });
-    if (overworld && kit.picks >= 1 && !bedKnown(bot) && _bedPri != null) {   // ★T-0092 completion (worker-sync): GET_BED@50 was an UNFULFILLABLE wool-errand (no wool→no bed→bedKnown永false) that OUTRANKED GET_DIAMOND@46, so an iron-tooled+armored bot never descended for diamond. Yield GET_BED exactly when the bot is diamond-ready (mirror the GET_DIAMOND gate) so GET_DIAMOND wins → mineDiamonds descends. Safe: pure re-prioritize, does NOT gate pick/bed-MAKING (keepInventory ON so a delayed respawn-anchor loses nothing).
+    if (overworld && kit.picks >= 1 && !bedKnown(bot) && _bedPri != null && bedErrandFeasible(bot)) {   // ★T-0119: never propose a guaranteed setBed no-op   // ★T-0092 completion (worker-sync): GET_BED@50 was an UNFULFILLABLE wool-errand (no wool→no bed→bedKnown永false) that OUTRANKED GET_DIAMOND@46, so an iron-tooled+armored bot never descended for diamond. Yield GET_BED exactly when the bot is diamond-ready (mirror the GET_DIAMOND gate) so GET_DIAMOND wins → mineDiamonds descends. Safe: pure re-prioritize, does NOT gate pick/bed-MAKING (keepInventory ON so a delayed respawn-anchor loses nothing).
         // ★T-0110 (worker-frozen 0701): RE-ENABLE the @44 yield the T-0060 note below deferred. That
         // note's exact blocker — "@44 → GO_UNDERGROUND → mineDown NO-OP-spun → HARD-PINNED, because the
         // stuck-relocate wasn't firing; real fix = migrate-away-from-stuck-spot + mineDown-relocate-on-
@@ -1898,6 +1898,24 @@ export function woolPathVisible(bot) {
         const me = bot.entity && bot.entity.position;
         if (!me) return false;
         return Object.values(bot.entities || {}).some(e => e && e.name === 'sheep' && e.position && e.position.distanceTo(me) <= 48);
+    } catch (e) { return false; }
+}
+
+/** ★T-0119: can setBed make ANY progress right now? Mirrors its paths exactly: a bed / ≥3 wool in the
+ *  pack, ≥4 string (→1 wool), a sheep within its 64b hunt range, or a sword + spider within its 48b
+ *  string hunt. None of these → setBed deterministically "defer"s, so proposing GET_BED is proposing a
+ *  guaranteed no-op that, once committed, sticks over higher live proposals (live 10-10 00:17: GET_BED@44
+ *  held the body over REPLENISH_KIT@62 for 3 NO-OPs every 5 min). Human: no sheep in sight → do something
+ *  else, come back when sheep show up (entities load as the bot roams, so this re-arms by itself). */
+export function bedErrandFeasible(bot) {
+    try {
+        if (woolPathVisible(bot) || invCount(bot, /^string$/) >= 4) return true;
+        const me = bot.entity && bot.entity.position;
+        if (!me) return false;
+        const ents = Object.values(bot.entities || {});
+        const near = (re, r) => ents.some(e => e && re.test(e.name || '') && e.position && e.position.distanceTo(me) <= r);
+        if (near(/^sheep$/, 64)) return true;
+        return invCount(bot, /_sword$/) >= 1 && near(/^spider$/, 48);
     } catch (e) { return false; }
 }
 

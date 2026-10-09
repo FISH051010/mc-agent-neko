@@ -2797,6 +2797,8 @@
 
 - **★C373-S frozen-alive 豁免合法封顶夜 hold(T-0062 误报)**（2026-10-10，worker-stuck，T-0062）: 证据: 10-10 00:09 复发 #2018 @71,65,-2 mob=ENTOMBED,progress 每 30s `sealed night hold: w=..`,world_model.json 新鲜 phase=night coverReal=true actionable=0 hp14,events.log 静默 128s → FROZEN-ALIVE 报"冻结假活"。机理: 判据(pos+hp 钉 2min ∧ events 静默 ≥120s)的注释假设"合法夜 hold 持续刷 events",现行代码夜 hold 不再写 events.log → 静止+安静的合法庇护被判冻死(反复 reopen 观察中的单)。**改**(④ `botwatch-trackers.mjs`): 新 `legitNightHold(s)`(wm 新鲜 ≤20s ∧ isDay=false ∧ coverReal ∧ actionable=0 ∧ !takingDamage ∧ hp>0,与 mobility-stuck 同口径),`frozenAliveActive` 排除之;T-0058 真冻死(hp0/受击/wm 陈旧/白天/暴露/有威胁)照报。**回归测试**: `test/frozen_alive_night_hold.test.mjs`(2 条 `T-0062:`,6 种真冻死反例)。**可证伪预测**: 夜里封顶 hold 不再开/复发 frozen-alive-hang 单;白天或受击的钉死仍报。**风险**: 封顶夜里真 hang 要到天亮才报(宁缺毋滥)。**回滚**: revert;需重启 botwatch。
 
+- **★C374-S 决策层不再提必定 NO-OP 的 GET_BED(T-0119)**（2026-10-10，worker-stuck，T-0119）: 证据(10-10 00:17 实机): 死亡重生 1 木镐 0 木,REPLENISH_KIT@62 已提案,commitment 却粘在 GET_BED@44 → prepNether→setBed `no sheep within 64 ... defer` 3 连 NO-OP,靠 T-0115 冷却才放手,冷却 5min 一过复燃。机理: `bedProposalPriority` 在 woolPath=false 时照返 44,而 prepNether(goals 已退役)的 GET_BED 只剩 setBed,setBed 的全部推进路径 = 床/毛≥3 / 线≥4 / 64b 内羊 / 有剑且 48b 内蜘蛛,全不满足即确定性 defer → 决策层在提 skill 层必拒的任务(noop-dispatch 大类),且 commitment 粘性让 @44 压住 @62。**改**(① `framework/world_model.js`): 新 `bedErrandFeasible(bot)` 精确镜像 setBed 推进路径,GET_BED push 门加之(看不到羊先干别的,实体随走动加载即自然复燃)。`bedProposalPriority`/T-0043 优先级不变。**回归测试**: `test/bed_errand_feasible.test.mjs`(2 条 `T-0119:`,proposeTasks 驱动)。**可证伪预测**: 无羊无毛期间 progress 不再出现 `setBed: no sheep within 64 ... defer` + `★dispatch-cooldown GET_BED` 周期;羊进 64b 内 GET_BED 立即重提。**回滚**: revert;需重启 main.js。
+
 ---
 
 ---
