@@ -34,3 +34,19 @@ test('T-0111: 无 interrupt 时照常收台; 背包已有台则不动', async ()
     assert.equal(inv.crafting_table, 1);
     assert.equal(bot.interrupt_code, false);
 });
+
+test('T-0111 复发: 台已被敲成掉落物 (6 格内无台方块) → 也要捡回台', async () => {
+    const inv = { wooden_pickaxe: 1 };
+    let dropped = true;
+    const bot = { interrupt_code: true, death_abort: false };
+    const ctx = {
+        world: { getInventoryCounts: () => ({ ...inv }), getNearestBlocksWhereAsync: async () => [] },
+        skills: {
+            breakBlockAt: async () => {}, ensurePickupAt: async () => false,
+            pickupNearbyItems: async () => { if (bot.interrupt_code) return false; if (dropped) { inv.crafting_table = 1; dropped = false; } return true; },
+        },
+    };
+    assert.equal(await reclaimTable(bot, ctx, { maxMs: 1000 }), true);
+    assert.equal(inv.crafting_table, 1);
+    assert.equal(bot.interrupt_code, true);
+});

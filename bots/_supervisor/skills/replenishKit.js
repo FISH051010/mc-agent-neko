@@ -37,11 +37,13 @@ export async function reclaimTable(bot, { skills, world }, { maxMs = 6000 } = {}
     if (has()) return true;
     let tb = null;
     try { tb = (await world.getNearestBlocksWhereAsync(bot, (b) => b && b.name === 'crafting_table', 6, 1))[0]; } catch (e) {}
-    if (!tb) return false;
+    // ★T-0111 复发 (17:00:51): craftRecipeLocal 的 T-0079 收台把台敲成了掉落物却没捡 → 6 格内已无台方块,
+    //   只剩地上的台物品。台方块找不到时也要把近处掉落物捡回 (台在其中)。
     const masked = !!bot.interrupt_code;
     if (masked) bot.interrupt_code = false;
     try {
         const work = (async () => {
+            if (!tb) { await skills.pickupNearbyItems(bot, 6).catch(() => {}); return; }
             const p = tb.position;
             await skills.breakBlockAt(bot, p.x, p.y, p.z).catch(() => {});
             if (!has() && skills.ensurePickupAt) await skills.ensurePickupAt(bot, p, { radius: 4 }).catch(() => {});
