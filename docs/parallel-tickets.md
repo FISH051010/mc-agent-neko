@@ -144,6 +144,7 @@ loop:
 | 06031ef (worker-tests) | src/agent/modes.js + src/agent/swim_progress.js | main.js | mobility 基础分类/SWIM tick(T-0098)/封顶水牢溺水让位(T-0104)原样抽出，无行为变化 |
 | 5251b5f (worker-tests) | src/agent/modes.js + src/agent/framework/kit_gate.js | main.js | digOneCapViable(T-0107)原样抽出，无行为变化 |
 | aab013c (worker-tests) | src/agent/modes.js + 新 src/agent/combat_gates.js | main.js | 战斗仲裁门(T-0063 族 C332/C353/C354/C360/C367)原样搬出，无行为变化 |
+| 78c3203 (worker-tests) | src/agent/modes.js + 新 src/agent/mobility_geom.js | main.js | detectSealedRoom(T-0074 C341)原样搬出，无行为变化 |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 
 **部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
