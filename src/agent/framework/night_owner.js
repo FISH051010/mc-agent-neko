@@ -4,7 +4,7 @@
 // 抢身体 → mineDown 每次 ~3.6s 秒退 → 3 连败 → DUSK_MINE_NIGHT 冷却 5min → FREE_PLAY 站着过夜 (零产出)。
 // 下挖本身就是庇护 (地下即安全, 正是 shouldNightShelter 对 y<50 豁免的理由): 决策层已承诺夜挖 + 派发器在线 +
 // 附近无怪 → 预防性封箱让位。反应式防御 (shouldFlee / creeper 规避 / 挨打逃跑) 不经此门, 不受影响。
-export const NIGHT_MINE_KIND_RE = /^(DUSK_MINE_NIGHT|MINE_THROUGH_NIGHT)$/;
+export const NIGHT_MINE_KIND_RE = /^(DUSK_MINE_NIGHT|MINE_THROUGH_NIGHT|NIGHT_STONE_BOOTSTRAP)$/;   // ★T-0175 木镐夜就地下挖取圆石也是下挖即庇护
 export const DISPATCHER_FRESH_MS = 10000;
 
 export function decisionOwnsNightMining(bot, { hostilesNear = 0, now = Date.now() } = {}) {

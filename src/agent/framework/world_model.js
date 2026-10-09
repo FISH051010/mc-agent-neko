@@ -27,7 +27,7 @@ import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible } from './kit_gate.
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE } from './food_floor.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
-const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT']);
+const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 
@@ -630,6 +630,8 @@ const TASK = Object.freeze({
     // plan so it (a) DETHRONES a stale daytime commitment at dusk via the nightPre path, and (b) holds
     // sticky (isGoalDone = an iron-tier pick is in hand) through the smelt→craft phases until done.
     NIGHT_SMELT_IRON: 'NIGHT_SMELT_IRON',
+    // ★T-0175 (监工, 第十四夜实录): 只有木镐的封坑夜整夜空转 — 夜里就地往下挖几格取圆石, 现做台造石镐+石剑, 再按石镐预算夜挖。
+    NIGHT_STONE_BOOTSTRAP: 'NIGHT_STONE_BOOTSTRAP',
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1269,6 +1271,23 @@ export function proposeTasks(world, bot) {
                 }
                 break;
             }
+            case 'STONE_BOOTSTRAP': {
+                // ★T-0175: 木镐夜 → 圆石够镐 (toolUpkeepPlan 造得起石镐) 就原地造石镐(+石剑, T-0170); 否则 mineDown 就地下挖 ≤6 格取圆石
+                //   (下挖即庇护; mineDown 自带重力/流体/救命门)。@93.5: 夜带内, 排在整夜下矿@94 之下 (互斥: 决策只返一个)。
+                const _c = invCounts(bot);
+                const _plan = toolUpkeepPlan({ picks: kit.picks, pickTier: kit.pickTier, counts: _c, woodUnits: woodUnits(bot) });
+                if (_plan.wants.some(([n]) => n === 'stone_pickaxe')) {
+                    push({ kind: TASK.NIGHT_STONE_BOOTSTRAP, priority: 93.5, skill: 'craftChain', args: [_plan.wants],
+                           rationale: `night stone bootstrap: ${_c.cobblestone || 0} cobble in hand — craft ${_plan.wants.map(x => x[0]).join('+')} now, then mine the night on stone picks`,
+                           hints: { night: true, wants: _plan.wants.map(x => x[0]) } });
+                } else {
+                    const _ty = Math.max(17, Math.floor((w.pos && Number.isFinite(w.pos.y)) ? w.pos.y : 64) - 6);
+                    push({ kind: TASK.NIGHT_STONE_BOOTSTRAP, priority: 93.5, skill: 'mineDown', args: [{ targetY: _ty }],
+                           rationale: `night stone bootstrap: wood picks only, ${_c.cobblestone || 0} cobble — dig down ≤6 in place for cobble (descending = shelter)`,
+                           hints: { night: true, targetY: _ty } });
+                }
+                break;
+            }
             case 'MINE_THROUGH_NIGHT': {
                 // ★2026-07-06 用户令 (前期公式化: 夜里 oracle 直奔高优矿): 铁缺口未平时夜挖
                 //   优先 oracle 制导采铁 (mineOres), 铁齐/oracle 缺失才回退盲挖 y12。
@@ -1614,6 +1633,9 @@ export function isGoalDone(kind, world, bot) {
         case TASK.NIGHT_DIG_ONE:
         case TASK.NIGHT_SEAL:
             return w.time.phase === 'day';
+        // ★T-0175: 石镐到手 (下一拍夜计划按石镐预算重评 → MINE_THROUGH_NIGHT) 或天亮
+        case TASK.NIGHT_STONE_BOOTSTRAP:
+            return w.time.phase === 'day' || /stone|iron|diamond|netherite/.test((w.kit && w.kit.pickTier) || '');
         // ── Opening tasks. SCOUT is done once both wood + village are known landmarks. ──
         case TASK.OPENING_SCOUT: {
             const lm = (w.landmarks) || {};
@@ -1726,6 +1748,7 @@ function isNightPlan(kind) {
     return kind === PROPOSAL_KIND.DUSK_MINE_NIGHT || kind === PROPOSAL_KIND.DUSK_GO_BED
         || kind === PROPOSAL_KIND.NIGHT_DIG_ONE || kind === PROPOSAL_KIND.NIGHT_SEAL
         || kind === TASK.NIGHT_SMELT_IRON    // ★T-0097: night iron-conversion is a first-class night plan
+        || kind === TASK.NIGHT_STONE_BOOTSTRAP   // ★T-0175: 木镐夜就地造石镐
         || kind === PROPOSAL_KIND.HUNT_PEARLS;   // ★ENDGAME: night enderman hunt @94.5 — dusk-dethrones a stale daytime commitment; once committed the !isNightPlan guard stops GO_BED/SEAL re-flips
 }
 

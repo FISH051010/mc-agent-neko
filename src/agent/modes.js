@@ -6515,6 +6515,12 @@ const modes_list = [
                     const _hpOkForNightMine = !Number.isFinite(bot.health) || bot.health >= DESCENT_MIN_HP;
                     if (canMineWholeNight && _hpOkForNightMine) return { decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget=${picksBudget}>=${cfg.mineNightPickBudget}`, targetY: 12 };
                     if (alreadyDeepEnclosed && _hpOkForNightMine) return { decision: 'MINE_THROUGH_NIGHT', reason: `already deep/enclosed y=${y} pick=${picks} — keep mining, don't surface-bootstrap`, targetY: 12 };
+                    // ★T-0175 (监工, 第十四夜实录 -15,63,11: 2 木镐 + 8 板 + 3 原木整夜 DIG_ONE_CAP 零产出): 木镐预算 ~118 < 200 夜挖门。
+                    //   人类: 坑底往下挖几格拿圆石, 用木板现做台, 当场造石镐(+石剑), 整夜靠石镐挖。排在挖三填一之前;
+                    //   无怪 + 不在重力柱上 + 非封死 + 血/食够 (同夜挖门) 才做, 否则照旧挖三填一封坑。
+                    if (!durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
+                        && y > 20 && !/ENTOMBED|SEALED/.test(mob || '') && !_gravityPitTrap())
+                        return { decision: 'STONE_BOOTSTRAP', reason: `wood picks only (budget ${picksBudget}) — dig down for cobble, craft stone pick+sword in place, then mine the night`, targetY: Math.max(17, y - 6) };
                     // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
                     //     lazy 扫描: 只在链子走到这里(近床/炼铁/下矿都没命中)时才扫, 命中即停. 硬门 picks>=1 卡在 if 里(不在扫描函数内) —
                     //     §7.3 红线: 无镐 bot 走 dig_one 会徒手挖软土把自己埋到树底 → 天亮树抬高不可达 → wood=0 bootstrap 死锁. 与 digOneViable 同守卫.

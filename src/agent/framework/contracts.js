@@ -36,7 +36,7 @@ export const AGENT_MODE = Object.freeze({ SURVIVAL: 'survival', COMPANION: 'comp
  * @property {{picks:number,pickTier:string,hasTablePath:boolean,foodSufficient:boolean,cobbleBuffer:number,torches:number,sufficientForUnderground:boolean,picksBudget:number,canMineWholeNight:boolean}} kit
  * @property {{biome:string,badBiome:boolean,inDeathZone:boolean,recommend:boolean}} migration
  * @property {{mode:'hold'|'committed_underground'|'free',allowSurface:boolean,reason:string,decidedBy:'auto'|'supervisor',until:number}} surfaceGate
- * @property {{decision:'NONE'|'FIGHT'|'MINE_THROUGH_NIGHT'|'GO_BED'|'DIG_ONE_CAP'|'SEAL_FORT'}} nightPlan  夜间决策短路结果 (modes.js computeNightPlan)
+ * @property {{decision:'NONE'|'FIGHT'|'MINE_THROUGH_NIGHT'|'STONE_BOOTSTRAP'|'GO_BED'|'DIG_ONE_CAP'|'SEAL_FORT'}} nightPlan  夜间决策短路结果 (modes.js computeNightPlan)
  * @property {{phase:'SCOUT'|'WOOD_BUFFER'|'VILLAGE_HARVEST'|'DONE',need:'wood'|'village'|'both'|null,woodTarget:number,villageTarget:any,woodUnits:number}} opening  开局阶段 (modes.js computeOpening)
  * @property {{bed:any,village:any,wood:any,crops:any,chest:any,animal:any,bedReachCost:number|null}} landmarks  C328 扫描器多 kind 输出
  * @property {{dirt:number,cobble:number,planks:number,log:number}} counts  关键物品计数 (夜间/开局派生用)
