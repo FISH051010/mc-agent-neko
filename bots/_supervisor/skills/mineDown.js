@@ -42,6 +42,22 @@ function stairSafety(reads) {
     return { safe: true, reason: 'ok' };
 }
 
+// ★T-0139: heading memory for step-0 terrain aborts, shared by the fluid abort and the no-floor (cave void)
+//   abort. The no-floor abort used to skip it → every re-dispatch walked the same deterministic heading into
+//   the same void (live 10-10 02:58:23→26 @-3,43,-1: 3× 'no floor support … (air)', dig=0 → GO_UNDERGROUND
+//   cooldown 5min). TTL 10min, bot-object state (survives hot reload).
+export const ABORT_HEADING_TTL_MS = 600000;
+export function rememberAbortedHeading(bot, sx, sz, now = Date.now()) {
+    try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx, sz, at: now }); } catch (e) {}
+}
+/** First cardinal not aborted within 8 blocks of p0 (TTL'd); returns null when every cardinal failed here. */
+export function rotateAwayFromAborted(avoidList, p0, sx, sz, now = Date.now()) {
+    const avoid = (avoidList || []).filter(a => now - a.at < ABORT_HEADING_TTL_MS && Math.hypot(a.x - p0.x, a.z - p0.z) < 8);
+    if (!avoid.some(a => a.sx === sx && a.sz === sz)) return { sx, sz, rotated: false, avoid };
+    const clean = [[1, 0], [0, 1], [-1, 0], [0, -1]].find(([cx, cz]) => !avoid.some(a => a.sx === cx && a.sz === cz));
+    return clean ? { sx: clean[0], sz: clean[1], rotated: true, avoid } : { sx, sz, rotated: false, exhausted: true, avoid };
+}
+
 export default async function mineDown(bot, ctx, opts = {}) {
     const { log, skills, Vec3 } = ctx;
     const steps = opts.steps || 40;
@@ -76,11 +92,12 @@ export default async function mineDown(bot, ctx, opts = {}) {
     // and start with the first cardinal that hasn't failed here yet.)
     try {
         const p0 = bot.entity.position;
-        bot._mineDownFluidAvoid = (bot._mineDownFluidAvoid || []).filter(a => Date.now() - a.at < 600000);
-        const avoid = bot._mineDownFluidAvoid.filter(a => Math.hypot(a.x - p0.x, a.z - p0.z) < 8);
-        if (avoid.some(a => a.sx === sx && a.sz === sz)) {
-            const clean = [[1, 0], [0, 1], [-1, 0], [0, -1]].find(([cx, cz]) => !avoid.some(a => a.sx === cx && a.sz === cz));
-            if (clean) { sx = clean[0]; sz = clean[1]; log_(`heading rotated to ${sx},${sz} — ${avoid.length} fluid/wedge-aborted heading(s) remembered near here`); }
+        bot._mineDownFluidAvoid = (bot._mineDownFluidAvoid || []).filter(a => Date.now() - a.at < ABORT_HEADING_TTL_MS);
+        const _rot = rotateAwayFromAborted(bot._mineDownFluidAvoid, p0, sx, sz);   // ★T-0139 shared/pinned
+        const avoid = _rot.avoid;
+        if (_rot.rotated || _rot.exhausted) {
+            const clean = _rot.rotated ? [_rot.sx, _rot.sz] : null;
+            if (clean) { sx = clean[0]; sz = clean[1]; log_(`heading rotated to ${sx},${sz} — ${avoid.length} fluid/void/wedge-aborted heading(s) remembered near here`); }
             // ★checkpoint#25 P1-A: only REFUSE on all-flooded headings when we still NEED to staircase
             // down — already at band (y<=targetY+2) the descent heading is moot (the at-band delegate
             // below hands off to branchMine, which has its own per-cell fluid guards), so stale fluid
@@ -567,13 +584,11 @@ export default async function mineDown(bot, ctx, opts = {}) {
         if (!safe.safe) {
             abort = `unsafe at ${fx},${cy - 1},${fz}: ${safe.reason}`;
             // feed the heading-rotation memory (see START) so the next dispatch tries a different way
-            if (/fluid/.test(safe.reason || '')) {
-                try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx, sz, at: Date.now() }); } catch (e) {}
-            }
+            if (/fluid/.test(safe.reason || '')) rememberAbortedHeading(bot, sx, sz);
             break;
         }
         // No solid support under the new feet (cliff/cave) => don't blind-drop; stop.
-        if (/^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) { abort = `no floor support under ${fx},${cy - 2},${fz} (${nm(support)}) — stop, don't free-fall`; break; }
+        if (/^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) { abort = `no floor support under ${fx},${cy - 2},${fz} (${nm(support)}) — stop, don't free-fall`; rememberAbortedHeading(bot, sx, sz); break; }   // ★T-0139 next dispatch turns away from the void
 
         if (i < 3) log_(`DIAG step${i} cur=${cur.x.toFixed(2)},${cur.y.toFixed(2)},${cur.z.toFixed(2)} cx,cy,cz=${cx},${cy},${cz} fwd=${fx},${fz} sx,sz=${sx},${sz} blocks: newFeet(${fx},${cy - 1},${fz})=${nm(newFeet)} newHead(${fx},${cy},${fz})=${nm(newHead)} clear(${fx},${cy + 1},${fz})=${nm(clear)} support(${fx},${cy - 2},${fz})=${nm(support)}`);
         try {

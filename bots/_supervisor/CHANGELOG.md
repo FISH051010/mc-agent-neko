@@ -2853,6 +2853,8 @@
 
 - **★C384-S SEALED 脱困期: 确认被困后逐格连续挖, 不再每格重等 10s(T-0135)**（2026-10-10，worker-stuck，T-0135，监工指派）: 证据: 10-10 18:38:58→18:40:50 SEALED(6-11s)↔FREE(6-11s) 交替、出口方向每周期不同、约 17s 推进 1 格。机理: C341 的 STUCK-DEBOUNCE(有界+位移<3b+持续>10s 才升 SEALED,为不误伤挖矿)每挖穿一格都被重置——bot 迈步中/站在新缺口时 `detectSealedRoom` 因 `!stand(start)` 返回 sealed:false,与"洪水溢出=真通了"同一返回值,分类器无法区分 → `_sealedSince=0` → 下一格又等 10s。**改**: ① `mobility_geom.js detectSealedRoom` 返回 reason(`no-stand`=迈步中/缺口里,`spill`=真通开阔);新纯函数 `sealedEscapeStep`: 去抖确认一次即开 escape episode,期内 sealed 或 no-stand 都维持 SEALED(每 2s 一拍,一拍挖一格),仅 spill/露天/入夜/超 5min 结束;② `modes.js` 分类器去抖改为只产出 `_debounceSealed`,经 sealedEscapeStep 决定 st;episode 中缺口格读成 POCKET 也继续走 SEALED;打 `★T-0135 sealed escape episode START/END (... moved Nb)`。C341 的首次 10s 确认保留(防挖矿误报)。**回归测试**: `test/sealed_escape.test.mjs`(3 条 `T-0135:`,逐拍模拟 6 格隧道)。**前后对比(同一模拟,与实测吻合)**: 每格 16s→2s(实测前 ~17s);6 格隧道总耗时 94s→24s(含首次确认 12s)。**可证伪预测**: 实机下一次 SEALED 脱困出现 episode START→END,END 行的 秒数/格数 ≈ 2-3s/格,其间无 SEALED↔FREE 10s 交替。需重启 main.js。
 
+- **★C385-S mineDown 空洞中止计入朝向记忆(T-0139)**（2026-10-10，worker-stuck，T-0139）: 证据: 10-10 02:58:23→26 与 03:03:06/27 @-3,43,-1: mineDown 'no floor support under -4,41,-1 (air)' dig=0 原地中止 3 连 → ★dispatch-cooldown GO_UNDERGROUND 5min。机理: 只有 fluid 中止写入 `bot._mineDownFluidAvoid`(下次换向),空洞中止不写 → 确定性朝向每次撞同一洞穴空腔。**改**(③ `skills/mineDown.js`,热加载): 抽出导出纯函数 `rememberAbortedHeading`/`rotateAwayFromAborted`(开局换向也走它);no-floor 中止调用前者。四向皆坏仍走既有 relocate-then-retry。**回归测试**: `test/minedown_void_heading.test.mjs`(3 条 `T-0139:`)。第二层(单次派发内横移重开,T-0137②)另条。子 skill 热加载,合并即生效。
+
 ---
 
 ---
