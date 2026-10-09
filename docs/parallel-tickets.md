@@ -169,6 +169,7 @@ node bots/_supervisor/deploy-lock.mjs release --as <你的tag>
 node bots/_supervisor/deploy-lock.mjs status                                                     # 看谁持有
 ```
 
+- ★2026-10-10 起 `acquire` 会先跑全套 `npm test`（约 10–15s），**有红就拒绝拿锁**（"全绿才许部署"从自觉变成机制；起因：有 worker 在测试红时合入并部署）。真紧急才用 `--skip-tests "<理由>"`，理由会写进锁记录。
 - 锁是 O_EXCL 原子创建的 `bots/_supervisor/deploy.lock`；超过 15 分钟视为持有者已死、可接管（会打印接管记录）。
 - 工单里照旧 comment "deploying now"/"deployed" 留痕，但**是否能部署只看锁**，不看评论。
 - 冒烟自检没过也要 release（失败也是结果），并在工单里写清楚。

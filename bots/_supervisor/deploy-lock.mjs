@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 export const DEFAULT_TTL_MS = 15 * 60 * 1000;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -121,9 +121,25 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const actor = f.as || process.env.TICKET_ACTOR;
     const fmt = (h) => `${h.actor} since ${new Date(h.at).toISOString()} (${Math.round(h.ageMs / 1000)}s ago) — ${h.reason || ''}`;
     if (cmd === 'acquire') {
-        const r = acquire({ actor, reason: f.reason || '' });
+        // ★2026-10-10 测试闸: "npm test 全绿才许部署" 从自觉变成机制 (worker 曾在 test 红时合入并部署)。
+        //   acquire 前先跑全套测试 (临时目录隔离, ~10s), 有红就拒绝拿锁。真紧急时 --skip-tests "<理由>" 绕过, 理由写进锁记录。
+        if (!f['skip-tests']) {
+            const repoRoot = path.resolve(here, '..', '..');
+            const t = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'run.mjs')], { cwd: repoRoot, encoding: 'utf8' });
+            const out = (t.stdout || '') + (t.stderr || '');
+            const fails = (out.match(/^# fail (\d+)/m) || [])[1];
+            if (t.status !== 0 || (fails && fails !== '0')) {
+                const firstFail = (out.match(/^not ok .*$/m) || [''])[0];
+                console.log(`✗ refused: npm test is RED (exit ${t.status}, fail=${fails ?? '?'}) ${firstFail} — fix tests before deploying (emergency: --skip-tests "<reason>")`);
+                process.exitCode = 1;
+            }
+        }
+        if (process.exitCode === 1) { /* tests red → no lock */ } else {
+        const reason = (f.reason || '') + (f['skip-tests'] ? ` [TESTS SKIPPED: ${f['skip-tests']}]` : '');
+        const r = acquire({ actor, reason });
         if (r.ok) console.log(`✓ deploy lock acquired by ${actor}${r.reentrant ? ' (already held)' : ''}${r.tookOverFrom ? ` — took over STALE lock of ${fmt(r.tookOverFrom)}` : ''}`);
         else { console.log(`✗ deploy lock HELD by ${fmt(r.holder)} — wait for release (status: deploy-lock.mjs status)`); process.exitCode = 1; }
+        }
     } else if (cmd === 'release') {
         const r = release({ actor });
         if (r.ok) console.log(r.wasFree ? 'lock was already free' : `✓ released by ${actor}`);
