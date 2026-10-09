@@ -416,8 +416,11 @@ class WSMessageServer {
                     armor,                                                   // ★C314-A worn armor pieces (none = defenseless → swarm death risk)
                     // mobAge: 距 mobility 分类器上次成功评定的秒数 (每 ~2s 一评; null=从未评定)。T-0124 后加: 分类器
                     //   可能静默停摆 (那次是漏 import 的 ReferenceError 被吞 1.5h), state 字段本身看不出来。
-                    mobAge: (bot._mobility && bot._mobility.at) ? Math.round((Date.now() - bot._mobility.at) / 1000) : null,
-                    mob: ((bot._mobility && bot._mobility.state) || '?') + (bot._mobility && bot._mobility.enclosed ? '/ENC' : ''),   // mobility state machine (FREE/POCKET/ENTOMBED/SWIM[/ENC=封闭地穴])
+                    //   ★T-0126b: 从未分类过 (重启后 mobility 尚未被排程, 如开局即进 sealed night hold) 显示 'NONE' 而非 '?',
+                    //   mobAge 取进程运行秒数 —— '?' 只留给 modes.js catch 路径 (分类器真崩溃), 两者不再混淆。
+                    mobAge: (bot._mobility && bot._mobility.at) ? Math.round((Date.now() - bot._mobility.at) / 1000)
+                        : (!bot._mobility ? Math.round(process.uptime()) : null),
+                    mob: (bot._mobility ? (bot._mobility.state || '?') : 'NONE') + (bot._mobility && bot._mobility.enclosed ? '/ENC' : ''),   // mobility state machine (FREE/POCKET/ENTOMBED/SWIM[/ENC=封闭地穴])
                     pinKicks: bot._persistentPinKicks || 0,   // ★reflex_watchdog escalation: N (>3) = bot is in a PERSISTENT pin the forced-interrupt kick can't break — supervisor should dispatch a relocating recovery (forageExplore/escapePlan). 0 = not pinned / kick still working.
                     // ★2026-07-14 admin 独占标志 (用户令: admin 要求的炼铁/待命是合法站桩): watchdog 的
                     //   STUCK-ZONE 位置锚是累积的, 长炉次/待命会被 10min cancel / 25min 硬重启误杀 —

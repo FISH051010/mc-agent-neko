@@ -134,6 +134,14 @@ test('T-0124/T-0126: MOBILITY-STALE fires on a crashed classifier or >5min unsch
   assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: null, mobRaw: '?' }), true);         // live: '?' after restart
 });
 
+test('T-0126b: a never-classified model after restart (NONE) is not a crash; only >5min unscheduled fires', () => {
+  const v = { x: 0, y: 64, z: 0 };
+  // live 02:28: restart straight into a sealed night hold → mobility never scheduled for minutes, vitals showed '?'
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 90, mobRaw: 'NONE' }), false);
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 400, mobRaw: 'NONE' }), true);
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 5, mobRaw: '?' }), true);   // catch-path crash
+});
+
 test('T-0124: MOBILITY-STALE stays quiet when vitals themselves are stale (that is the STALE detector)', () => {
   assert.equal(mobilityStaleActive({ v: { x: 0 }, ageS: 600, mobAge: 900, mobRaw: 'FREE' }), false);
   assert.equal(mobilityStaleActive({ v: null, ageS: 9999, mobAge: null, mobRaw: '' }), false);
