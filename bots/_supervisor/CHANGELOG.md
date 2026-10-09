@@ -3006,6 +3006,8 @@
 
 - **★C405-S 地表空洞换址改为寻路到"脚下 5 格实心"的列(T-0183 续)**（2026-10-10，worker-stuck，T-0183；监工+worker-tier 报）: 复发 10-09 23:06:07-12 — C404 的 pathfinder moveAway 10.1b 落点仍在同一大洞顶 (A -7,68,-17 ↔ B -8,69,-7), B 处云杉树冠让 openSkyAbove 判"非露天"→ 不再换址 → GO_UNDERGROUND 第 3 次冷却, 重生后 15min 木镐零进展。修: planSolidColumn = 6..24b 内最近的、脚/头格开放无流体且脚下 5 格全实心的列 (偏移表按距离预排, 每列 y±3); 地表换址改为 goToPosition 到该列 (到达 ≤2.5b 才算成功); 地表判据 = openSkyAbove (树叶/原木/藤不算顶) 或 mobility enclosed===false。测试 test/minedown_solid_column.test.mjs, 更新 minedown_void_relocate 钉子。
 
+- **★C406-S mineDown 到层容差按请求深度收缩(T-0187)**（2026-10-10，worker-stuck，T-0187）: 实录 10-09 23:06:36/48 NIGHT_STONE_BOOTSTRAP 派 mineDown{targetY:y-6} (就地下挖取圆石), 而到层容差 DESCEND_TOLERANCE 恒 6 → y69 起点即 'reached targetY=63 at step 0', 地表 branchMine 无矿 → dug=0 failed ×2 吃 3-strike。修: descendTolerance(startY,targetY)=clamp(floor((startY-targetY)/3),0,6) — 浅挖照样下挖 (69→63 挖到 ≤65), 深挖 (69→12) 仍 6。测试 test/minedown_shallow_band.test.mjs。
+
 ---
 
 ---

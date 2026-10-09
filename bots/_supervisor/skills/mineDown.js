@@ -160,6 +160,12 @@ export function planSolidColumn(bn, cx, cy, cz) {
     return null;
 }
 
+/** ★T-0187: at-band tolerance shrinks with the requested depth — a shallow request (STONE_BOOTSTRAP y-6) must still
+ *  dig down (live 23:06:36: tolerance 6 == request 6 → 'reached targetY at step 0', dug=0). Deep requests keep 6. */
+export function descendTolerance(startY, targetY) {
+    return Math.max(0, Math.min(6, Math.floor((startY - targetY) / 3)));
+}
+
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     const nm = (b) => (b && b.name) || 'air';
     const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
@@ -679,7 +685,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     // escape → the bot froze at the iron band mining nothing until a 25min watchdog restart. y14-20 is all
     // prime iron band, so branch-mining at y≈17 is fully productive for the iron goal (diamonds get their
     // own mineDiamonds@y-11). Tolerance = 6 blocks above targetY.
-    const DESCEND_TOLERANCE = 6;
+    const DESCEND_TOLERANCE = descendTolerance(Math.round(bot.entity.position.y), targetY);   // ★T-0187 (was a flat 6)
     // ★2026-07-09 用户令 "以怪为基准做 hazard 感知, 不用管空腔; 只有怪在附近才特别注意": 台阶是双向敞开
     //   的走廊 — 挖进空洞/黑腔无所谓(怪不在就照挖), 但挖进【有活怪】的洞就是给怪修上行高速。故下潜途中
     //   逐步复查: HOSTILE_STEER_R 内有敌对怪且当前 heading 正朝它挖(或怪贴到点前) → 把楼梯拐向背离怪的
