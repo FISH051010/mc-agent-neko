@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining } from './framework/night_owner.js';
@@ -5348,6 +5348,7 @@ const modes_list = [
             bot.dig = async (block, ...args) => {
                 const seq = ++bot._mineMotionSeq;
                 const startedAt = Date.now();
+                try { noteSkillDig(bot, agent && agent.actions && agent.actions.currentActionLabel, startedAt); } catch (e) {}
                 const support = supportObj();
                 write('dig.begin', { seq, target: blockObj(block), args, support, env: envSnap() });
                 if (!support.stable) {

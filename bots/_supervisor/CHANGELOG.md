@@ -2927,6 +2927,8 @@
 
 - **★C397-S mobility_observer 在反射被冻结时也照常观察(T-0166 续)**（2026-10-10，worker-stuck，T-0166）: 实录 10-09 21:17:18→21:18:00 surfaceUp 爬升期间 mobAge 涨到 21 — surfaceUp 用 setOn('mobility', false) 冻结反射防抢身体, 观察者门 `!mob.on` 连分类一起停了。修: 观察者只在 mobility 自身 burst 执行中跳过, 不再看 mob.on (关的是动作, 不是世界模型)。测试 test/mobility_observer.test.mjs 更新。
 
+- **★C398-S 技能挖掘信号覆盖所有 bot.dig(T-0163 续)**（2026-10-10，worker-stuck，T-0163）: 实录 10-09 21:26:43-46 @66,61,40 mineDown 正在补挖 ghost (bot.dig) 时 T-0135 SEALED 脱困期仍启动, 随后挖了 40s/20 格, kernel 干等 — purposefulDigActive 只认挖掘槽 _bodyDigLockOwner, 而 mineDown/chopWood/breakBlockAt 从不占槽 (只有 branchMine ore-window 与寻路 step-edge 占)。修: mobility_signals.noteSkillDig 由 mine_motion_audit 的全局 bot.dig 包装器在每次挖掘时打点 bot._lastSkillDigAt (动作标签 mode:mobility/mode:unstuck 或槽被 mobility:/unstuck: 持有时不算, 免得脱困/行军给自己续命); purposefulDigActive 15s 窗内认它。连带 T-0121 MAROONED 采矿心跳也覆盖到 mineDown 等。测试 test/skill_dig_signal.test.mjs。
+
 ---
 
 ---

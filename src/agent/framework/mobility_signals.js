@@ -6,11 +6,25 @@
 export const PURPOSEFUL_DIG_WINDOW_MS = 15000;
 export function purposefulDigActive(bot, now = Date.now()) {
     try {
+        const _sd = Number(bot && bot._lastSkillDigAt) || 0;
+        if (_sd && now - _sd < PURPOSEFUL_DIG_WINDOW_MS) return true;   // ★T-0163
         const owner = String((bot && bot._bodyDigLockOwner) || '');
         if (!owner || /^(mobility|unstuck):/.test(owner)) return false;
         const until = Number(bot._bodyDigLockUntil) || 0;
         return until > now - PURPOSEFUL_DIG_WINDOW_MS;
     } catch (e) { return false; }
+}
+
+// ★T-0163 (live 21:26:43-46): mineDown / chopWood / breakBlockAt dig through bot.dig without ever taking the dig slot,
+//   so the slot-only signal above read "nobody working" mid-mineDown and a SEALED escape episode tunnelled 20 blocks.
+//   The mine_motion_audit bot.dig wrapper sees EVERY dig — it stamps skill digs here. Reflex digs (action label
+//   mode:mobility / mode:unstuck, or the slot held by a mobility:/unstuck: owner) are excluded, else an escape or
+//   march would keep itself "working".
+export function noteSkillDig(bot, actionLabel, now = Date.now()) {
+    if (!bot) return;
+    if (/^mode:(mobility|unstuck)$/.test(String(actionLabel || ''))) return;
+    if (/^(mobility|unstuck):/.test(String(bot._bodyDigLockOwner || ''))) return;
+    bot._lastSkillDigAt = now;
 }
 
 // ★T-0123 挖出 burst 截止时间: ENTOMBED/SEALED 的单次 burst (≤2-3 次挖, 每次挖自带 ≤20s 超时) 里还有
