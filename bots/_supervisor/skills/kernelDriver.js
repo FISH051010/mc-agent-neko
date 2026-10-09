@@ -286,6 +286,7 @@ export default async function kernelDriver(bot, ctx) {
                     if (kindFlip || idFlip) {
                         flipped = true;
                         prog(`commitment flipped ${startKind || '?'}${startId ? '/' + startId : ''}→${nc.kind}${nc.id ? '/' + nc.id : ''} mid-child → interrupt ${c.skill} to re-dispatch`);
+                        bot._commitFlipAt = Date.now();   // ★T-0181: tells interrupt-shielding children (surfaceUp) this is the caller, not a reflex
                         bot.interrupt_code = true;
                     }
                 } catch (e) {}

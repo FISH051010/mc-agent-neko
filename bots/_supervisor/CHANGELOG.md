@@ -2977,6 +2977,8 @@
 
 - **★C402-S clearNearestFurnace 在 finally 关熔炉窗口(T-0179 源头补全)**（2026-10-10，worker-stuck，T-0179）: worker-tier 定位源头 = smeltSafe clearAndPickUp → skills.clearNearestFurnace 开炉窗从不关 (a0e05fd 在调用方补 closeWindow)。原语本身补全: 取物段包 try/finally, finally 里 closeWindow (含中途抛错); 顺带去掉 console.log 调试输出 ('undefined undefined undefined' 那行)。chest 系列 (putInChest/takeFromChest/viewChest) 正常路径已 close; aee1140 全局 equip 包装兜底遗留窗口。测试 test/clear_furnace_closes.test.mjs。
 
+- **★C403-S surfaceUp 让位于 kernel 承诺切换(T-0181)**（2026-10-10，worker-stuck，T-0181）: 实录 10-09 22:46:37→22:47:58 'commitment flipped REPLENISH_KIT→DUSK_MINE_NIGHT mid-child' ×81 — replenishKit ① surfaceUp 为屏蔽反射脉冲在各循环反复清 interrupt_code, 把 kernel 的切换 interrupt 一并吞掉, 白爬 y39→54 后 kernel 立刻派 mineDown 下挖。修: kernelDriver 切换时打 bot._commitFlipAt (等待期间每秒重设); surfaceUp.kernelYieldRequested = 本次进入之后且 <2.5s 的切换戳 → 并入 deadlineHit (所有主循环已查), 在步间安全点收尾, 退出时把 interrupt_code 置回 true 交还调用方; 反射脉冲无戳照旧屏蔽。测试 test/surfaceup_kernel_yield.test.mjs。
+
 ---
 
 ---

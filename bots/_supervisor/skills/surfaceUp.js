@@ -71,7 +71,18 @@ export function sidestepOutOfGravity(blockAt, feet, span = 4) {
     return best ? best.d : null;
 }
 
+// ★T-0181 (live 22:46:37→22:47:58, 81s): surfaceUp clears interrupt_code to shield the climb from REFLEX pulses — which
+//   also swallowed kernelDriver's commitment-flip interrupt (kernel re-sends it every 1s while waiting). kernelDriver
+//   now stamps bot._commitFlipAt; a flip stamped after this climb began is the caller saying "stop", so the loops
+//   (all gated on deadlineHit) wrap up at the next step boundary. Reflex pulses carry no stamp → still shielded.
+export const KERNEL_FLIP_FRESH_MS = 2500;
+export function kernelYieldRequested(bot, enteredAt, now = Date.now()) {
+    const t = Number(bot && bot._commitFlipAt) || 0;
+    return !!(t && t >= enteredAt && now - t < KERNEL_FLIP_FRESH_MS);
+}
+
 export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
+    const enteredAtSU = Date.now();
     const { skills, world, mc, Vec3, log } = ctx;
     // ★孤儿协程截止 (评审 replenishKit.js:94): 嵌套调用方 (replenishKit 步①等) 用 Promise.race
     // 截断本技能时, 被 race 掉的协程会继续跑 climbLeg/破顶循环并清 interrupt_code — 与调用方的
@@ -80,7 +91,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     // guardedDig 的 ≤26s 尾巴)。kernel 直派不带 opts → deadlineAt=0 永不过期, 存量行为与返回
     // 契约零变化 (到点返回 surfaceReady(), 对带 maxMs 的嵌套调用方而言返回值本就被忽略)。
     const deadlineAt = (opts && Number.isFinite(opts.maxMs) && opts.maxMs > 0) ? Date.now() + opts.maxMs : 0;
-    const deadlineHit = () => !!(deadlineAt && Date.now() >= deadlineAt);
+    const deadlineHit = () => !!(deadlineAt && Date.now() >= deadlineAt) || kernelYieldRequested(bot, enteredAtSU);
     // C226-D: callers pass RELATIVE targets (pos.y + N). When the bot is already
     // high (on a peak/mountainside the caller mislabels "enclosed"), pos.y+18 from
     // y118 = 136 → surfaceReady never satisfied → runaway pillar to y127-136 where
@@ -654,6 +665,11 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     }
     dbg(`EXIT y=${yNow()} (target ${targetY})`);
     // ★孤儿协程截止的可观测退出: 到点主动交还身体, 不再清 interrupt_code / 不再与调用方下一步打架。
+    if (kernelYieldRequested(bot, enteredAtSU)) {
+        try { bot.interrupt_code = true; } catch (e) {}   // the loops may have just cleared it — hand the flip back to the caller
+        dbg(`EXIT on kernel commitment flip y=${yNow()}`);
+        log(bot, `surfaceUp: kernel commitment changed — yielding body at y=${yNow()} (T-0181).`);
+    }
     if (deadlineHit()) {
         dbg(`EXIT on caller deadline (opts.maxMs=${opts && opts.maxMs}) y=${yNow()}`);
         log(bot, `surfaceUp: caller deadline hit (maxMs=${opts && opts.maxMs}) — yielding body at y=${yNow()}.`);
