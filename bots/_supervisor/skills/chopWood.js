@@ -78,6 +78,20 @@ export function buildDiscardPlan(items) {
     return { plan, planned };
 }
 
+// ★C300 (T-0030) badlands no-dirt gap: nearest plantable soil block within arm's reach (box ±4/-3..+2, eye
+// distance ≤4.6) to harvest for sapling planting. red_sand / terracotta are NOT soil. PURE.
+export function nearestReachableSoil(blockAt, me, eye) {
+    const SOIL = /grass_block|^dirt$|^coarse_dirt$|rooted_dirt|podzol/;
+    let best = null, bd = Infinity;
+    for (let dx = -4; dx <= 4; dx++) for (let dy = -3; dy <= 2; dy++) for (let dz = -4; dz <= 4; dz++) {
+        const b = blockAt(me.offset(dx, dy, dz));
+        if (!b || !SOIL.test(b.name || '')) continue;
+        const d = eye.distanceTo(b.position.offset(0.5, 0.5, 0.5));
+        if (d <= 4.6 && d < bd) { bd = d; best = b; }
+    }
+    return { best, bd };
+}
+
 export function xrayTrunkSkip(dist, canSee) {
     return dist > 2.2 && !canSee;
 }
@@ -1301,14 +1315,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // soil, then re-scan. If none is reachable (pure mesa) it returns false → existing relocate runs.
             const _harvestDirtNearby = async () => {
                 try {
-                    const SOIL = /grass_block|^dirt$|^coarse_dirt$|rooted_dirt|podzol/;
-                    let best = null, bd = Infinity;
-                    for (let dx = -4; dx <= 4; dx++) for (let dy = -3; dy <= 2; dy++) for (let dz = -4; dz <= 4; dz++) {
-                        const b = bot.blockAt(me.offset(dx, dy, dz));
-                        if (!b || !SOIL.test(b.name || '')) continue;
-                        const d = bot.entity.position.offset(0, 1.6, 0).distanceTo(b.position.offset(0.5, 0.5, 0.5));
-                        if (d <= 4.6 && d < bd) { bd = d; best = b; }
-                    }
+                    const { best, bd } = nearestReachableSoil((p) => bot.blockAt(p), me, bot.entity.position.offset(0, 1.6, 0));
                     if (!best) return false;
                     const _dirtCt = () => bot.inventory.items().reduce((s, i) => s + (/^dirt$|^coarse_dirt$/.test(i.name || '') ? i.count : 0), 0);
                     const had = _dirtCt();
