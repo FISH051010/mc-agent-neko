@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
@@ -3723,7 +3723,7 @@ const modes_list = [
                            // to a signal (see the kick block below). The counter resets the
                            // instant the bot leaves the pin zone, so a kick that DOES work pays
                            // no backoff penalty next time.
-                           && now - (this.pinKick || 0) > Math.min(60000 * Math.pow(2, this.pinKickCount || 0), 8 * 60 * 1000)) {
+                           && now - (this.pinKick || 0) > pinKickIntervalMs(this.pinKickCount || 0)) {   // framework/mobility_signals.js
                     // ★BUNKER EXEMPTION (idle-wedge 同款,pin-breaker 漏了这层 — 实拍: 夜间
                     // 蹲坑驻留>5min 被判 pinned,每60s强拆一次,bot被踢到夜间地表乱跑,撞上
                     // enderman 拉响 risk83。正当夜蹲(夜间+头顶有盖)的"钉住"是庇护不是死锁。)
@@ -3878,7 +3878,7 @@ const modes_list = [
                         this.pinKick = now;
                         this.pinKickCount = (this.pinKickCount || 0) + 1;
                         const kicks = this.pinKickCount;
-                        if (kicks <= 3) {
+                        if (!pinKickEscalates(kicks)) {
                             // Early kicks: a forced interrupt often DOES break a merely-stuck
                             // loop (a hung await returns to missionNether's top-of-loop BREAKOUT).
                             // Give it a few tries — but already at the backed-off cadence above.

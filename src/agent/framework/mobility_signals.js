@@ -170,3 +170,13 @@ export function lowHpMovementProfile(hp) {
     const low = h <= LOW_HP_MOVE;
     return { low, allowJump: !low, maxDropDown: low ? 1 : null, allowParkour: !low };
 }
+
+// ★C234 pin-breaker backoff (moved verbatim from modes.js reflex_watchdog): re-kicking a pinned stack every minute
+// was pure churn (cancel → bridge re-arms the same sticky in 8s → re-deadlock). Interval grows with each
+// ineffective kick 1m→2m→4m→8m cap; after 3 kicks it ESCALATES to one loud persistent-pin signal. PURE.
+export function pinKickIntervalMs(kickCount) {
+    return Math.min(60000 * Math.pow(2, kickCount || 0), 8 * 60 * 1000);
+}
+export function pinKickEscalates(kicks) {
+    return kicks > 3;
+}
