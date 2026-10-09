@@ -83,6 +83,25 @@ export function preferredSwordGoal(invCounts) {
     return (invCounts['cobblestone'] || 0) >= 2 ? 'stone_sword' : 'wooden_sword';
 }
 
+// ★IRON-DEPTH FIX (C255, 2026-06-19): iron was lumped into shallowOre and HARD-CAPPED at y48-68 — the COPPER band
+// (copper peaks y48) → 150+ raw_copper, ZERO iron, "NO KNOWN WAY to obtain iron_ingot" forever. In 1.21 iron peaks
+// at y16; the 'y<32 → surfaceUp to y48' band literally FLED the iron-rich depth. Iron → controlled staircase to the
+// iron band; coal/copper keep the shallow bands. PURE decision (moved verbatim from the achieve probe).
+// Returns { action: 'lateral', why, len, targetY } | { action: 'surface', targetY } | { action: 'down' }.
+export function shallowOreProbeStep({ blockName, y, st }) {
+    const ironOre = /(^|_)iron_ore$|raw_iron/.test(blockName || '');
+    if (ironOre) {
+        const IRON_BAND = 14;   // y8-16 sweet spot; 14 leaves headroom above the lava-prone deep
+        if (y > IRON_BAND + 8) return { action: 'lateral', why: 'iron-deep-descend', len: 24, targetY: IRON_BAND };
+        return { action: 'lateral', why: 'iron-band', len: 16, targetY: null };
+    }
+    if (y < 32) return { action: 'surface', targetY: 48 };
+    if (y <= 56) return { action: 'lateral', why: 'at-shallow-band', len: 10, targetY: null };
+    if (y > 72) return { action: 'lateral', why: 'high-mountain-descend', len: 20, targetY: 48 };
+    if (y <= 68 || st.vertical >= 5 || (st.startY - y) >= 6) return { action: 'lateral', why: 'vertical-budget', len: 12, targetY: null };
+    return { action: 'down' };
+}
+
 export default async function achieve(bot, ctx, goal, depth = 0, _active = new Set()) {
     const { skills, world, mc, Vec3, log } = ctx;
     const g = typeof goal === 'string' ? { item: goal, count: 1 } : goal;
@@ -1233,30 +1252,29 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
             // the iron-rich depth. Route iron to a CONTROLLED staircase down to the iron band
             // (branchMine targetY — player-style 1x2 stair with its own lava/night/food stops,
             // never blind digDown), exempt from the copper-shallow bands. Coal/copper keep theirs.
-            const ironOre = /(^|_)iron_ore$|raw_iron/.test(blockName || '');
-            if (ironOre) {
-                const IRON_BAND = 14;   // y8-16 sweet spot; 14 leaves headroom above the lava-prone deep
-                if (y > IRON_BAND + 8) {
-                    prog(`${tag}mine probe: iron_ore y=${y} — descend to iron-rich band y~${IRON_BAND} (staircase; copper-shallow cap was the zero-iron bug)`);
-                    return await lateralInstead('iron-deep-descend', 24, IRON_BAND);
-                }
-                prog(`${tag}mine probe: iron_ore y=${y} — in iron band, lateral branchMine`);
-                return await lateralInstead('iron-band', 16);
+            const plan = shallowOreProbeStep({ blockName, y, st });   // ★C255 bands — module-level PURE export (test/ore_probe_bands.test.mjs)
+            if (plan.why === 'iron-deep-descend') {
+                prog(`${tag}mine probe: iron_ore y=${y} — descend to iron-rich band y~${plan.targetY} (staircase; copper-shallow cap was the zero-iron bug)`);
+                return await lateralInstead(plan.why, plan.len, plan.targetY);
             }
-            if (y < 32) {
+            if (plan.why === 'iron-band') {
+                prog(`${tag}mine probe: iron_ore y=${y} — in iron band, lateral branchMine`);
+                return await lateralInstead(plan.why, plan.len);
+            }
+            if (plan.action === 'surface') {
                 prog(`${tag}mine probe: ${blockName} at y=${y} is too deep for shallow ore — surfaceUp to y48 instead of digging lower`);
                 motion('achieve.probe.surface.begin', { item, blockName, y });
-                return await skills.customSkill(bot, 'surfaceUp', 48);
+                return await skills.customSkill(bot, 'surfaceUp', plan.targetY);
             }
-            if (y <= 56) {
+            if (plan.why === 'at-shallow-band') {
                 prog(`${tag}mine probe: ${blockName} y=${y} — shallow lateral branchMine, no blind digDown`);
-                return await lateralInstead('at-shallow-band', 10);
+                return await lateralInstead(plan.why, plan.len);
             }
-            if (y > 72) {
+            if (plan.why === 'high-mountain-descend') {
                 prog(`${tag}mine probe: ${blockName} y=${y} — high mountain miss; staircase to y48 then branchMine`);
-                return await lateralInstead('high-mountain-descend', 20, 48);
+                return await lateralInstead(plan.why, plan.len, plan.targetY);
             }
-            if (y <= 68 || st.vertical >= 5 || (st.startY - y) >= 6) {
+            if (plan.why === 'vertical-budget') {
                 prog(`${tag}mine probe: ${blockName} y=${y} — vertical budget done (${st.vertical} probes, drop=${st.startY - y}); lateral branchMine, no deeper shaft`);
                 return await lateralInstead('vertical-budget');
             }
