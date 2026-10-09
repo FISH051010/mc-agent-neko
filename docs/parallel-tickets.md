@@ -139,8 +139,8 @@ loop:
 | ~~3b142d9 (overseer)~~ ✅ 23:59 随 T-0108/T-0091 重启上线 | src/agent/world_scope.js | main.js | C333 裸装兜底去掉 near 条件（keepInv-off 世界复活点远离死点误判）；本世界 world_id 已记录不再走兜底，故不急 |
 | ~~c66eb0d (worker-tests)~~ ✅ 23:59 随 T-0108/T-0091 重启上线 | src/agent/modes.js + 新 src/agent/framework/kit_gate.js | main.js | 下矿 kit 闸(T-0088)原样抽出，无行为变化 |
 | ~~433787b (worker-tests)~~ ✅ 23:59 随 T-0108/T-0091 重启上线 | src/agent/modes.js + 新 src/agent/framework/migration_triggers.js | main.js | 木荒 latch(T-0102)/recommend 冷却门(T-0106)原样抽出，无行为变化 |
-| f117053 (worker-tests) | src/agent/agent.js + src/agent/modes.js + 新 src/utils/json_io.js | main.js | ⚠**行为修复 T-0116**：sticky_skill.json 死后重挂 / advisory·migrate_state 读取剥 BOM（无 BOM 文件行为不变） |
-| 3c51024 (worker-tests) | src/agent/library/skills.js | main.js | breakBlockAt 成功路径清除 60s 超时定时器（定时器泄漏），无行为变化 |
+| ~~f117053 (worker-tests)~~ ✅ 00:26 随 T-0060 重启上线(live 判定) | src/agent/agent.js + src/agent/modes.js + 新 src/utils/json_io.js | main.js | ⚠**行为修复 T-0116**：sticky_skill.json 死后重挂 / advisory·migrate_state 读取剥 BOM（无 BOM 文件行为不变） |
+| ~~3c51024 (worker-tests)~~ ✅ 00:26 随 T-0060 重启上线(live 判定) | src/agent/library/skills.js | main.js | breakBlockAt 成功路径清除 60s 超时定时器（定时器泄漏），无行为变化 |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 
 **部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
