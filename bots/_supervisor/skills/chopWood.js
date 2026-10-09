@@ -92,6 +92,18 @@ export function nearestReachableSoil(blockAt, me, eye) {
     return { best, bd };
 }
 
+// ★C269 / C275-fix TREE-DESERT leash widen, PURE. A no-wood bootstrap bot (0 logs, <4 planks) roams up to 256b
+// before the leash hard-pulls it home — the old 80b pull yanked every expedition back to a treeless spawn (0 wood,
+// unarmed night deaths). ≥8 unreachable trees widens to 160b; otherwise 80b.
+export function noWoodBootstrap(items) {
+    const logs = items.filter(i => /_log$/.test(i.name || '')).reduce((s, i) => s + i.count, 0);
+    const planks = items.filter(i => /_planks$/.test(i.name || '')).reduce((s, i) => s + i.count, 0);
+    return logs === 0 && planks < 4;
+}
+export function chopLeashRadius({ treeDesert, unreachableTrees }) {
+    return treeDesert ? 256 : (unreachableTrees >= 8 ? 160 : 80);
+}
+
 export function xrayTrunkSkip(dist, canSee) {
     return dist > 2.2 && !canSee;
 }
@@ -1495,14 +1507,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // "一棵树都没有(nearest=NONE)" 不触发放宽,只有"找到够不着的树" 触发。keepInventory 下
             // 远征廉价: 无木 bootstrap + 已多次 relocate 仍无树(树荒) → 放宽 leash 让果断远征真能走到
             // 远处森林(用户#1=砍谨慎/果断执行)。)
-            const _noWoodBootstrap = (() => {
-                try {
-                    const items = bot.inventory.items();
-                    const logs = items.filter(i => /_log$/.test(i.name || '')).reduce((s, i) => s + i.count, 0);
-                    const planks = items.filter(i => /_planks$/.test(i.name || '')).reduce((s, i) => s + i.count, 0);
-                    return logs === 0 && planks < 4;
-                } catch (e) { return false; }
-            })();
+            const _noWoodBootstrap = (() => { try { return noWoodBootstrap(bot.inventory.items()); } catch (e) { return false; } })();
             // ★C275-fix: `stale` RESETS every chopWood invocation, so requiring stale>=2
             // here meant a fresh re-entry that starts already >80b out (after the bot drifted
             // toward distant trees across calls) sees stale=0 → _treeDesert=false → _pullR=80 →
@@ -1511,7 +1516,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // bootstrap bot, widening is ALWAYS correct (keepInventory makes expedition cheap —
             // C269's own rationale). Drop the per-call stale gate; widen whenever we have no wood.
             const _treeDesert = _noWoodBootstrap;
-            const _pullR = _treeDesert ? 256 : ((bot._chopUnreach && bot._chopUnreach.size >= 8) ? 160 : 80);
+            const _pullR = chopLeashRadius({ treeDesert: _treeDesert, unreachableTrees: bot._chopUnreach ? bot._chopUnreach.size : 0 });
             if (distHome > _pullR && !_pulledHome) {
                 if (_criticalForageAllowed()) {
                     _pulledHome = true;
