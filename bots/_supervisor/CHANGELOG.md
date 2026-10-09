@@ -2961,6 +2961,8 @@
 
 - **★C398-S 技能挖掘信号覆盖所有 bot.dig(T-0163 续)**（2026-10-10，worker-stuck，T-0163）: 实录 10-09 21:26:43-46 @66,61,40 mineDown 正在补挖 ghost (bot.dig) 时 T-0135 SEALED 脱困期仍启动, 随后挖了 40s/20 格, kernel 干等 — purposefulDigActive 只认挖掘槽 _bodyDigLockOwner, 而 mineDown/chopWood/breakBlockAt 从不占槽 (只有 branchMine ore-window 与寻路 step-edge 占)。修: mobility_signals.noteSkillDig 由 mine_motion_audit 的全局 bot.dig 包装器在每次挖掘时打点 bot._lastSkillDigAt (动作标签 mode:mobility/mode:unstuck 或槽被 mobility:/unstuck: 持有时不算, 免得脱困/行军给自己续命); purposefulDigActive 15s 窗内认它。连带 T-0121 MAROONED 采矿心跳也覆盖到 mineDown 等。测试 test/skill_dig_signal.test.mjs。
 
+- **★C399-S mineDown 三面见水 = 含水层, 横向挖隧道换址而非下挖最后一向(T-0162 续, death #10)**（2026-10-10，worker-stuck，T-0162）: 实录 10-09 22:03:36-41 @31,42,-4 'fluid turn 1/4→3/4' (三个朝向台阶格旁见水), T-0162 随后沿第 4 个朝向下挖 (其台阶环读数干), 3 步后含水层灌入 → 22:03:52 SWIM → ENTOMBED → 22:04:16 溺死 (救援挖掘拿不到槽另见 worker-death T-0174)。修: 朝向记忆记录中止原因 (rememberAbortedHeading(…, 'fluid')); aquiferHere = 8 格内 TTL 内 ≥3 个不同朝向因水中止; 派发内流体中止命中则直接走 T-0161 换址隧道 (隧道自带侧邻/头顶防水检查), 不再旋到最后一向; START 跨派发记忆命中同样走 relocate 分支; 隧道不可行 → 诚实失败交上层。测试 test/minedown_aquifer_relocate.test.mjs, 更新 minedown_fluid_reheading 钉子。
+
 ---
 
 ---

@@ -170,8 +170,19 @@ export function digInterrupter(bot) {
 //   the same void (live 10-10 02:58:23→26 @-3,43,-1: 3× 'no floor support … (air)', dig=0 → GO_UNDERGROUND
 //   cooldown 5min). TTL 10min, bot-object state (survives hot reload).
 export const ABORT_HEADING_TTL_MS = 600000;
-export function rememberAbortedHeading(bot, sx, sz, now = Date.now()) {
-    try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx, sz, at: now }); } catch (e) {}
+export function rememberAbortedHeading(bot, sx, sz, now = Date.now(), why = '') {
+    try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx, sz, at: now, why }); } catch (e) {}
+}
+// ★T-0162 aquifer (death #10 22:04:16 drowning): water on 3 sides at one spot = an aquifer. Descending the last
+//   "dry" heading walked into it 3 steps later. Count distinct WET headings near p0; ≥3 → leave sideways (tunnel).
+export const AQUIFER_WET_HEADINGS = 3;
+export function aquiferHere(avoidList, p0, now = Date.now()) {
+    const wet = new Set();
+    for (const a of avoidList || []) {
+        if (a.why !== 'fluid' || now - a.at >= ABORT_HEADING_TTL_MS || Math.hypot(a.x - p0.x, a.z - p0.z) >= 8) continue;
+        wet.add(`${a.sx},${a.sz}`);
+    }
+    return wet.size >= AQUIFER_WET_HEADINGS;
 }
 /** First cardinal not aborted within 8 blocks of p0 (TTL'd); returns null when every cardinal failed here. */
 export function rotateAwayFromAborted(avoidList, p0, sx, sz, now = Date.now()) {
@@ -247,8 +258,11 @@ export default async function mineDown(bot, ctx, opts = {}) {
         bot._mineDownFluidAvoid = (bot._mineDownFluidAvoid || []).filter(a => Date.now() - a.at < ABORT_HEADING_TTL_MS);
         const _rot = rotateAwayFromAborted(bot._mineDownFluidAvoid, p0, sx, sz);   // ★T-0139 shared/pinned
         const avoid = _rot.avoid;
-        if (_rot.rotated || _rot.exhausted) {
-            const clean = _rot.rotated ? [_rot.sx, _rot.sz] : null;
+        // ★T-0162 aquifer: ≥3 wet headings remembered here → relocate (tunnel) instead of staircasing the last one
+        const _aqStart = aquiferHere(bot._mineDownFluidAvoid, p0) && bot.entity.position.y > targetY + 2;
+        if (_aqStart) log_(`aquifer here (≥${AQUIFER_WET_HEADINGS} wet headings remembered) — relocating instead of descending the remaining heading`);
+        if (_rot.rotated || _rot.exhausted || _aqStart) {
+            const clean = (_rot.rotated && !_aqStart) ? [_rot.sx, _rot.sz] : null;
             if (clean) { sx = clean[0]; sz = clean[1]; log_(`heading rotated to ${sx},${sz} — ${avoid.length} fluid/void/wedge-aborted heading(s) remembered near here`); }
             // ★checkpoint#25 P1-A: only REFUSE on all-flooded headings when we still NEED to staircase
             // down — already at band (y<=targetY+2) the descent heading is moot (the at-band delegate
@@ -759,18 +773,20 @@ export default async function mineDown(bot, ctx, opts = {}) {
             abort = `unsafe at ${fx},${cy - 1},${fz}: ${safe.reason}`;
             // feed the heading-rotation memory (see START) so the next dispatch tries a different way
             if (/fluid/.test(safe.reason || '')) {
-                rememberAbortedHeading(bot, sx, sz);
+                rememberAbortedHeading(bot, sx, sz, Date.now(), 'fluid');
                 // ★T-0162: one heading per dispatch meant three wet headings = three zero-dig dispatches = kernel
                 //   3-strike cooldown before the 4th heading / T-0161 tunnel relocate ever ran (live 20:22:59).
                 //   Re-head (and if every cardinal is wet here, tunnel out) inside THIS dispatch instead.
                 const _r = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
-                if (_r.rotated && fluidTurns < 4) {
+                const _aq = aquiferHere(bot._mineDownFluidAvoid, bot.entity.position);   // death #10: 3 wet sides → leave
+                if (_aq) log_(`aquifer: ${AQUIFER_WET_HEADINGS}+ wet headings here — tunnel out instead of descending the last one`);
+                if (_r.rotated && fluidTurns < 4 && !_aq) {
                     fluidTurns++;
                     log_(`fluid turn ${fluidTurns}/4: heading ${sx},${sz} → ${_r.sx},${_r.sz} (fluid near ${fx},${cy - 1},${fz})`);
                     sx = _r.sx; sz = _r.sz; noProg = 0;
                     continue;
                 }
-                if (_r.exhausted && loopRelocates < 1) {
+                if ((_r.exhausted || _aq) && loopRelocates < 1) {
                     const _tun = planRelocateTunnel(bn, cx, cy, cz);
                     if (!_tun) log_(`fluid: all 4 headings wet here and no dry 9-cell tunnel line at y${cy}`);
                     else if (!(await walkDugPath(bot, skills, Vec3, bn, _tun.path))) { loopRelocates++; log_(`fluid: tunnel ${_tun.sx},${_tun.sz} walk stopped early: ${bot._walkDugFail || '?'}`); }
