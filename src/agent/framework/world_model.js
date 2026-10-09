@@ -745,9 +745,14 @@ export function proposeTasks(world, bot) {
     // ★2026-07-05 夜间口袋组装: 白天门放宽 — 夜里满兜板材(≥4)或石料(≥3)而缺镐/缺台时,
     // 合成不需要阳光 (技能端 ①.5开拔/②砍木 自带夜跳过, ⓪清囊/③板/③.5台床/③.6棍/④镐/⑧
     // 熟食夜里全能跑)。实录 11:34: planks16+stick11 夜里干坐, 台/床/镐全欠着等日出。
-    const _nightAssembly = time.phase !== 'day'
-        && (woodUnits(bot) >= 1 || invCount(bot, /^cobblestone$/) >= 3)
-        && (totalPicks(bot) < REPLENISH_PICKS_MIN || !invCount(bot, /^crafting_table$/));
+    // ★T-0177 (22:28:48-51Z 实录: 夜里 y21, 4 镐 + 1 板 + 0 台 → 门因"缺台+有 1 木料"放行 → replenishKit 夜跳砍木/上浮,
+    //   1 板拍不了台 → ZERO delta ×3 → 冷却)。夜间组装只在真能合成出东西时放行 (铁律 2): 缺台要 ≥4 木料;
+    //   缺镐要 ≥3 圆石 + 台(带着或木料够拍) + 棍(≥2 或木料够折)。
+    const _wu = woodUnits(bot), _hasTable = invCount(bot, /^crafting_table$/) > 0, _sticks = invCount(bot, /^stick$/);
+    const _canNightTable = !_hasTable && _wu >= 4;
+    const _canNightPick = totalPicks(bot) < REPLENISH_PICKS_MIN && invCount(bot, /^cobblestone$/) >= 3
+        && (_hasTable || _wu >= 4) && (_sticks >= 2 || _wu >= (_hasTable ? 0 : 4) + 2);
+    const _nightAssembly = time.phase !== 'day' && (_canNightTable || _canNightPick);
     // ★2026-07-06 tier 参数化 ([[spec-pickaxe-stockpile-redesign]]): 除总镐 fodder 底线外, 铁/钻阶段
     //   还要囤够本 tier 镐 (铁 4 / 钻 3, 触发线见 pickStockPlan)。tier 短缺也触发本 kind, 由 replenishKit ④
     //   就地用手头 ingot/diamond 造对应镐 (缺料由采矿链补)。priority: picks==0 仍 67(脱困急态, 压过 farm@65),
