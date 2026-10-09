@@ -107,7 +107,12 @@ export async function reclaimStranded(bot, { skills, world, log }, { all = false
         const q = bot.entity.position;
         let fb = null;
         try { fb = bot.blockAt(q.offset(rec.x - q.x, rec.y - q.y, rec.z - q.z)); } catch (e) {}
-        if (fb && !/furnace/.test(fb.name || '')) { log(bot, `stranded furnace @${rec.x},${rec.y},${rec.z} is gone (${fb.name}) — dropping record`); removeStranded(rec); if (!all) break; continue; }
+        // ★T-0164 (21:20:38 实录: 记录点是 stone 就删了记录): 精确坐标可能差一格 (登记/放置偏移) — 记录点 4 格内还有炉就照收
+        let near = null;
+        try { near = world.getNearestBlock(bot, 'furnace', 4); } catch (e) {}
+        if (fb && !/furnace/.test(fb.name || '') && !(near && near.position && Math.hypot(near.position.x - rec.x, near.position.y - rec.y, near.position.z - rec.z) <= 4)) {
+            log(bot, `stranded furnace @${rec.x},${rec.y},${rec.z} is gone (${fb.name}, no furnace within 4b) — dropping record`); removeStranded(rec); if (!all) break; continue;
+        }
         const r = await clearAndPickUp(bot, { skills, world }, rec.item || 'raw_iron', rec.product || 'iron_ingot');
         got += r.got; furnaces += r.furnace ? 1 : 0;
         log(bot, `reclaim stranded furnace @${rec.x},${rec.y},${rec.z}: +${r.got} (${rec.product || '?'}/${rec.item || '?'}, expected ${rec.n ?? 'unknown'})${r.furnace ? ' + furnace picked up' : ''}`);

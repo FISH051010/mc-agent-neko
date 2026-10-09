@@ -78,6 +78,19 @@ test('T-0164: 两口滞留炉 (-55,21,23 ×8 + -53,22,49 料数未知) → recla
     assert.equal(readAllStranded().length, 0);
 });
 
+test('T-0164: 记录点是 stone 但 4 格内有炉 (坐标差一格) → 照收, 不删记录了事', async () => {
+    writeStranded(null);
+    writeStranded({ x: -55, y: 21, z: 23, item: 'raw_iron', product: 'iron_ingot', n: 8, at: Date.now() });
+    const { default: reclaimFurnace } = await import('../bots/_supervisor/skills/reclaimFurnace.js');
+    const inv = {}; let pos = { x: -55, y: 22, z: 25 };
+    const bot = { entity: { get position() { return { ...pos, offset(dx, dy, dz) { return { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }; } }; } },
+                  blockAt: () => ({ name: 'stone' }) };
+    const skills = { goToPosition: async () => {}, clearNearestFurnace: async () => { inv.iron_ingot = 8; return true; }, collectBlock: async () => { inv.furnace = 1; } };
+    const world = { getInventoryCounts: () => ({ ...inv }), getNearestBlock: () => ({ name: 'furnace', position: { x: -55, y: 22, z: 23 } }) };
+    assert.equal(await reclaimFurnace(bot, { skills, world, log: () => {} }), true);
+    assert.equal(inv.iron_ingot, 8);
+});
+
 test('T-0164: 滞留记录 ≤64 格 → 提 RECLAIM_FURNACE(reclaimFurnace); 收回后 isGoalDone; 太远不提', () => {
     writeStranded({ x: -54, y: 22, z: 24, item: 'raw_iron', product: 'iron_ingot', n: 8, at: Date.now() });
     const w = JSON.parse(JSON.stringify(EMPTY_WORLD));
