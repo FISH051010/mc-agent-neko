@@ -2967,6 +2967,8 @@
 
 - **★C401-S equip 前关掉遗留容器窗口 — 'invalid operation' 的真根(T-0179 续)**（2026-10-10，worker-stuck，T-0179）: 续查 22:26→22:32 'invalid operation' 不止 mineDown: mine_motion equip-failed ×50+ (place_underfoot/surfaceUp/reclaimTable 全中), 起点 = 22:26:11 smeltSafe 收尾被打断 (无 'furnace picked up', 随后 3 次 smeltSafe 1s 内 consumed=0)。mineflayer clickWindow 用 `bot.currentWindow || bot.inventory` — 熔炉窗口没关时按背包槽号点击越界 → acceptClick 断言。修: skills.closeStrayContainerWindow (非 minecraft:inventory 的 currentWindow → closeWindow); mine_motion 全局 bot.equip 包装器每次 equip 前调用并记 'equip.closed_stray_window'。C400 的 equip 失败不致命保留为纵深防御。测试 test/stray_window_equip.test.mjs。
 
+- **★C402-S clearNearestFurnace 在 finally 关熔炉窗口(T-0179 源头补全)**（2026-10-10，worker-stuck，T-0179）: worker-tier 定位源头 = smeltSafe clearAndPickUp → skills.clearNearestFurnace 开炉窗从不关 (a0e05fd 在调用方补 closeWindow)。原语本身补全: 取物段包 try/finally, finally 里 closeWindow (含中途抛错); 顺带去掉 console.log 调试输出 ('undefined undefined undefined' 那行)。chest 系列 (putInChest/takeFromChest/viewChest) 正常路径已 close; aee1140 全局 equip 包装兜底遗留窗口。测试 test/clear_furnace_closes.test.mjs。
+
 ---
 
 ---

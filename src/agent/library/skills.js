@@ -1018,22 +1018,23 @@ export async function clearNearestFurnace(bot) {
 
     console.log('clearing furnace...');
     const furnace = await bot.openFurnace(furnaceBlock);
-    console.log('opened furnace...')
-    // take the items out of the furnace
-    let smelted_item, intput_item, fuel_item;
-    if (furnace.outputItem())
-        smelted_item = await furnace.takeOutput();
-    if (furnace.inputItem())
-        intput_item = await furnace.takeInput();
-    if (furnace.fuelItem())
-        fuel_item = await furnace.takeFuel();
-    console.log(smelted_item, intput_item, fuel_item)
-    let smelted_name = smelted_item ? `${smelted_item.count} ${smelted_item.name}` : `0 smelted items`;
-    let input_name = intput_item ? `${intput_item.count} ${intput_item.name}` : `0 input items`;
-    let fuel_name = fuel_item ? `${fuel_item.count} ${fuel_item.name}` : `0 fuel items`;
-    log(bot, `Cleared furnace, received ${smelted_name}, ${input_name}, and ${fuel_name}.`);
-    return true;
-
+    try {
+        // take the items out of the furnace
+        let smelted_item, intput_item, fuel_item;
+        if (furnace.outputItem())
+            smelted_item = await furnace.takeOutput();
+        if (furnace.inputItem())
+            intput_item = await furnace.takeInput();
+        if (furnace.fuelItem())
+            fuel_item = await furnace.takeFuel();
+        let smelted_name = smelted_item ? `${smelted_item.count} ${smelted_item.name}` : `0 smelted items`;
+        let input_name = intput_item ? `${intput_item.count} ${intput_item.name}` : `0 input items`;
+        let fuel_name = fuel_item ? `${fuel_item.count} ${fuel_item.name}` : `0 fuel items`;
+        log(bot, `Cleared furnace, received ${smelted_name}, ${input_name}, and ${fuel_name}.`);
+        return true;
+    } finally {
+        try { bot.closeWindow(furnace); } catch (e) {}   // ★T-0179: a lingering furnace window broke every later equip
+    }
 }
 
 
