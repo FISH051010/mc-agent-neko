@@ -143,8 +143,19 @@ loop:
 | 3c51024 (worker-tests) | src/agent/library/skills.js | main.js | breakBlockAt 成功路径清除 60s 超时定时器（定时器泄漏），无行为变化 |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 
-**部署锁**：同一时刻只允许一个 agent 重启 stack。约定：要重启前先 `comment` 工单"deploying now"，
-做完再 comment"deployed"。（后续可加 `deploy.lock` 文件锁强制串行。）
+**部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
+实录撞车：worker-death 已 comment "deploying now"，worker-stuck 的扫描漏看，又杀了刚拉起 12 秒的 main.js。口头约定靠每人各自扫评论，必漏。现在：
+
+```
+node bots/_supervisor/deploy-lock.mjs acquire --as <你的tag> --reason "T-xxxx main.js restart"   # 失败(exit 1)=别人在部署,等
+# ... 合并 → npm test → 重启/re-arm → 冒烟自检(CreationDate + 48909 + vitals 新鲜) ...
+node bots/_supervisor/deploy-lock.mjs release --as <你的tag>
+node bots/_supervisor/deploy-lock.mjs status                                                     # 看谁持有
+```
+
+- 锁是 O_EXCL 原子创建的 `bots/_supervisor/deploy.lock`；超过 15 分钟视为持有者已死、可接管（会打印接管记录）。
+- 工单里照旧 comment "deploying now"/"deployed" 留痕，但**是否能部署只看锁**，不看评论。
+- 冒烟自检没过也要 release（失败也是结果），并在工单里写清楚。
 
 ## 自动探测在测什么（botwatch.mjs）
 

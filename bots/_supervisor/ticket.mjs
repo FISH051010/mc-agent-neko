@@ -74,6 +74,7 @@ async function main() {
             console.log('Read docs/parallel-tickets.md for the full pipeline + deploy gate rules.');
             console.log('★RULE: every bug fix ships with a regression test in test/ (fails before the fix, passes after; name it "T-xxxx: ...").');
             console.log('        Run `npm test` before deploy. No pinning test = not `fixed`. See docs/parallel-tickets.md「回归测试钉死」.');
+            console.log('★RULE: restart/re-arm only while holding the deploy lock: node bots/_supervisor/deploy-lock.mjs acquire --as <tag> --reason "..." → deploy → release. Comments are not a lock.');
             return;
         }
         if (cmd === 'list') {
