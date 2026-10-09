@@ -12,7 +12,15 @@
 
 ---
 
-## C368. ★无武器遇单只近战怪: 已在掉血就不再豁免逃跑(地下→封坑), 堵"零反射站着被打死"（modes.js shouldFlee + skills.unarmedSoloMeleeExempt 需重启,T-0168,worker-death,⏳待重启）
+## C369. ★没剑拿镐打: self_defense 无剑/斧时被单只近战怪打 → 用最好的镐还手(耐久策略), 有镐时逃跑门放宽到 hp10（modes.js self_defense/shouldFlee + skills.fallbackPickWeapon 需重启,T-0168 后续,worker-death,⏳待重启）
+
+**证据/拍板**: 监工 10-10 拍板(death #8 后续): 人类没剑时拿镐打, 没有站着挨打的; 铁镐 ≈ 石剑伤害。
+**机理**: self_defense 只把 _sword/_axe 算武器, 无剑即不 engage(defendSelf 的 equipHighestAttack 本已支持退到镐/铲, 只差门)。
+**改动**: skills.js `fallbackPickWeapon(items)`(按 netherite>diamond>iron>stone>gold/wood 挑最好的镐; 仅当镐 ≥2 把或该镐剩余耐久 >30% 才用); self_defense: 无剑/斧 + recentlyHurt + 8b 内仅 1 只敌对且为近战(非骷髅/苦力怕/女巫/烈焰人…) + 有可用镐 → 视为有武器 engage(defendSelf 自会装备最高攻击的镐), 8s 节流记 progress。shouldFlee 的 `unarmedSoloMeleeExempt` 加 hasFallbackPick: 有可用镐时打到 hp10 再交给 flee/dig-in(C368), 徒手仍 hp16。
+**可证伪预测**: 无剑被单只僵尸打时出 `[self_defense] no sword — fighting zombie with iron_pickaxe (T-0168)` 并击杀/击退; hp<10 才 `Outmatched — digging in/fleeing`。若出现"唯一一把下矿镐被打坏导致下矿中断"→ 收紧耐久阈值。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0168: no sword → swing back…'。
+
+## C368. ★无武器遇单只近战怪: 已在掉血就不再豁免逃跑(地下→封坑), 堵"零反射站着被打死"（modes.js shouldFlee + skills.unarmedSoloMeleeExempt 需重启,T-0168,worker-death,🟡已上线 21:21:23Z）
 
 **证据**: death #8 10-09 21:17:59Z `Zombie` d=1.7 @14,33,42 underground 白天 tod1679 skill=surfaceUp gear 全空。events: 21:17:52 hp10, 21:17:55 hp6, 21:17:59 死; act_trace 21:17:52-59 act 全为 '-', progress 该窗零 self_defense/self_preservation 行。背景: 21:17:05 他人部署重启 main.js 时 bot 正在 y22 surfaceUp, 重连后续爬, y33 挖进僵尸洞。
 **机理**: shouldFlee 的 HEALTHY-UNARMED BOOTSTRAP EXIT(无武器 + 恰 1 只近战怪 → 不逃; 前提"一只怪杀不死满血 bot")不看是否已挨打/掉血; self_defense 明写"无武器把身体交给别的处理器" → 无人接管 → 站桩挨打至死。

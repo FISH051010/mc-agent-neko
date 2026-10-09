@@ -6454,10 +6454,29 @@ export function breakWouldFlood(blockAt, pos) {
  * self_defense 无武器又不出手 → 两边都不接, 站着被打死。人类: 满血被挠一下可以继续干活;
  * 已经在掉血就退回坑里封口。豁免只在 "没在挨打" 或 "血量仍近满(≥16)" 时成立。
  */
-export function unarmedSoloMeleeExempt({ hasWeapon, hostileCount, hostileName, recentlyHurt, hp }) {
+export function unarmedSoloMeleeExempt({ hasWeapon, hostileCount, hostileName, recentlyHurt, hp, hasFallbackPick = false }) {
     if (hasWeapon || hostileCount !== 1) return false;
     if (/skeleton|stray|creeper|witch|ghast|blaze|pillager/i.test(hostileName || '')) return false;
-    return !recentlyHurt || (Number(hp) || 0) >= 16;
+    // with a usable pick self_defense swings back (fallbackPickWeapon) — stay and fight down to hp10;
+    // bare-handed only a scratch at near-full hp is worth ignoring.
+    return !recentlyHurt || (Number(hp) || 0) >= (hasFallbackPick ? 10 : 16);
+}
+
+/**
+ * ★T-0168 后续 (监工拍板): 没剑/斧时人类拿镐打, 不站着挨打。挑背包里最好的镐当后备近战武器;
+ * 耐久策略: 镐 ≥2 把, 或这把剩余耐久 >30% 才用 —— 不把唯一一把下矿镐打废。
+ * @param items [{name, durabilityUsed?, maxDurability?}]
+ * @returns {string|null} 镐名
+ */
+const PICK_RANK = { netherite_pickaxe: 6, diamond_pickaxe: 5, iron_pickaxe: 4, stone_pickaxe: 3, golden_pickaxe: 2, wooden_pickaxe: 2 };
+export function fallbackPickWeapon(items) {
+    const picks = (items || []).filter(it => it && PICK_RANK[it.name]);
+    if (!picks.length) return null;
+    picks.sort((a, b) => PICK_RANK[b.name] - PICK_RANK[a.name]);
+    const best = picks[0];
+    const max = Number(best.maxDurability) || 0;
+    const left = max > 0 ? (max - (Number(best.durabilityUsed) || 0)) / max : 1;
+    return (picks.length >= 2 || left > 0.3) ? best.name : null;
 }
 
 /**

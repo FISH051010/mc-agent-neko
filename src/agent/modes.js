@@ -646,8 +646,10 @@ const modes_list = [
             // refusing to fight unarmed) nobody owns the body: death #8 stood still 7s while a zombie took
             // hp14→0. Only exempt while not being hit, or still near-full hp; otherwise fall through to
             // flee (exposed) / dig-in (underground).
+            let _fallbackPick = false;
+            try { _fallbackPick = !!skills.fallbackPickWeapon(bot.inventory.items()); } catch (e) {}
             if (skills.unarmedSoloMeleeExempt({ hasWeapon, hostileCount: hostiles.length, hostileName: hostiles[0] && hostiles[0].name,
-                recentlyHurt, hp: bot.health })) return false;
+                recentlyHurt, hp: bot.health, hasFallbackPick: _fallbackPick })) return false;
             // With a sword AND shield we can actually WIN (block arrows/hits, close,
             // strike) — don't flee, let self_defense's shieldFight take it. Only flee
             // when truly outmatched: critically low, or genuinely swarmed (3+).
@@ -3299,7 +3301,23 @@ const modes_list = [
             // Combat is selected from the live threat and available equipment, never
             // from an absolute-health gate. Without a weapon we leave the body to the
             // other threat handlers; a shield only selects the guarded combat path.
-            const hasWeapon = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name));
+            let hasWeapon = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name));
+            // ★T-0168 后续: no sword/axe but being hit by ONE melee mob → swing back with the best pick
+            // (a human never stands there taking hits). Durability policy in skills.fallbackPickWeapon.
+            // defendSelf's equipHighestAttack already falls back to picks once engaged.
+            if (!hasWeapon && recentlyHurt && enemy && !/skeleton|stray|creeper|witch|ghast|blaze|pillager/i.test(enemy.name || '')) {
+                try {
+                    const _melee8 = Object.values(bot.entities).filter(e => e && e !== bot.entity && e.position && mc.isHostile(e) && e.position.distanceTo(bot.entity.position) < 8).length;
+                    const _pick = _melee8 === 1 ? skills.fallbackPickWeapon(bot.inventory.items()) : null;
+                    if (_pick) {
+                        hasWeapon = true;
+                        if (Date.now() - (this._pickFightLogAt || 0) > 8000) {
+                            this._pickFightLogAt = Date.now();
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_defense] no sword — fighting ${enemy.name} with ${_pick} (T-0168) hp=${Math.round(bot.health)}\n`); } catch (e) {}
+                        }
+                    }
+                } catch (e) {}
+            }
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
             const swarmed = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), 6) &&
                 Object.values(bot.entities).filter(e => e && mc.isHostile(e) && e.position && e.position.distanceTo(bot.entity.position) < 8).length >= 3;

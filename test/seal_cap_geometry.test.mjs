@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -201,4 +201,17 @@ test('T-0168: unarmed vs one zombie — keep working only while not being hit or
     assert.equal(unarmedSoloMeleeExempt({ ...base, hasWeapon: true }), false, 'armed → self_defense owns it');
     assert.equal(unarmedSoloMeleeExempt({ ...base, hostileCount: 2 }), false);
     assert.equal(unarmedSoloMeleeExempt({ ...base, hostileName: 'skeleton', recentlyHurt: false }), false);
+});
+
+test('T-0168: no sword → swing back with the best pick, but never wear out the only mining pick', () => {
+    const it = (name, used = 0, max = 250) => ({ name, durabilityUsed: used, maxDurability: max });
+    assert.equal(fallbackPickWeapon([it('wooden_pickaxe', 0, 59), it('iron_pickaxe', 10)]), 'iron_pickaxe', 'best tier, ≥2 picks');
+    assert.equal(fallbackPickWeapon([it('iron_pickaxe', 100)]), 'iron_pickaxe', 'single pick with 60% left is fine');
+    assert.equal(fallbackPickWeapon([it('iron_pickaxe', 200)]), null, 'single pick at 20% — keep it for mining');
+    assert.equal(fallbackPickWeapon([it('stick'), it('dirt')]), null);
+    // with a usable pick: stay and fight down to hp10; bare-handed: only near-full hp
+    const base = { hasWeapon: false, hostileCount: 1, hostileName: 'zombie', recentlyHurt: true };
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 12, hasFallbackPick: true }), true);
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 8, hasFallbackPick: true }), false, 'low hp → flee / dig in');
+    assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 12, hasFallbackPick: false }), false);
 });
