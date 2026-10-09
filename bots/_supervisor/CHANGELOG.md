@@ -12,6 +12,14 @@
 
 ---
 
+## C357. ★夜里透气 1×1 口袋 ≠ 活埋: mobility ENTOMBED 挖出反射加夜间庇护豁免（modes.js mobility 需重启,T-0105,worker-death,⏳待重启）
+
+**证据**: 10-09 16:06:37 派 nightShelter(dig_one) → 16:06:40 `[mobility] → ENTOMBED` → `dig retry (ENTOMBED) spruce_log@70,70,-2`(刚放的墙) / `dirt@70,69,-2` → 16:06:48 `→ FREE`: 夜庇护封好 3 秒就被自家反射拆开。15:50 溺死前同样出现"已封口袋被拆"。
+**机理**: 1×1 封闭口袋(顶+四墙)按 mobility 定义就是 ENTOMBED(无出口、头顶实心), ENTOMBED 无条件立即挖出。C341 给 SEALED(密室)加了 DAYLIGHT-ONLY, ENTOMBED 漏了 → 夜庇护(nightShelter/bunkerDown)与 ENTOMBED 反射互拆。
+**改动**: skills.js 纯函数 `entombedIsNightShelter({timeOfDay, feetName, headName, msSinceDamage})`: tod 12000–23200 + 脚/头两格是空气 + 3s 内没掉血 → 是庇护。modes.js mobility 在 ENTOMBED 分支前判定, 是庇护则不 execute 挖出(只标 `_mobility.nightShelter=true`, 30s 节流记 progress)。身体里有方块/水、正在掉血、天亮 → 原挖出反射不变。
+**可证伪预测**: 夜里 progress 出 `ENTOMBED at night in a breathable pocket … treating as night shelter`, 不再紧跟 `dig retry (ENTOMBED)` 挖自家墙; 夜 hold 期间位置不变直到黎明后挖出。若出现夜里窒息/饿死在口袋里不出 → 查 msSinceDamage 门(饥饿掉血也会触发挖出)。
+**回滚**: revert 38f9803, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0105: ENTOMBED in a breathable pocket at night…'。
+
 ## C356. ★夜庇护不再烧原木: 原木仅在木料盈余(板当量>64 基线)时可当封顶/补墙料（skills.js resolveCapBlock + modes.js bunkerDown fillerOf 需重启,T-0113,worker-death,⏳待重启）
 
 **证据**(T-0113 overseer): 新世界首夜 15:46→15:50 logs 16→9→2、dirt 5→0, 期间 nightShelter(NIGHT_DIG_ONE) 连派 10 次; 旧 digOneCapOne 挖前定死 capName, 背包无泥土时 fallback 第一个非木板物品 = spruce_log。
