@@ -788,7 +788,7 @@ export function proposeTasks(world, bot) {
         }
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
             actionable: threat.actionable, counts: invCounts(bot), animal: _animal,
-            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch });
+            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch, hp: vitals.hp });   // ★T-0188 回不了血也侦察
         if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
     }
 

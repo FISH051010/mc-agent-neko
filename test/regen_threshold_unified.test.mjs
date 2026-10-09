@@ -30,3 +30,12 @@ test('T-0188: 源码不再有硬编码的 hp<=12 / food<=6 回血判据', () => 
         assert.ok(!/hp <= 12|health <= 12/.test(s), `${f} uses cannotRegen()`);
     }
 });
+
+test('T-0188 补: 回不了血 (hp11 food11) 零可吃 地下零动物 → 提案带 surfaceFirst+scout; 满血 food11 不为存粮侦察; 包里有吃的不侦察', async () => {
+    const { foodFloorProposal } = await import('../src/agent/framework/food_floor.js');
+    const base = { foodInstincts: false, overworld: true, phase: 'day', food: 11, actionable: 0, counts: { stone_pickaxe: 2 }, animal: null, botY: 49, depthBand: 'shallow', latch: { active: true, kills: 0 } };
+    const p = foodFloorProposal({ ...base, hp: 11 });
+    assert.ok(p && p.args[0].surfaceFirst && p.args[0].scout, JSON.stringify(p && p.args[0]));
+    assert.equal(foodFloorProposal({ ...base, hp: 20 }), null, 'full hp, food 11 → no stock-up scouting');
+    assert.equal(foodFloorProposal({ ...base, hp: 11, counts: { bread: 2 } }), null, 'has food → auto_eat eats, no hunt');
+});

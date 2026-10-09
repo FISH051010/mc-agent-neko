@@ -83,7 +83,7 @@ export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, now 
 }
 
 /** 决策判据 (纯函数)。返回 null 或 proposal 片段。latch 缺省时退回旧口径 (food≤6 且零可吃)。 */
-export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand, latch }) {
+export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand, latch, hp }) {
     if (foodInstincts || !overworld || phase !== 'day' || (actionable || 0) > 0) return null;
     if (latch) {
         if (!latch.active || (latch.kills || 0) >= SESSION_KILL_CAP) return null;
@@ -98,10 +98,12 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
     // ★T-0156 (监工加急 10-10): 19:56:59 y18 food 4-6 (未到 starving≤3) → 只带 scout 不带 surfaceFirst →
     //   矿道里侦察 0.4s 就"found nothing" ×3 → 冷却。地下要侦察就必须先上浮; 地下判据也认 botY<62 (不只 depthBand)。
     const underground = (Number.isFinite(botY) && botY < 62) || !!(depthBand && depthBand !== 'surface');
-    const needScout = food <= FOOD_FLOOR && !animalOk && rawMeat === 0;
-    const surfaceFirst = underground && (starving || needScout);
     // ★监工加急 #2 + 拍板: 侦察只在 food≤6 时做 (锁存期间 food 已回 7-17 且附近没动物 → 不提, 不为存粮侦察)。
-    const scout = food <= FOOD_FLOOR && !surfaceFirst && !animalOk && rawMeat === 0;
+    // ★T-0188 补: "回不了血" (hp≤12 且 food<18) 且包里零可吃 也要侦察/先上浮 — 这是为回血不是存粮 (07:15 hp11 food11 地下零动物 → 不提 → 带 11 血下矿)。
+    const huntNeed = food <= FOOD_FLOOR || (cannotRegen(hp, food) && countMatching(counts, EDIBLE_RE) === 0);
+    const needScout = huntNeed && !animalOk && rawMeat === 0;
+    const surfaceFirst = underground && (starving || needScout);
+    const scout = huntNeed && !surfaceFirst && !animalOk && rawMeat === 0;
     if (rawMeat === 0 && !animalOk && !surfaceFirst && !scout) return null;
     const args = [{ radius: HUNT_RADIUS, maxDy: HUNT_DY, maxMs: QUICK_MEAL_MAX_MS,
         // ★监工加急#3: surfaceFirst 必须连带侦察 — 上浮后看不到动物就侦察, 不直接失败
