@@ -24,7 +24,7 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, starvingNoFood, DESCENT_SKILL_RE } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE } from './food_floor.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT']);
 
@@ -715,11 +715,18 @@ export function proposeTasks(world, bot) {
     // 1d) ★T-0069 FOOD_FLOOR — 食物本能关闭(用户 07-08 令)时的有界兜底: food≤6 且零食物 → 16 格内一次短猎 +
     //     就地烤 (quickMeal ≤60s)。不漫游、不种田、不追远处动物; 判据见 framework/food_floor.js。
     {
+        const _bp = bot && bot.entity && bot.entity.position ? bot.entity.position : null;
+        const _animal = w.landmarks && w.landmarks.animal;
+        // ★监工拍板: 会话锁存 (food≤6 触发 → food≥18 且熟食≥4 / 附近无动物时 food≥18 / 猎满 6 只 才释放)
+        let _latch;
+        if (!foodInstincts && bot) {
+            bot._foodFloorLatch = updateFoodFloorLatch(bot._foodFloorLatch, { food: vitals.food, counts: invCounts(bot),
+                animalNear: animalInRange(_animal, _bp, _bp ? _bp.y : NaN) });
+            _latch = bot._foodFloorLatch;
+        }
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
-            actionable: threat.actionable, counts: invCounts(bot), animal: w.landmarks && w.landmarks.animal,
-            botY: bot && bot.entity && bot.entity.position ? bot.entity.position.y : NaN,
-            botPos: bot && bot.entity && bot.entity.position ? bot.entity.position : null,
-            depthBand: w.pos && w.pos.depthBand });
+            actionable: threat.actionable, counts: invCounts(bot), animal: _animal,
+            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch });
         if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
     }
 
@@ -1412,7 +1419,8 @@ export function proposeTasks(world, bot) {
     // ★饥饿禁下矿 (T-0069 跟进, 监工拍板): food≤3 且零可吃 → 剔除一切派发下矿技能的提案 (含夜间整夜下矿),
     //   按技能名而非 kind 判, 新增的下矿 kind 也自动受限。isGoalDone 侧同口径释放已在执行的下矿承诺。
     let _final = out;
-    if (starvingNoFood({ food: vitals.food, counts: invCounts(bot) }))
+    // ★监工加急#6 (18:22:30Z 实录: food 到 12 就翻 GET_DIAMOND, hp=1 带全套铁装下矿): hp<10 同样关门。
+    if (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }))
         _final = out.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));
     _final.sort((a, b) => b.priority - a.priority);
     return _final;
@@ -1451,7 +1459,8 @@ export function isGoalDone(kind, world, bot) {
     // ★饥饿禁下矿 (T-0069 跟进): 下矿类承诺在 food≤3 且零可吃时视为结束 → 释放 → kernelDriver 见 kind 翻转打断矿里的子技能。
     if (DESCENT_KINDS.has(kind)) {
         const _food = (w.vitals && w.vitals.food != null) ? w.vitals.food : (bot && bot.food);
-        if (starvingNoFood({ food: _food, counts: invCounts(bot) })) return true;
+        const _hp = (w.vitals && w.vitals.hp != null) ? w.vitals.hp : (bot && bot.health);
+        if (descentBlocked({ food: _food, counts: invCounts(bot), hp: _hp })) return true;
     }
     switch (kind) {
         case PROPOSAL_KIND.BOOTSTRAP_KIT: return isBootstrapDone(w, bot);
@@ -1472,7 +1481,8 @@ export function isGoalDone(kind, world, bot) {
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
         case PROPOSAL_KIND.FOOD_FLOOR:   // ★T-0069: food 回到地板以上或背包已有可吃的 (与提案同口径)
-            return foodFloorDone({ food: (w.vitals && w.vitals.food != null) ? w.vitals.food : (bot && bot.food) || 20, counts: invCounts(bot) });
+            return foodFloorDone({ food: (w.vitals && w.vitals.food != null) ? w.vitals.food : (bot && bot.food) || 20, counts: invCounts(bot),
+                latch: bot && !foodInstinctsEnabled() ? bot._foodFloorLatch : undefined });
         case PROPOSAL_KIND.TOOL_UPKEEP:
             // ★T-0060: done = gate restored OR nothing affordable left to craft (same口径 as the proposal).
             return !needsToolUpkeep({ sufficientForUnderground: !!(w.kit && w.kit.sufficientForUnderground), pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot) })

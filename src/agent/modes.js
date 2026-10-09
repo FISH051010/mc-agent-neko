@@ -32,6 +32,7 @@ import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobilit
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { purposefulDigActive, withBurstDeadline } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
+import { DESCENT_MIN_HP } from './framework/food_floor.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -6270,8 +6271,11 @@ const modes_list = [
                     // ★炼铁保留 (用户令 2026-07-08: 夜间炼铁/升级铁装保留). 仍排在下矿之上 (T-0097: 先把囤铁锁成铁镐/剑/盾, 再多挖).
                     if (smeltIronWarranted) return { decision: 'SMELT_IRON', reason: `${_ironIngotsDec >= 3 ? _ironIngotsDec + ' ingots' : _rawIronDec + ' raw_iron'} + no iron pick — lock in iron tier (persistent + iron sword/shield)`, targetY: y };
                     // ② 镐(资源)充足 → 整夜下矿.
-                    if (canMineWholeNight) return { decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget=${picksBudget}>=${cfg.mineNightPickBudget}`, targetY: 12 };
-                    if (alreadyDeepEnclosed) return { decision: 'MINE_THROUGH_NIGHT', reason: `already deep/enclosed y=${y} pick=${picks} — keep mining, don't surface-bootstrap`, targetY: 12 };
+                    // ★监工加急#6 (18:26:50Z 实录: hp=1 夜链选 MINE_THROUGH_NIGHT → mineDiamonds): 下矿门同口径 hp<10 关 —
+                    //   回落到挖三填一封闭; 否则提案端剔掉夜挖后夜里无提案 = 站在外面过夜。
+                    const _hpOkForNightMine = !Number.isFinite(bot.health) || bot.health >= DESCENT_MIN_HP;
+                    if (canMineWholeNight && _hpOkForNightMine) return { decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget=${picksBudget}>=${cfg.mineNightPickBudget}`, targetY: 12 };
+                    if (alreadyDeepEnclosed && _hpOkForNightMine) return { decision: 'MINE_THROUGH_NIGHT', reason: `already deep/enclosed y=${y} pick=${picks} — keep mining, don't surface-bootstrap`, targetY: 12 };
                     // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
                     //     lazy 扫描: 只在链子走到这里(近床/炼铁/下矿都没命中)时才扫, 命中即停. 硬门 picks>=1 卡在 if 里(不在扫描函数内) —
                     //     §7.3 红线: 无镐 bot 走 dig_one 会徒手挖软土把自己埋到树底 → 天亮树抬高不可达 → wood=0 bootstrap 死锁. 与 digOneViable 同守卫.

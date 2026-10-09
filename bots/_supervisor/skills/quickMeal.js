@@ -190,6 +190,8 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         if (skills.pickupNearbyItems) await race(skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
         gotMeat = rawHeld() > r0;
         if (!gotMeat) prog(`hunt yielded no meat (target escaped / out of reach)`);
+        // ★监工拍板: 会话猎杀计数 (world_model 锁存 SESSION_KILL_CAP=6 只后释放, 防打光一片再漫游)
+        else if (bot._foodFloorLatch && bot._foodFloorLatch.active) bot._foodFloorLatch.kills = (bot._foodFloorLatch.kills || 0) + 1;
     }
 
     // ② 就地烤

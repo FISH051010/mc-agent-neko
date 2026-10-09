@@ -43,22 +43,55 @@ function horizDist(animal, botPos) {
     return animal.dist;
 }
 
-/** 决策判据 (纯函数)。返回 null 或 proposal 片段。 */
-export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand }) {
-    if (foodInstincts || !overworld || phase !== 'day' || (actionable || 0) > 0) return null;
-    if (!(food <= FOOD_FLOOR)) return null;
-    if (countMatching(counts, EDIBLE_RE) > 0) return null;
-    const rawMeat = countMatching(counts, RAW_MEAT_RE);
+// ★监工拍板 (18:2x 实机闭环跑通后): 迟滞 — food≤6 触发, 补到 food≥18(回血线) 且熟食≥4 才释放; 附近确实没动物时
+//   food≥18 即可释放 (不为凑存粮去侦察); 一次会话最多猎 SESSION_KILL_CAP 只 (防把一片打光后漫游)。
+//   旧口径 food>6 即完成 → hp 停在 1 (food<18 不回血), 一碰即死、丢铁装。
+export const FOOD_RELEASE = 18;
+export const STOCK_COOKED = 4;
+export const SESSION_KILL_CAP = 6;
+export const DESCENT_MIN_HP = 10;
+const COOKED_RE = /^(cooked_\w+|bread|baked_potato)$/;
+
+/** 下矿门 (监工拍板): 饿着零可吃 或 hp<10 → 不提出/不继续下矿。 */
+export function descentBlocked({ food, counts, hp }) {
+    return starvingNoFood({ food, counts }) || (Number.isFinite(hp) && hp < DESCENT_MIN_HP);
+}
+
+/** 动物在猎程内 (水平 ≤HUNT_RADIUS、高差 ≤HUNT_DY、25s 内见过)。 */
+export function animalInRange(animal, botPos, botY) {
     const y = Number.isFinite(botY) ? botY : (botPos && botPos.y);
-    const animalOk = !!(animal && Number.isFinite(animal.dist) && horizDist(animal, botPos) <= HUNT_RADIUS
+    return !!(animal && Number.isFinite(animal.dist) && horizDist(animal, botPos) <= HUNT_RADIUS
         && (!Number.isFinite(y) || !Number.isFinite(animal.y) || Math.abs(animal.y - y) <= HUNT_DY)
         && (animal.age == null || animal.age <= 25000));
+}
+
+/** 会话锁存 (纯函数; 状态由调用方挂在 bot._foodFloorLatch)。 */
+export function updateFoodFloorLatch(latch, { food, counts, animalNear, now = Date.now() }) {
+    const L = latch || { active: false, kills: 0, since: 0 };
+    if (!L.active) return food <= FOOD_FLOOR ? { active: true, kills: 0, since: now } : L;
+    const cooked = countMatching(counts, COOKED_RE);
+    const fed = food >= FOOD_RELEASE;
+    if (L.kills >= SESSION_KILL_CAP || (fed && (cooked >= STOCK_COOKED || !animalNear)))
+        return { active: false, kills: L.kills, since: L.since, releasedAt: now };
+    return L;
+}
+
+/** 决策判据 (纯函数)。返回 null 或 proposal 片段。latch 缺省时退回旧口径 (food≤6 且零可吃)。 */
+export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand, latch }) {
+    if (foodInstincts || !overworld || phase !== 'day' || (actionable || 0) > 0) return null;
+    if (latch) {
+        if (!latch.active || (latch.kills || 0) >= SESSION_KILL_CAP) return null;
+    } else {
+        if (!(food <= FOOD_FLOOR)) return null;
+        if (countMatching(counts, EDIBLE_RE) > 0) return null;
+    }
+    const rawMeat = countMatching(counts, RAW_MEAT_RE);
+    const animalOk = animalInRange(animal, botPos, botY);
     // 饿着还在矿里 → 先上浮再在地面找 (监工拍板: 在矿里的要先回地面去觅食)
     const starving = starvingNoFood({ food, counts });
     const surfaceFirst = starving && depthBand && depthBand !== 'surface';
-    // ★监工加急 #2 (17:43Z hp1 food0, 48 格内零动物 → FOOD_FLOOR 不提, 觅食路径为零): 饿着在地面且看不到动物 →
-    //   有界侦察 (≤SCOUT_RADIUS 格、≤SCOUT_MS, 安全寻路, 见动物即转猎)。仍限白天无威胁 (上面已门控)。
-    const scout = starving && !surfaceFirst && !animalOk && rawMeat === 0;
+    // ★监工加急 #2 + 拍板: 侦察只在 food≤6 时做 (锁存期间 food 已回 7-17 且附近没动物 → 不提, 不为存粮侦察)。
+    const scout = food <= FOOD_FLOOR && !surfaceFirst && !animalOk && rawMeat === 0;
     if (rawMeat === 0 && !animalOk && !surfaceFirst && !scout) return null;
     const args = [{ radius: HUNT_RADIUS, maxDy: HUNT_DY, maxMs: QUICK_MEAL_MAX_MS,
         // ★监工加急#3: surfaceFirst 必须连带侦察 — 上浮后看不到动物就侦察, 不直接失败
@@ -77,7 +110,8 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
     };
 }
 
-/** 完成判据: 食物回到地板以上或背包已有可吃的 (与提案同口径)。 */
-export function foodFloorDone({ food, counts }) {
+/** 完成判据: 有锁存看锁存 (迟滞释放); 否则旧口径。 */
+export function foodFloorDone({ food, counts, latch }) {
+    if (latch) return !latch.active || (latch.kills || 0) >= SESSION_KILL_CAP;
     return food > FOOD_FLOOR || countMatching(counts, EDIBLE_RE) > 0;
 }

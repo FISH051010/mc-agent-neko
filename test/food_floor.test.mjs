@@ -42,16 +42,18 @@ test('T-0069: 边界 — 动物 >16 格 / 高差 >4 / 夜里 / 有威胁 / 食�
     const cow = (o) => ({ x: 0, y: 76, z: 0, dist: 10, meta: 'cow', age: 1000, ...o });
     assert.ok(foodFloorProposal({ ...base, animal: cow() }));
     assert.ok(foodFloorProposal({ ...base, animal: cow({ dist: 34 }) }), '17:37 live: cow@34b is now in range (radius 48)');
-    assert.equal(foodFloorProposal({ ...base, animal: cow({ dist: 60 }) }), null, 'far animal (>48)');
-    assert.equal(foodFloorProposal({ ...base, animal: cow({ y: 68 }) }), null, 'dy>6');
+    const scoutOnly = (p) => !!(p && p.args[0].scout);   // 出界动物不直扑, 只能走有界侦察 (food≤6)
+    assert.ok(scoutOnly(foodFloorProposal({ ...base, animal: cow({ dist: 60 }) })), 'far animal (>48) → scout, not a direct hunt');
+    assert.ok(scoutOnly(foodFloorProposal({ ...base, animal: cow({ y: 68 }) })), 'dy>6 → scout, not a direct hunt');
     assert.ok(foodFloorProposal({ ...base, botPos: { x: 0, y: 76, z: 0 }, animal: cow({ x: 40, y: 81, z: 0, dist: 47.0 }) }), 'radius is horizontal (40b), dy 5 ok');
-    assert.equal(foodFloorProposal({ ...base, animal: cow({ age: 60000 }) }), null, 'stale sighting');
+    assert.ok(scoutOnly(foodFloorProposal({ ...base, animal: cow({ age: 60000 }) })), 'stale sighting → scout, not a direct hunt');
     assert.equal(foodFloorProposal({ ...base, phase: 'night', animal: cow() }), null);
     assert.equal(foodFloorProposal({ ...base, actionable: 1, animal: cow() }), null);
     assert.equal(foodFloorProposal({ ...base, foodInstincts: true, animal: cow() }), null, 'GET_FOOD owns it when instincts on');
     assert.equal(foodFloorProposal({ ...base, food: 7, animal: cow() }), null);
     assert.equal(foodFloorProposal({ ...base, counts: { ...LIVE, bread: 1 }, animal: cow() }), null);
-    assert.equal(foodFloorProposal({ ...base, animal: null }), null, 'no animal, no meat → nothing to do');
+    const noAnimal = foodFloorProposal({ ...base, animal: null });
+    assert.ok(noAnimal && noAnimal.args[0].scout, 'food≤6, no animal, no meat → bounded scout (监工拍板: 侦察只在 food≤6 时做)');
     assert.ok(foodFloorProposal({ ...base, counts: { ...LIVE, beef: 2 }, animal: null }), 'raw meat in pack → cook/eat in place');
 });
 
@@ -99,7 +101,8 @@ test('T-0069 跟进: 饿着在矿里 (无可见动物) → FOOD_FLOOR 先上浮 
     assert.equal(p.args[0].surfaceFirst, true);
     const surf = foodFloorProposal({ ...base, depthBand: 'surface', botY: 70 });
     assert.ok(surf && surf.args[0].scout && !surf.args[0].surfaceFirst, 'on the surface with no animal → bounded scout (监工加急#2), not surfaceFirst');
-    assert.equal(foodFloorProposal({ ...base, food: 5, depthBand: 'mid' }), null, 'not starving (food 5) → no forced surfacing');
+    const f5 = foodFloorProposal({ ...base, food: 5, depthBand: 'mid' });
+    assert.ok(f5 && !f5.args[0].surfaceFirst, 'not starving (food 5) → no forced surfacing (scout only)');
 });
 
 test('监工加急#2: 饿着在地面且 48 格内零动物 → FOOD_FLOOR 有界侦察 (≤96 格/≤90s), 不饿则不侦察', () => {
@@ -108,7 +111,7 @@ test('监工加急#2: 饿着在地面且 48 格内零动物 → FOOD_FLOOR 有�
     assert.ok(p, '17:43Z live: hp1 food0, no animal in 48b → must propose something');
     assert.equal(p.args[0].scout, true);
     assert.ok(p.args[0].scoutRadius <= 96 && p.args[0].scoutMs <= 90000);
-    assert.equal(foodFloorProposal({ ...base, food: 5 }), null, 'not starving → no scouting (no roaming)');
+    assert.equal(foodFloorProposal({ ...base, food: 7 }), null, 'food>6 (no session) → no scouting (no roaming)');
     assert.equal(foodFloorProposal({ ...base, phase: 'dusk' }), null, 'night chain owns dusk/night');
     assert.equal(foodFloorProposal({ ...base, actionable: 1 }), null);
 });
@@ -207,4 +210,47 @@ test('监工#5: 苦力怕 6-16 格不逼近 → 背离侦察; ≤6 格 → 收�
         assert.equal(isDispatchFailure(r, false), false, 'hostile-near defer is not a strike');
         assert.ok(NOOP_EXEMPT_KIND.test('FOOD_FLOOR'));
     } finally { process.chdir(cwd); }
+});
+
+test('监工加急#6: hp<10 关下矿门 — 18:22:30 实录 food 12/hp 1 翻 GET_DIAMOND 带全套铁装下矿; hp≥10 放行', async () => {
+    delete process.env.MC_FOOD_INSTINCTS;
+    const { descentBlocked } = await import('../src/agent/framework/food_floor.js');
+    const kit = { ...LIVE, cooked_beef: 1 };
+    const w = world({ food: 12 }); w.vitals.hp = 1; w.vitals.armor = 2;
+    const descents = proposeTasks(w, fakeBot(kit)).filter(p => /^(mineDown|mineDiamonds|mineOres|branchMine)$/.test(p.skill || ''));
+    assert.deepEqual(descents.map(p => p.kind), [], 'hp 1 → no descent');
+    for (const k of ['GET_DIAMOND', 'GO_UNDERGROUND', 'GET_IRON_ARMOR_SET']) assert.equal(isGoalDone(k, w, fakeBot(kit)), true, `${k} released at hp 1`);
+    assert.equal(descentBlocked({ food: 12, counts: kit, hp: 9 }), true);
+    assert.equal(descentBlocked({ food: 12, counts: kit, hp: 10 }), false);
+    const ok = world({ food: 12 }); ok.vitals.hp = 14; ok.vitals.armor = 2;
+    assert.equal(isGoalDone('GET_DIAMOND', ok, fakeBot(kit)), false, 'hp 14 → descent allowed');
+});
+
+test('监工拍板: FOOD_FLOOR 迟滞 — food≤6 触发, 补到 ≥18 且熟食≥4 才释放; 附近无动物时 ≥18 即释放; 会话最多 6 只', async () => {
+    const { updateFoodFloorLatch, SESSION_KILL_CAP } = await import('../src/agent/framework/food_floor.js');
+    let L = updateFoodFloorLatch(null, { food: 6, counts: {}, animalNear: true, now: 1 });
+    assert.equal(L.active, true, 'trigger at 6');
+    L = updateFoodFloorLatch(L, { food: 12, counts: { cooked_beef: 1 }, animalNear: true });
+    assert.equal(L.active, true, '18:22:30 live: food 12 must NOT release (hp stays 1 below 18)');
+    const p = foodFloorProposal({ foodInstincts: false, overworld: true, phase: 'day', food: 12, actionable: 0, counts: { ...LIVE, cooked_beef: 1 },
+        animal: { x: 0, y: 76, z: 0, dist: 20, meta: 'pig', age: 1000 }, botY: 76, latch: L });
+    assert.ok(p && !p.args[0].scout, 'keeps hunting nearby animals while latched (no scouting above 6)');
+    assert.equal(foodFloorProposal({ foodInstincts: false, overworld: true, phase: 'day', food: 12, actionable: 0, counts: LIVE, animal: null, botY: 76, latch: L }), null, 'no scouting for stock above food 6');
+    assert.equal(updateFoodFloorLatch(L, { food: 18, counts: { cooked_beef: 3 }, animalNear: true }).active, true, 'needs ≥4 cooked');
+    assert.equal(updateFoodFloorLatch(L, { food: 18, counts: { cooked_beef: 4 }, animalNear: true }).active, false);
+    assert.equal(updateFoodFloorLatch(L, { food: 18, counts: {}, animalNear: false }).active, false, 'no animal nearby → release at 18');
+    assert.equal(updateFoodFloorLatch({ ...L, kills: SESSION_KILL_CAP }, { food: 10, counts: {}, animalNear: true }).active, false, 'kill cap');
+    const w = world({ food: 12 });
+    const bot = fakeBot({ ...LIVE, cooked_beef: 1 }); bot._foodFloorLatch = L;
+    assert.equal(isGoalDone('FOOD_FLOOR', w, bot), false, 'commitment held while latched');
+});
+
+test('监工加急#6: 夜链 MINE_THROUGH_NIGHT 也受 hp<10 门 (否则剔掉夜挖后夜里无提案)', () => {
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const i = src.indexOf("decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget");
+    const line = src.slice(src.lastIndexOf('\n', i), i);
+    assert.ok(/_hpOkForNightMine/.test(line), 'canMineWholeNight branch is hp-gated');
+    const j = src.indexOf("keep mining, don't surface-bootstrap");
+    assert.ok(/_hpOkForNightMine/.test(src.slice(src.lastIndexOf('\n', j), j)), 'alreadyDeepEnclosed branch is hp-gated');
+    assert.ok(/import \{ DESCENT_MIN_HP \} from '\.\/framework\/food_floor\.js'/.test(src));
 });
