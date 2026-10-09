@@ -11,6 +11,7 @@
 // opts: { steps=40, heading=null (auto), targetY=45 }
 
 import { collectExposedOresDuringDescent } from './descentOreSweep.js';
+import { kernelYieldRequested } from './surfaceUp.js';   // ★T-0190 kernel commitment-flip stamp (T-0181)
 import fs from 'fs';
 import path from 'path';
 // ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
@@ -265,6 +266,7 @@ export function gravityPendingAbove(bn, x, feetY, z, span = 6) {
 
 export default async function mineDown(bot, ctx, opts = {}) {
     const { log, skills, Vec3 } = ctx;
+    const mdEnteredAt = Date.now();
     const steps = opts.steps || 40;
     const targetY = opts.targetY != null ? opts.targetY : 45;
     const log_ = (m) => { log(bot, `[mineDown] ${m}`); progLine(m); };
@@ -607,6 +609,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
         return cleared;
     };
     const wedgeRecover = async (fx, cy, fz) => {
+        if (kernelYieldRequested(bot, mdEnteredAt)) return 'kernel-flip';   // ★T-0190 don't run a 14s recovery chain the caller cancelled
         const p = bot.entity.position;
         // ④ 同点第 3 次楔死 (跨派发记忆, TTL 10min) → moveAway 8b + 诚实 fail
         try {
@@ -721,6 +724,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
         } catch (e) {}
     };
     for (let i = 0; i < steps; i++) {
+        if (kernelYieldRequested(bot, mdEnteredAt)) { abort = 'kernel commitment flipped — yield (T-0190)'; break; }   // live 23:26: 17s late
         const cur = bot.entity.position;
         const cy = Math.round(cur.y);
         // ★T-0174: head under water / air running out → stop mining NOW, give the body to the swim/escape

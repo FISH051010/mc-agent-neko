@@ -3008,6 +3008,8 @@
 
 - **★C406-S mineDown 到层容差按请求深度收缩(T-0187)**（2026-10-10，worker-stuck，T-0187）: 实录 10-09 23:06:36/48 NIGHT_STONE_BOOTSTRAP 派 mineDown{targetY:y-6} (就地下挖取圆石), 而到层容差 DESCEND_TOLERANCE 恒 6 → y69 起点即 'reached targetY=63 at step 0', 地表 branchMine 无矿 → dug=0 failed ×2 吃 3-strike。修: descendTolerance(startY,targetY)=clamp(floor((startY-targetY)/3),0,6) — 浅挖照样下挖 (69→63 挖到 ≤65), 深挖 (69→12) 仍 6。测试 test/minedown_shallow_band.test.mjs。
 
+- **★C407-S mineDown 楼梯主循环响应 kernel 承诺切换(T-0190)**（2026-10-10，worker-stuck，T-0190）: 实录 10-09 23:26:37→23:26:53 'commitment flipped GET_IRON_ARMOR_SET→NIGHT_DIG_ONE mid-child → interrupt mineDown' ×17 — 楼梯主循环只有到层分支挖矿循环查 interrupt_code (反射脉冲也置位, 不能裸查), 于是切换后仍走完 step 11 + 整轮楔死恢复 (ghost re-dig ×3/blacklist/sidestep) 才退出。修: 复用 T-0181 的 _commitFlipAt 戳 (surfaceUp.kernelYieldRequested), 每步开头与 wedgeRecover 入口检查, 命中即 abort 'kernel commitment flipped — yield' (kernel 以 interrupted 结算, 不计 strike)。测试 test/minedown_kernel_yield.test.mjs。
+
 ---
 
 ---
