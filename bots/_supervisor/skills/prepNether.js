@@ -830,9 +830,14 @@ async function prepNetherInner(bot, ctx) {
                         }
                         const seal = sealBlock();   // 门: 有任意 seal 料即可下挖+砌墙(墙脚有支撑,沙可用)
                         if (dugOk && seal) {
-                            const top = bot.entity.position.floored().offset(0, 2, 0);
-                            const _cap = sealBlock(true);   // ★C326-A 顶盖那格悬 air 上,必用非重力块(沙会坠落砸头)
-                            if (_cap) { try { await skills.placeBlock(bot, _cap.name, top.x, top.y, top.z, 'bottom', true); } catch (e) {} }
+                            // ★T-0105/C354: digDown(2) 后脚+2 在平地是悬空格(no-build-off) —— 改走共享封顶原语:
+                            //   先判贴面, 悬空则再挖一格/垫支点; 料按当前背包解析(非重力整方块, ≡ C326-A 的 sealBlock(true) 意图)。
+                            if (typeof skills.capOverhead === 'function') { try { await skills.capOverhead(bot, { maxDeepen: 1, tag: 'prepNether dug-in' }); } catch (e) {} }
+                            else {
+                                const top = bot.entity.position.floored().offset(0, 2, 0);
+                                const _cap = sealBlock(true);   // ★C326-A 顶盖那格悬 air 上,必用非重力块(沙会坠落砸头)
+                                if (_cap) { try { await skills.placeBlock(bot, _cap.name, top.x, top.y, top.z, 'bottom', true); } catch (e) {} }
+                            }
                             // ★C260: digDown assumes the pit's 4 sides are solid ground, but on a
                             // hilltop/slope the hillside drops away and leaves sides OPEN — death 8
                             // (@y85, coveredAbove=1, zombie reached through an open side at 1.2b despite
