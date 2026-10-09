@@ -210,10 +210,17 @@ export function ironForArmor(bot) { return invCount(bot, /^raw_iron$/) + invCoun
 // slots 5-8), which is the review-sanctioned approximation; mixed-order sets (e.g. looted
 // chestplate first) only make the release EARLIER, never sticky.
 const ARMOR_PIECE_COST = [4, 5, 7, 8];   // ingots for the k-th piece, cheapest-first
+// ★T-0140 (19:02:03Z 实录: GET_ARMOR→craftArmor ×3 秒败冷却): craftArmor 无铁镐时给镐预留 3 铁 (RESERVE gate,
+//   craftArmor.js _matReserve), 提案端却按全部铁算 → 4 粗铁 - 3 预留 = 1 < 靴子 4 → 技能拒跑。两端同口径。
+export const IRON_PICK_RESERVE = 3;
+export function ironArmorBudget(bot) {
+    const hasIronPlusPick = invCount(bot, /^(iron|diamond|netherite)_pickaxe$/) > 0;
+    return ironForArmor(bot) - (hasIronPlusPick ? 0 : IRON_PICK_RESERVE);
+}
 function ironArmorGoalDone(world, bot) {
     const pieces = Math.min(4, (world.vitals && world.vitals.armor) || 0);
     if (pieces >= 4) return true;
-    return ironForArmor(bot) < ARMOR_PIECE_COST[pieces];
+    return ironArmorBudget(bot) < ARMOR_PIECE_COST[pieces];
 }
 // ★P0-1 REPLENISH_KIT 口径: 背包内全部镐(含快断的) — 粗基线补给不变量, 与技能端 replenishKit 的
 // "总镐数"死契约一致。"有效镐"(耐久<85%)的精细不变量归 kit.picks/TOOL_UPKEEP, 两者分工不冲突。
