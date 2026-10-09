@@ -127,3 +127,23 @@ export function planPocketEscape(blockAt, m2, { hasPick, enclosed, stonyRe }) {
     }
     return { action: null, gated };
 }
+
+// ★T-0165 浅水上岸台阶 (live 10-09 20:42-20:46 @-40,62,21, 1 格深池塘 3.5min): 水面漂浮最高 ~y+0.83, 脚下垫块
+//   (placeBlockUnderFeet) 要 y+0.92 → 在水面上物理够不着。人类做法: 往相邻水格 (底实心可当放置参照、上两格空
+//   能站) 垫一块当台阶, 游泳跳上去。blockAt(x,y,z) 风格读数; prefer={x,z} 岸的方向 (可空)。无可行台阶 → null。
+export function planWaterStep(blockAt, feet, prefer = null) {
+    const nm = (b) => (b && b.name) || 'air';
+    const airy = (b) => /^(air|cave_air|void_air|short_grass|tall_grass|fern)$/.test(nm(b));
+    const solid = (b) => !!(b && b.boundingBox === 'block' && !/water|lava/.test(nm(b)));
+    if (!airy(blockAt(feet.x, feet.y + 2, feet.z))) return null;          // no room to rise onto a step
+    let best = null, bestScore = -Infinity;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const x = feet.x + dx, z = feet.z + dz;
+        if (nm(blockAt(x, feet.y, z)) !== 'water') continue;             // placeBlock replaces 'water' only
+        if (!solid(blockAt(x, feet.y - 1, z))) continue;                   // floor to place against
+        if (!airy(blockAt(x, feet.y + 1, z)) || !airy(blockAt(x, feet.y + 2, z))) continue;   // stand on it
+        const score = prefer ? (dx * (prefer.x - feet.x) + dz * (prefer.z - feet.z)) : 0;
+        if (score > bestScore) { bestScore = score; best = { x, y: feet.y, z, dx, dz }; }
+    }
+    return best;
+}

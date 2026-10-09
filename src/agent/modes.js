@@ -1902,6 +1902,14 @@ const modes_list = [
                                         await new Promise(r => setTimeout(r, 300));
                                     }
                                 } else {
+                                    // ★T-0165: shallow water — feet can't rise to y+0.92 at the surface, so the under-feet
+                                    //   pillar fails forever (live 20:42-20:46). Step out onto a block dropped next to us first.
+                                    try {
+                                        if (await skills.climbOutViaWaterStep(bot, f, target)) {
+                                            _tr(`i=${i} water step → out`);
+                                            continue;
+                                        }
+                                    } catch (e) {}
                                     bot.setControlState('forward', false);
                                     try { await skills.placeBlockUnderFeet(bot, f, { retries: 1, settleMs: 160 }); } catch (e) { try { bot.setControlState('jump', true); } catch (e2) {} }
                                     await new Promise(r => setTimeout(r, 160));

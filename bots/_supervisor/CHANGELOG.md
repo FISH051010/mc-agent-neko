@@ -2903,6 +2903,8 @@
 
 - **★C393-S SEALED 脱困 episode 让位给有目的技能(T-0163, T-0135 回归)**（2026-10-10，worker-stuck，T-0163）: 实录 10-09 20:36:15/20:38:15 地下自家矿道恒"有界" → T-0135 episode 只看 sr.sealed 便一路随行 5min, 与 branchMine:ore-window 抢挖掘槽 (Digging aborted/dig slot busy), 20:38:58.98 打断 smeltSafe 炼铁 (GET_ARMOR 进度丢)。根因两条: ① `_stationaryTask` 写成 `agent.supervised_skill || bot._currentSkill`, kernelDriver 下 supervised_skill='kernel' 恒真 → smelt/craft 子技能永远看不到; ② 去抖与 episode 不看 purposefulDigActive。修: 两者拼接; `_sealedWorking = _stationaryTask || purposefulDigActive` 重置去抖并传入 `sealedEscapeStep({working})` → 直接结束/不开 episode。空闲真密室行为不变。测试 test/sealed_purposeful_work.test.mjs。
 
+- **★C394-S 浅水上岸台阶: 相邻水格垫块再游跳上去(T-0165)**（2026-10-10，worker-stuck，T-0165）: 实录 10-09 20:42:39→20:46:06 @-40,62,21 1 格深池塘 (底 y61 dirt, 水面 y62, +z 2 格高 spruce_log 树桩挡住游向岸) — swim 反射 stall/i≥30 走脚下垫块 placeBlockUnderFeet, 需脚 ≥y+0.92 而水面漂浮最高 ~y+0.83, ~90 次 exhausted-retries, x,z 3.5min 不变, reflex_watchdog idleWedge 每 20s 打断重进。修: mobility_geom.planWaterStep (相邻 'water' 格 + 底实心 + 上两格空 + 自身 y+2 空, 偏向岸目标) + skills.climbOutViaWaterStep (placeBlock positioning:false 垫台阶 → 朝台阶 forward+jump ≤2.5s 直到 onGround 且出水); swim 反射非深水分支先试台阶再退回垫脚。深水 (无底) / 低顶 → null 照旧。测试 test/water_step_out.test.mjs。
+
 ---
 
 ---
