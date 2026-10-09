@@ -3004,6 +3004,8 @@
 
 - **★C404-S mineDown 空洞分支补换址退路(T-0183)**（2026-10-10，worker-stuck，T-0183；worker-tier 报）: 实录 10-09 22:58:00/02/03 @-8,69,-7 白天地表 y69 — 地表下紧贴洞穴, 三个朝向台阶支撑全是 air, planVoidHop 4b 内无 3 实心列, 三次派发 START 即 DONE → GO_UNDERGROUND 冷却 5min。T-0162 的同派发换址只在流体分支。修: void hop 无解时 (每派发 ≤1 次, 与流体分支共用 loopRelocates) 先试 T-0161 横向隧道换址; 不可行且头顶 24 格开阔 (openSkyAbove, 地表) 则 pathfinder moveAway 10b (地下从未成功, 地表可行), 移动 ≥6b 则重选朝向、voidHops 归零继续。测试 test/minedown_void_relocate.test.mjs。
 
+- **★C405-S 地表空洞换址改为寻路到"脚下 5 格实心"的列(T-0183 续)**（2026-10-10，worker-stuck，T-0183；监工+worker-tier 报）: 复发 10-09 23:06:07-12 — C404 的 pathfinder moveAway 10.1b 落点仍在同一大洞顶 (A -7,68,-17 ↔ B -8,69,-7), B 处云杉树冠让 openSkyAbove 判"非露天"→ 不再换址 → GO_UNDERGROUND 第 3 次冷却, 重生后 15min 木镐零进展。修: planSolidColumn = 6..24b 内最近的、脚/头格开放无流体且脚下 5 格全实心的列 (偏移表按距离预排, 每列 y±3); 地表换址改为 goToPosition 到该列 (到达 ≤2.5b 才算成功); 地表判据 = openSkyAbove (树叶/原木/藤不算顶) 或 mobility enclosed===false。测试 test/minedown_solid_column.test.mjs, 更新 minedown_void_relocate 钉子。
+
 ---
 
 ---
