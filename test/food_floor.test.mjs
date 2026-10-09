@@ -41,8 +41,10 @@ test('T-0069: 边界 — 动物 >16 格 / 高差 >4 / 夜里 / 有威胁 / 食�
     const base = { foodInstincts: false, overworld: true, phase: 'day', food: 6, actionable: 0, counts: LIVE, botY: 76 };
     const cow = (o) => ({ x: 0, y: 76, z: 0, dist: 10, meta: 'cow', age: 1000, ...o });
     assert.ok(foodFloorProposal({ ...base, animal: cow() }));
-    assert.equal(foodFloorProposal({ ...base, animal: cow({ dist: 20 }) }), null, 'far animal');
-    assert.equal(foodFloorProposal({ ...base, animal: cow({ y: 70 }) }), null, 'dy>4');
+    assert.ok(foodFloorProposal({ ...base, animal: cow({ dist: 34 }) }), '17:37 live: cow@34b is now in range (radius 48)');
+    assert.equal(foodFloorProposal({ ...base, animal: cow({ dist: 60 }) }), null, 'far animal (>48)');
+    assert.equal(foodFloorProposal({ ...base, animal: cow({ y: 68 }) }), null, 'dy>6');
+    assert.ok(foodFloorProposal({ ...base, botPos: { x: 0, y: 76, z: 0 }, animal: cow({ x: 40, y: 81, z: 0, dist: 47.0 }) }), 'radius is horizontal (40b), dy 5 ok');
     assert.equal(foodFloorProposal({ ...base, animal: cow({ age: 60000 }) }), null, 'stale sighting');
     assert.equal(foodFloorProposal({ ...base, phase: 'night', animal: cow() }), null);
     assert.equal(foodFloorProposal({ ...base, actionable: 1, animal: cow() }), null);
@@ -61,14 +63,40 @@ test('T-0069: quickMeal 找不到半径内动物 → 立刻如实失败, 绝不�
         const { default: quickMeal } = await import('../bots/_supervisor/skills/quickMeal.js');
         const V = (x, y, z) => ({ x, y, z, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
         let moved = false;
-        const bot = { food: 6, entity: { position: V(0, 70, 0) }, entities: { 1: { name: 'cow', position: V(30, 70, 0) }, 2: { name: 'pig', position: V(3, 60, 0) } },
+        const bot = { food: 6, entity: { position: V(0, 70, 0) }, entities: { 1: { name: 'cow', position: V(60, 70, 0) }, 2: { name: 'pig', position: V(3, 60, 0) } },
             pathfinder: { stop() {}, goto() { moved = true; } }, clearControlStates() {} };
         const ctx = { world: { getInventoryCounts: () => ({ coal: 7 }) },
             skills: { attackEntity: async () => { moved = true; }, pickupNearbyItems: async () => {}, customSkill: async () => {}, consume: async () => {} } };
         const t0 = Date.now();
         const r = await quickMeal(bot, ctx, { radius: 16, maxDy: 4, maxMs: 60000 });
         assert.equal(r.failed, true);
-        assert.equal(moved, false, 'cow@30b and pig dy=10 are out of bounds — no chase');
+        assert.equal(moved, false, 'cow@60b and pig dy=10 are out of bounds — no chase');
         assert.ok(Date.now() - t0 < 1000);
     } finally { process.chdir(cwd); if (prevEnv !== undefined) process.env.MC_FOOD_INSTINCTS = prevEnv; }
+});
+
+test('T-0069 跟进: food≤3 且零可吃 → 剔除一切下矿提案 (按技能名) 并释放进行中的下矿承诺; food 7 照常下矿', () => {
+    delete process.env.MC_FOOD_INSTINCTS;
+    const kit = { ...LIVE, iron_chestplate: 0 };
+    const starving = world({ food: 2 });
+    starving.vitals.armor = 2;
+    const props = proposeTasks(starving, fakeBot(kit));
+    const descents = props.filter(p => /^(mineDown|mineDiamonds|mineOres|branchMine)$/.test(p.skill || ''));
+    assert.deepEqual(descents.map(p => p.kind), [], 'no descent proposal while starving');
+    for (const k of ['GET_DIAMOND', 'GO_UNDERGROUND', 'GET_IRON_TOOLS', 'DUSK_MINE_NIGHT'])
+        assert.equal(isGoalDone(k, starving, fakeBot(kit)), true, `${k} released while starving`);
+    const fed = world({ food: 7 });
+    fed.vitals.armor = 2;
+    const fedDesc = proposeTasks(fed, fakeBot(kit)).filter(p => /^(mineDown|mineDiamonds|mineOres)$/.test(p.skill || ''));
+    assert.ok(fedDesc.length > 0, `not starving → descent still allowed (got ${fedDesc.map(p => p.kind)})`);
+    assert.equal(isGoalDone('GET_DIAMOND', fed, fakeBot(kit)), false);
+});
+
+test('T-0069 跟进: 饿着在矿里 (无可见动物) → FOOD_FLOOR 先上浮 (surfaceFirst), 地面无动物则不提', () => {
+    const base = { foodInstincts: false, overworld: true, phase: 'day', food: 2, actionable: 0, counts: LIVE, botY: 20, animal: null };
+    const p = foodFloorProposal({ ...base, depthBand: 'mid' });
+    assert.ok(p, 'proposed underground');
+    assert.equal(p.args[0].surfaceFirst, true);
+    assert.equal(foodFloorProposal({ ...base, depthBand: 'surface', botY: 70 }), null, 'on the surface with no animal → nothing (no roaming)');
+    assert.equal(foodFloorProposal({ ...base, food: 5, depthBand: 'mid' }), null, 'not starving (food 5) → no forced surfacing');
 });

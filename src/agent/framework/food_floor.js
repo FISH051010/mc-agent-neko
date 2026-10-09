@@ -8,10 +8,16 @@
 //   · 只认 HUNT_RADIUS 格内、高差 ≤ HUNT_DY、近 25s 内见过的动物; 或背包已有生肉 (只烤/吃, 不走动);
 //   · 执行技能 quickMeal 整体 ≤ maxMs, 找不到就如实失败 → kernel 3 连败冷却, 不追不逛。
 export const FOOD_FLOOR = 6;
-export const HUNT_RADIUS = 16;
-export const HUNT_DY = 4;
+// ★监工拍板 10-10 01:4x: 半径 16→48 (水平, 步行 ~11s 仍有界), 高差 4→6。实录 17:37 最近的牛 34 格 → 16 格永不触发。
+export const HUNT_RADIUS = 48;
+export const HUNT_DY = 6;
 export const FOOD_FLOOR_PRIORITY = 70;
 export const QUICK_MEAL_MAX_MS = 60000;
+// ★饥饿禁下矿 (监工拍板): food≤3 且零可吃 → 不提出、不继续任何往深处走的承诺; 在矿里的先上浮觅食。
+//   人类饿到 2 绝不钻深矿: 不能疾跑、不回血; keepInventory 关 → 一死丢光铁装。
+export const STARVING_FOOD = 3;
+export const DESCENT_SKILL_RE = /^(mineDown|mineDiamonds|mineOres|branchMine)$/;
+export const SURFACE_FIRST_MAX_MS = 120000;
 
 const EDIBLE_RE = /^(cooked_\w+|bread|apple|golden_apple|baked_potato|carrot|melon_slice|sweet_berries|glow_berries|cookie|pumpkin_pie|mushroom_stew|beetroot_soup|rabbit_stew|dried_kelp)$/;
 const RAW_MEAT_RE = /^(beef|porkchop|mutton|chicken|rabbit)$/;
@@ -23,22 +29,40 @@ export function countMatching(counts, re) {
     return n;
 }
 
+/** 饿着且零可吃 (禁下矿判据)。 */
+export function starvingNoFood({ food, counts }) {
+    return Number.isFinite(food) && food <= STARVING_FOOD && countMatching(counts, EDIBLE_RE) === 0;
+}
+
+/** 水平距离 (监工口径: 48 格按水平算); 拿不到 bot 坐标时退回 3D dist (更保守)。 */
+function horizDist(animal, botPos) {
+    if (botPos && Number.isFinite(animal.x) && Number.isFinite(animal.z) && Number.isFinite(botPos.x) && Number.isFinite(botPos.z))
+        return Math.hypot(animal.x - botPos.x, animal.z - botPos.z);
+    return animal.dist;
+}
+
 /** 决策判据 (纯函数)。返回 null 或 proposal 片段。 */
-export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY }) {
+export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand }) {
     if (foodInstincts || !overworld || phase !== 'day' || (actionable || 0) > 0) return null;
     if (!(food <= FOOD_FLOOR)) return null;
     if (countMatching(counts, EDIBLE_RE) > 0) return null;
     const rawMeat = countMatching(counts, RAW_MEAT_RE);
-    const animalOk = !!(animal && Number.isFinite(animal.dist) && animal.dist <= HUNT_RADIUS
-        && (!Number.isFinite(botY) || !Number.isFinite(animal.y) || Math.abs(animal.y - botY) <= HUNT_DY)
+    const y = Number.isFinite(botY) ? botY : (botPos && botPos.y);
+    const animalOk = !!(animal && Number.isFinite(animal.dist) && horizDist(animal, botPos) <= HUNT_RADIUS
+        && (!Number.isFinite(y) || !Number.isFinite(animal.y) || Math.abs(animal.y - y) <= HUNT_DY)
         && (animal.age == null || animal.age <= 25000));
-    if (rawMeat === 0 && !animalOk) return null;
+    // 饿着还在矿里 → 先上浮再在地面找 (监工拍板: 在矿里的要先回地面去觅食)
+    const surfaceFirst = starvingNoFood({ food, counts }) && depthBand && depthBand !== 'surface';
+    if (rawMeat === 0 && !animalOk && !surfaceFirst) return null;
+    const args = [{ radius: HUNT_RADIUS, maxDy: HUNT_DY, maxMs: QUICK_MEAL_MAX_MS, ...(surfaceFirst && rawMeat === 0 ? { surfaceFirst: true, surfaceMaxMs: SURFACE_FIRST_MAX_MS } : {}) }];
     return {
         priority: FOOD_FLOOR_PRIORITY,
-        args: [{ radius: HUNT_RADIUS, maxDy: HUNT_DY, maxMs: QUICK_MEAL_MAX_MS }],
+        args,
         rationale: rawMeat > 0
             ? `food ${food}≤${FOOD_FLOOR}, no edible, ${rawMeat} raw meat — cook/eat in place (bounded, food instincts off)`
-            : `food ${food}≤${FOOD_FLOOR}, no edible — one short hunt of ${animal.meta || 'animal'} @${animal.dist}b (≤${HUNT_RADIUS}b, bounded, food instincts off)`,
+            : (animalOk
+                ? `food ${food}≤${FOOD_FLOOR}, no edible — one short hunt of ${animal.meta || 'animal'} (≤${HUNT_RADIUS}b, bounded, food instincts off)`
+                : `food ${food}≤${STARVING_FOOD} starving underground (${depthBand}) — surface first, then one hunt ≤${HUNT_RADIUS}b (bounded)`),
     };
 }
 

@@ -24,7 +24,9 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, starvingNoFood, DESCENT_SKILL_RE } from './food_floor.js';
+// 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
+const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT']);
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -715,7 +717,9 @@ export function proposeTasks(world, bot) {
     {
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
             actionable: threat.actionable, counts: invCounts(bot), animal: w.landmarks && w.landmarks.animal,
-            botY: bot && bot.entity && bot.entity.position ? bot.entity.position.y : NaN });
+            botY: bot && bot.entity && bot.entity.position ? bot.entity.position.y : NaN,
+            botPos: bot && bot.entity && bot.entity.position ? bot.entity.position : null,
+            depthBand: w.pos && w.pos.depthBand });
         if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
     }
 
@@ -1405,8 +1409,13 @@ export function proposeTasks(world, bot) {
         }
     } catch (e) {}
 
-    out.sort((a, b) => b.priority - a.priority);
-    return out;
+    // ★饥饿禁下矿 (T-0069 跟进, 监工拍板): food≤3 且零可吃 → 剔除一切派发下矿技能的提案 (含夜间整夜下矿),
+    //   按技能名而非 kind 判, 新增的下矿 kind 也自动受限。isGoalDone 侧同口径释放已在执行的下矿承诺。
+    let _final = out;
+    if (starvingNoFood({ food: vitals.food, counts: invCounts(bot) }))
+        _final = out.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));
+    _final.sort((a, b) => b.priority - a.priority);
+    return _final;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1439,6 +1448,11 @@ function isBootstrapDone(world, bot) {
 /** Has the committed goal of `kind` been satisfied? (Completion criteria.) */
 export function isGoalDone(kind, world, bot) {
     const w = world || EMPTY_WORLD;
+    // ★饥饿禁下矿 (T-0069 跟进): 下矿类承诺在 food≤3 且零可吃时视为结束 → 释放 → kernelDriver 见 kind 翻转打断矿里的子技能。
+    if (DESCENT_KINDS.has(kind)) {
+        const _food = (w.vitals && w.vitals.food != null) ? w.vitals.food : (bot && bot.food);
+        if (starvingNoFood({ food: _food, counts: invCounts(bot) })) return true;
+    }
     switch (kind) {
         case PROPOSAL_KIND.BOOTSTRAP_KIT: return isBootstrapDone(w, bot);
         // ★SARCOPHAGUS RESCUE done = surface band regained OR a usable pick appeared

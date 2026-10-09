@@ -21,7 +21,7 @@ export function pickHuntTarget(bot, radius, maxDy) {
     for (const e of Object.values(bot.entities || {})) {
         if (!e || !e.position || !HUNTABLE_RE.test(e.name || '')) continue;
         if (Math.abs(e.position.y - me.y) > maxDy) continue;
-        const d = e.position.distanceTo(me);
+        const d = Math.hypot(e.position.x - me.x, e.position.z - me.z);   // 监工口径: 半径按水平距离
         if (d <= radius && d < bd) { bd = d; best = e; }
     }
     return best;
@@ -31,7 +31,16 @@ const race = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new 
 
 export default async function quickMeal(bot, ctx, opts = {}) {
     const { skills, world } = ctx;
-    const radius = opts.radius ?? 16, maxDy = opts.maxDy ?? 4, maxMs = opts.maxMs ?? 60000;
+    const radius = opts.radius ?? 48, maxDy = opts.maxDy ?? 6, maxMs = opts.maxMs ?? 60000;
+    // ⓪ 饿着在矿里 → 先上浮 (监工拍板: 在矿里的要先回地面觅食); 单独限时, 不吃猎杀的 60s 预算
+    if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 60) {
+        const y0 = Math.round(bot.entity.position.y);
+        prog(`starving underground y=${y0} food=${bot.food} — surfaceUp first (≤${Math.round((opts.surfaceMaxMs ?? 120000) / 1000)}s)`);
+        await race(skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
+        try { bot.pathfinder && bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+        prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
+        if (bot.entity.position.y - y0 >= 8) opts = { ...opts, _surfaced: true };
+    }
     const t0 = Date.now();
     const left = () => maxMs - (Date.now() - t0);
     const inv = () => { try { return world.getInventoryCounts(bot) || {}; } catch (e) { return {}; } };
@@ -43,7 +52,10 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     // ① 短猎
     if (rawHeld() === 0) {
         const target = pickHuntTarget(bot, radius, maxDy);
-        if (!target) { prog(`no huntable animal within ${radius}b/dy${maxDy} — honest fail (no roaming)`); return { failed: true, reason: 'no-animal-in-radius' }; }
+        if (!target) {
+            prog(`no huntable animal within ${radius}b/dy${maxDy} — ${opts._surfaced ? 'surfaced (progress), no hunt' : 'honest fail (no roaming)'}`);
+            return opts._surfaced ? { ok: true, surfaced: true } : { failed: true, reason: 'no-animal-in-radius' };
+        }
         prog(`hunt ${target.name} @${target.position.distanceTo(bot.entity.position).toFixed(1)}b (food=${bot.food})`);
         const r0 = rawHeld();
         await race(skills.attackEntity(bot, target, true), Math.min(left(), 25000));
