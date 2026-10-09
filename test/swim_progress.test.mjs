@@ -55,8 +55,11 @@ test('T-0091: botwatch mobility-stuck gate covers SWIM_STUCK but not plain SWIM/
     assert.ok(STUCK_MOBILITY_RE.test('SWIM_STUCK'));
     for (const s of ['MAROONED', 'ENTOMBED', 'POCKET']) assert.ok(STUCK_MOBILITY_RE.test(s));
     for (const s of ['SWIM', 'FREE', '']) assert.ok(!STUCK_MOBILITY_RE.test(s));
+    // the predicate moved to botwatch-trackers.mobilityStuckActive (behavior pinned in botwatch_trackers.test.mjs)
     const bw = fs.readFileSync(path.join(root, 'bots/_supervisor/botwatch.mjs'), 'utf8');
-    assert.match(bw, /key: 'mobility-stuck'[\s\S]{0,600}active: \(s\) => STUCK_MOBILITY_RE\.test/);
+    assert.match(bw, /key: 'mobility-stuck'[\s\S]{0,600}active: mobilityStuckActive,/);
+    const tr = fs.readFileSync(path.join(root, 'bots/_supervisor/botwatch-trackers.mjs'), 'utf8');
+    assert.match(tr, /export const mobilityStuckActive = \(s\) => STUCK_MOBILITY_RE\.test/);
 });
 
 test('T-0091: modes.js mobility uses the windowed tracker and the SWIM_STUCK reflex does not re-anchor', () => {
