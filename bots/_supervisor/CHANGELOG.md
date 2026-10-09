@@ -2995,6 +2995,8 @@
 
 - **★C403-S surfaceUp 让位于 kernel 承诺切换(T-0181)**（2026-10-10，worker-stuck，T-0181）: 实录 10-09 22:46:37→22:47:58 'commitment flipped REPLENISH_KIT→DUSK_MINE_NIGHT mid-child' ×81 — replenishKit ① surfaceUp 为屏蔽反射脉冲在各循环反复清 interrupt_code, 把 kernel 的切换 interrupt 一并吞掉, 白爬 y39→54 后 kernel 立刻派 mineDown 下挖。修: kernelDriver 切换时打 bot._commitFlipAt (等待期间每秒重设); surfaceUp.kernelYieldRequested = 本次进入之后且 <2.5s 的切换戳 → 并入 deadlineHit (所有主循环已查), 在步间安全点收尾, 退出时把 interrupt_code 置回 true 交还调用方; 反射脉冲无戳照旧屏蔽。测试 test/surfaceup_kernel_yield.test.mjs。
 
+- **★C404-S mineDown 空洞分支补换址退路(T-0183)**（2026-10-10，worker-stuck，T-0183；worker-tier 报）: 实录 10-09 22:58:00/02/03 @-8,69,-7 白天地表 y69 — 地表下紧贴洞穴, 三个朝向台阶支撑全是 air, planVoidHop 4b 内无 3 实心列, 三次派发 START 即 DONE → GO_UNDERGROUND 冷却 5min。T-0162 的同派发换址只在流体分支。修: void hop 无解时 (每派发 ≤1 次, 与流体分支共用 loopRelocates) 先试 T-0161 横向隧道换址; 不可行且头顶 24 格开阔 (openSkyAbove, 地表) 则 pathfinder moveAway 10b (地下从未成功, 地表可行), 移动 ≥6b 则重选朝向、voidHops 归零继续。测试 test/minedown_void_relocate.test.mjs。
+
 ---
 
 ---

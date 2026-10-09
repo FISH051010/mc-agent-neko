@@ -124,6 +124,12 @@ export function planRelocateTunnel(bn, cx, cy, cz, len = 9) {
     return null;
 }
 
+/** ★T-0183: nothing solid in the first h blocks above the head = under open sky (surface pathfinding works here). */
+export function openSkyAbove(bn, x, y, z, h = 24) {
+    for (let dy = 2; dy <= h; dy++) { const b = bn(x, y + dy, z); if (b && b.boundingBox === 'block') return false; }
+    return true;
+}
+
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     const nm = (b) => (b && b.name) || 'air';
     const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
@@ -820,6 +826,30 @@ export default async function mineDown(bot, ctx, opts = {}) {
                     continue;
                 }
                 log_(`void hop ${plan ? 'walk failed' : 'no safe column within 4b'} — abort`);
+            }
+            // ★T-0183 (live 22:58 @-8,69,-7: cave right under the surface, every heading void, 3 zero-dig dispatches →
+            //   GO_UNDERGROUND cooled). Like the fluid branch: relocate once — side tunnel (T-0161), else under open sky
+            //   walk away by pathfinder (works on the surface; it is underground where it never moved) — then restart.
+            if (loopRelocates < 1) {
+                loopRelocates++;
+                let _moved = false;
+                const _tun = planRelocateTunnel(bn, cx, cy, cz);
+                if (_tun && await walkDugPath(bot, skills, Vec3, bn, _tun.path)) {
+                    _moved = true;
+                    log_(`void: no safe column within 4b — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz}`);
+                } else if (openSkyAbove(bn, cx, cy, cz)) {
+                    const _b0 = bot.entity.position.clone();
+                    try { await skills.moveAway(bot, 10); } catch (e) {}
+                    const _d = Math.hypot(bot.entity.position.x - _b0.x, bot.entity.position.z - _b0.z);
+                    _moved = _d >= 6;
+                    log_(`void: surface relocate by pathfinder moved ${_d.toFixed(1)}b${_moved ? '' : ' — not enough'} (cave under the stair here)`);
+                } else log_(`void: no tunnel line${_tun ? ' (walk stopped: ' + (bot._walkDugFail || '?') + ')' : ''} and not under open sky`);
+                if (_moved) {
+                    const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
+                    sx = _r2.sx; sz = _r2.sz;
+                    voidHops = 0; noProg = 0;
+                    continue;
+                }
             }
             abort = `no floor support under ${fx},${cy - 2},${fz} (${nm(support)}) — stop, don't free-fall`; break;
         }
