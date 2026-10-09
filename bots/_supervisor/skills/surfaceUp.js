@@ -20,7 +20,7 @@ const dbg = (s) => { try { fs.appendFileSync(DBG, `[${new Date().toISOString()}]
 const OPEN = new Set(['air', 'cave_air', 'void_air']);
 const NO_DIG = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
 const SCAFFOLD = ['cobblestone', 'dirt', 'cobbled_deepslate', 'andesite', 'granite', 'diorite', 'tuff', 'stone', 'deepslate', 'gravel', 'netherrack'];
-const STONY = /stone|deepslate|andesite|diorite|granite|tuff|_ore$|obsidian|cobble/;
+export const STONY = /stone|deepslate|andesite|diorite|granite|tuff|_ore$|obsidian|cobble/;
 // Bare-hand BREAKABLE stone-family (pick only needed for the DROP, not to break). C304-A: the
 // sandstone family matches STONY (substring "stone") but was MISSING here — so a no-pick bot
 // under a red_sandstone/sandstone roof (ubiquitous just below red_sand in mesa/badlands +
@@ -30,7 +30,7 @@ const STONY = /stone|deepslate|andesite|diorite|granite|tuff|_ore$|obsidian|cobb
 // breach punch the mesa cap so the down-drift branch is never reached. (Plain/colored
 // terracotta is hand-breakable too but is NOT STONY, so it already takes the soft guardedDig
 // path and never consults this set.)
-const NO_PICK_BREACHABLE = new Set([
+export const NO_PICK_BREACHABLE = new Set([
     'stone', 'cobblestone', 'andesite', 'diorite', 'granite', 'tuff', 'deepslate', 'cobbled_deepslate',
     'sandstone', 'red_sandstone', 'smooth_sandstone', 'smooth_red_sandstone',
     'cut_sandstone', 'cut_red_sandstone', 'chiseled_sandstone', 'chiseled_red_sandstone',
