@@ -447,7 +447,13 @@ while ($true) {
                     $nightHold = $false
                     try {
                         $todN = [int]$vit.tod
-                        $nightHold = ($todN -ge 13000 -and $todN -le 23000 -and ("" + $vit.skill) -eq 'missionNether' -and $progLast -match 'NIGHT|入夜|hole up|蹲')
+                        # ★2026-10-10: 原条件要求 skill -eq 'missionNether' —— framework v2 cutover(06-22)后顶层派发器是
+                        #   kernelDriver, 这条豁免从此永不命中: 每个合法夜间封闭 10min 被 STUCK-ZONE cancel、25min 被重启
+                        #   (新世界第二夜 00:14、第三夜 00:33 实录, 正是 cancel-skill-night-hazard 的路径)。改认任一派发器,
+                        #   并把 mobility 封闭态(ENTOMBED/ENC/POCKET/SEALED)也当作夜间庇护证据 (kernel 的 progress 尾行未必含 NIGHT)。
+                        $isDispatcher = ("" + $vit.skill) -match '^(missionNether|kernelDriver)$'
+                        $nightMobContained = ("" + $vit.mob) -match 'ENC|POCKET|ENTOMBED|SEALED'
+                        $nightHold = ($todN -ge 13000 -and $todN -le 23000 -and $isDispatcher -and ($nightMobContained -or $progLast -match 'NIGHT|入夜|hole up|蹲|night hold|nightShelter'))
                     } catch {}
                     $lowFoodNightShelterHold = $false
                     $tableRecoveryHold = $false
@@ -480,9 +486,9 @@ while ($true) {
                                 $progTailText = ((Get-Content $progFile -Tail 12 -ErrorAction Stop) -join "`n")
                             }
                         } catch {}
-                        $lowFoodNightShelterHold = (("" + $vit.skill) -eq 'missionNether' -and [int]$vit.food -le 6 -and -not $normalFood -and [int]$vit.hostiles -eq 0 -and $mobContained -and $progTailText -match 'famine-night gate|BREAKOUT gated: prepNether low-food hold evidence|inside cluster but night\+covered|dug-in bunker SEALED')
-                        $killBoxLowFoodHold = (("" + $vit.skill) -eq 'missionNether' -and [int]$vit.food -le 6 -and -not $normalFood -and $mobContained -and $progTailText -match 'KILL-BOX gated: low-food pocket recovery' -and (($advFresh -and $advActionable -eq 0) -or [int]$vit.hostiles -eq 0))
-                        $tableRecoveryHold = (("" + $vit.skill) -eq 'missionNether' -and [int]$vit.food -ge 14 -and [int]$vit.hostiles -eq 0 -and $progTailText -match 'TABLE gate for|TABLE recovery for')
+                        $lowFoodNightShelterHold = (("" + $vit.skill) -match '^(missionNether|kernelDriver)$' -and [int]$vit.food -le 6 -and -not $normalFood -and [int]$vit.hostiles -eq 0 -and $mobContained -and $progTailText -match 'famine-night gate|BREAKOUT gated: prepNether low-food hold evidence|inside cluster but night\+covered|dug-in bunker SEALED')
+                        $killBoxLowFoodHold = (("" + $vit.skill) -match '^(missionNether|kernelDriver)$' -and [int]$vit.food -le 6 -and -not $normalFood -and $mobContained -and $progTailText -match 'KILL-BOX gated: low-food pocket recovery' -and (($advFresh -and $advActionable -eq 0) -or [int]$vit.hostiles -eq 0))
+                        $tableRecoveryHold = (("" + $vit.skill) -match '^(missionNether|kernelDriver)$' -and [int]$vit.food -ge 14 -and [int]$vit.hostiles -eq 0 -and $progTailText -match 'TABLE gate for|TABLE recovery for')
                     } catch {}
                     # ★2026-07-14 admin 独占 hold (用户令: admin 要求的炼铁等炼完/原地待命 N 秒是合法站桩):
                     #   vitals.cmd=1 = agent 正在跑 admin 指令 (bot._extIntentUntil 新鲜, ws_server 每 15s 广播)。
