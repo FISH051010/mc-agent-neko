@@ -12,7 +12,15 @@
 
 ---
 
-## C369. ★没剑拿镐打: self_defense 无剑/斧时被单只近战怪打 → 用最好的镐还手(耐久策略), 有镐时逃跑门放宽到 hp10（modes.js self_defense/shouldFlee + skills.fallbackPickWeapon 需重启,T-0168 后续,worker-death,⏳待重启）
+## C370. ★surfaceUp 不在砂砾柱下竖直上挖: 头顶有重力块 → 横挪到无重力列再上（③surfaceUp.js 热加载即生效,T-0172,worker-death,🟡已生效待观测）
+
+**证据**: death #9 10-09 21:46:15Z `suffocation` @111,46,91 skill=surfaceUp(replenishKit ① 上浮); events hp 16(21:46:02)→6(21:46:07)→0 = 持续窒息 2/s。surfaceUp.log: `fallback clear failed at h=2 name=gravel` → `fallback iter 0: pillarUp rose 45->46` → 再 `clear failed … gravel` → EXIT; `modes frozen: mobility,self_preservation,self_defense,…`(surfaceUp 冻结全部反射, 无人救)。
+**机理**: fallback 头顶清障遇砂砾只会重试——正对头顶挖砂砾, 上方整列塌进自身格; 清不掉仍 pillarUp 往上顶进砂砾。反射被冻结 → 窒息 10s 至死。
+**改动**: surfaceUp.js 纯函数 `gravityAboveShaft(blockAt, feet)`(头格及上方 4 格有重力块) + `sidestepOutOfGravity(blockAt, feet)`(选相邻列: 脚/头非液体非重力、下有实心、上方无重力块, 空格优先)。fallback 每轮开头: 头顶有重力块 → 挖开侧列两格横挪 → continue 从新位置重评; 无可挪列 → 停(不在砂砾下上挖)。
+**可证伪预测**: 砂砾区上浮 surfaceUp.log 出 `gravity column over shaft — sidestep x,z (T-0172)`; 不再有 skill=surfaceUp 的 suffocation 死亡。若出现"四面都是砂砾柱时 surfaceUp 直接放弃、bot 困地下"→ 另需"等塌完再挖"(参照 C367 drain)。
+**回滚**: revert surfaceUp.js(热加载)。回归 `test/surfaceup_gravity.test.mjs`。
+
+## C369. ★没剑拿镐打: self_defense 无剑/斧时被单只近战怪打 → 用最好的镐还手(耐久策略), 有镐时逃跑门放宽到 hp10（modes.js self_defense/shouldFlee + skills.fallbackPickWeapon 需重启,T-0168 后续,worker-death,🟡已上线 21:25:00Z）
 
 **证据/拍板**: 监工 10-10 拍板(death #8 后续): 人类没剑时拿镐打, 没有站着挨打的; 铁镐 ≈ 石剑伤害。
 **机理**: self_defense 只把 _sword/_axe 算武器, 无剑即不 engage(defendSelf 的 equipHighestAttack 本已支持退到镐/铲, 只差门)。

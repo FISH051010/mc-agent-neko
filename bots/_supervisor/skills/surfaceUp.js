@@ -39,6 +39,38 @@ const FOOD_RE = /cooked_|_bread|^bread$|^apple$|golden_apple|carrot|potato|^beef
 const WOOD_TYPES = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry'];
 const FOOT_REPLACEABLE = new Set(['torch', 'wall_torch', 'redstone_torch', 'redstone_wall_torch', 'soul_torch', 'soul_wall_torch']);
 
+// ★T-0172 (death #9 10-09 21:46:15 suffocation @y46, surfaceUp fallback): 砂砾层里竖直上挖 —
+// 挖头顶砂砾 → 上方整列塌进自己身体格 → 'clear failed' 后仍 pillarUp 跳进砂砾 → 10s 持续窒息至死。
+// 人类: 头顶是砂砾柱就不在这列往上, 横挪到旁边一列 (其上方无重力块) 再上。
+const SU_GRAV_RE = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|[a-z_]*concrete_powder)$/;
+const SU_FLUID_RE = /water|lava/;
+/** 站在 feet 的这一列头顶 (feet+1 .. feet+1+span) 有重力块 → 不能在这列往上挖/垫柱。 */
+export function gravityAboveShaft(blockAt, feet, span = 4) {
+    for (let dy = 1; dy <= 1 + span; dy++) {
+        const n = (blockAt(feet.offset(0, dy, 0)) || {}).name || '';
+        if (SU_GRAV_RE.test(n)) return true;
+    }
+    return false;
+}
+/**
+ * 横挪出砂砾柱: 选一个相邻列 —— 脚/头两格非液体非重力、其下有实心落脚、其上 span 格无重力块。
+ * 已经空着的优先 (省挖)。@returns {[number,number]|null}
+ */
+export function sidestepOutOfGravity(blockAt, feet, span = 4) {
+    let best = null;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const f = feet.offset(dx, 0, dz), h = feet.offset(dx, 1, dz), under = feet.offset(dx, -1, dz);
+        const nf = (blockAt(f) || {}).name || 'air', nh = (blockAt(h) || {}).name || 'air';
+        const ub = blockAt(under);
+        if (SU_FLUID_RE.test(nf) || SU_FLUID_RE.test(nh) || SU_GRAV_RE.test(nf) || SU_GRAV_RE.test(nh)) continue;
+        if (!(ub && ub.boundingBox === 'block') || SU_FLUID_RE.test(ub.name || '')) continue;
+        if (gravityAboveShaft(blockAt, f, span)) continue;
+        const open = OPEN.has(nf) && OPEN.has(nh);
+        if (!best || (open && !best.open)) best = { d: [dx, dz], open };
+    }
+    return best ? best.d : null;
+}
+
 export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     const { skills, world, mc, Vec3, log } = ctx;
     // ★孤儿协程截止 (评审 replenishKit.js:94): 嵌套调用方 (replenishKit 步①等) 用 Promise.race
@@ -1160,6 +1192,30 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
             if (await stepEdgeAssist(`fallback-unstable-${stuckFloor}`)) continue;
             if (await scaffoldStep()) continue;
             break;
+        }
+        // ★T-0172: gravel/sand over this shaft → never dig up / pillar here (it collapses into our own
+        // cells: death #9). Sidestep one column to a gravity-free shaft and re-evaluate from there.
+        {
+            const _bt = (p) => bot.blockAt(p);
+            const _f0 = bot.entity.position.floored();
+            if (gravityAboveShaft(_bt, _f0)) {
+                const side = sidestepOutOfGravity(_bt, _f0);
+                motion('surfaceUp.gravity_shaft', { at: `${_f0.x},${_f0.y},${_f0.z}`, side: side ? side.join(',') : null, hp: Math.round(bot.health || 0) });
+                if (!side) { dbg(`fallback: gravity column over shaft @${_f0.x},${_f0.y},${_f0.z} and no gravity-free side column — stop (no digging up under gravel)`); break; }
+                dbg(`fallback: gravity column over shaft — sidestep ${side.join(',')} (T-0172)`);
+                for (const p of [_f0.offset(side[0], 1, side[1]), _f0.offset(side[0], 0, side[1])]) {
+                    const b = bot.blockAt(p);
+                    if (b && b.boundingBox === 'block' && !OPEN.has(b.name)) { try { await guardedDig(b, 'gravity-sidestep'); } catch (e) {} }
+                }
+                try {
+                    await bot.lookAt(new Vec3(_f0.x + side[0] + 0.5, _f0.y + 0.5, _f0.z + side[1] + 0.5), true);
+                    bot.setControlState('forward', true);
+                    const t0 = Date.now();
+                    while (Date.now() - t0 < 1600) { await skills.wait(bot, 100); if (bot.entity.position.floored().distanceTo(_f0) >= 1) break; }
+                } finally { try { bot.clearControlStates(); } catch (e) {} }
+                if (bot.entity.position.floored().distanceTo(_f0) < 1) { dbg('fallback: gravity sidestep did not move — stop'); break; }
+                continue;
+            }
         }
         for (let h = 2; h <= 4; h++) {
             const c = bot.blockAt(bot.entity.position.offset(0, h, 0));
