@@ -39,7 +39,7 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive } from './botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE } from './botwatch-trackers.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -101,17 +101,7 @@ const wedgePinnedMs = makeWedgeTracker();
 //    (≥14 → not the LOWHP emergency, which owns its own flag). Track continuous time the churn holds;
 //    a tier advance (real progress) OR dropping out of the churn condition resets it.
 //    Thresholds (reflexLines≥8 of last-80 events, 15min) are tunable if it over/under-fires.
-const _REFLEX_RE = /Fighting|Outmatched|digging in|kit(e|ing)|running from|flee|getting out|Drowning|dig(ging)? out|escaping|MLG|clutch|swim|heading for air/i;
-let _churnTier = null, _churnSince = now();
-function survivalChurnMs(s, t) {
-    const reflexLines = (s.events || []).filter(l => _REFLEX_RE.test(l)).length;
-    const churning = (s.hp != null && s.hp >= 14)
-        && !/MAROONED|ENTOMB|POCKET/i.test(s.mob || '')
-        && reflexLines >= 8;
-    const tier = churning ? (s.pickTier || 'none') : null;
-    if (tier !== _churnTier) { _churnTier = tier; _churnSince = t; }   // tier advance OR churn-off → reset
-    return { churnMs: (churning && _churnTier != null) ? (t - _churnSince) : 0, reflexLines };
-}
+const survivalChurnMs = makeSurvivalChurnTracker();
 
 // ── generic STATE-detector engine: debounce on (fire) AND off (clear+auto-verify) ─────────
 // Each detector: { key, type, severity, dedupKey, label, fireMs, clearMs, active(s), ticket(s,durMs) }
@@ -179,7 +169,7 @@ const D = [
         // is the "thrashing not working" signal. See survivalChurnMs() for the tracker rationale.
         key: 'survival-churn', type: 'idle', severity: 'high', dedupKey: 'survival-churn', label: 'SURVIVAL-CHURN',
         fireMs: 0, clearMs: 90000,   // the 15min accumulation IS the timer; clear after 90s out of churn
-        active: (s) => s._churn && s._churn.churnMs >= 15 * 60000,
+        active: survivalChurnActive,
         ticket: (s, dur) => ({
             type: 'idle', severity: 'high', dedupKey: 'survival-churn',
             title: `求生反射churn主导 ${Math.round(dur / 60000)}min — 满血/FREE打转无tier进展 (skill=${s.skill})`.slice(0, 140),

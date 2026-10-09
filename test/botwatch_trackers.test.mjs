@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive } from '../bots/_supervisor/botwatch-trackers.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive } from '../bots/_supervisor/botwatch-trackers.mjs';
 
 const MIN = 60000;
 const st = (x, y, z, hp, extra = {}) => ({ v: { x, y, z }, hp, ...extra });
@@ -58,4 +61,38 @@ test('T-0062: genuine safe hold (zero damage) only fires after 20min; sleeping i
     assert.equal(drive(tr, '_wedge', falseHoldActive, [at(21)]).fired, true, '20min+ pinned is a wedge regardless');
     const tr2 = makeWedgeTracker();
     assert.equal(drive(tr2, '_wedge', falseHoldActive, [at(0, { skill: 'bed' }), at(30, { skill: 'bed' })]).fired, false);
+});
+
+
+const reflexLog = (n) => Array.from({ length: 80 }, (_, i) => (i < n ? 'Fighting zombie!' : 'chopWood: log +1'));
+
+test('T-0073: healthy + FREE + reflex-dominated log + flat pick tier for 15min → SURVIVAL-CHURN fires', () => {
+    // live: 满血 FREE 在峡谷整夜 kite/钻坑打转, slipped no-progress / mobility-stuck / staleMin.
+    const tr = makeSurvivalChurnTracker();
+    let s;
+    for (let m = 0; m <= 16; m++) { s = { hp: 20, mob: 'FREE', pickTier: 'stone', events: reflexLog(12) }; s._churn = tr(s, m * MIN); }
+    assert.equal(survivalChurnActive(s), true);
+});
+
+test('T-0073: a tier advance resets the clock; low hp / trapped states / productive logs never count', () => {
+    const tr = makeSurvivalChurnTracker();
+    let s;
+    for (let m = 0; m <= 16; m++) {
+        s = { hp: 20, mob: 'FREE', pickTier: m < 10 ? 'stone' : 'iron', events: reflexLog(12) };
+        s._churn = tr(s, m * MIN);
+    }
+    assert.equal(survivalChurnActive(s), false, 'stone→iron at minute 10 is real progress');
+    for (const variant of [{ hp: 8 }, { mob: 'MAROONED' }, { mob: 'POCKET' }, { events: reflexLog(3) }]) {
+        const t2 = makeSurvivalChurnTracker();
+        let x;
+        for (let m = 0; m <= 16; m++) { x = { hp: 20, mob: 'FREE', pickTier: 'stone', events: reflexLog(12), ...variant }; x._churn = t2(x, m * MIN); }
+        assert.equal(survivalChurnActive(x), false, JSON.stringify(variant).slice(0, 40));
+    }
+});
+
+test('T-0072: the retired staleMin NO-PROGRESS detector stays inert (re-enabling it spawned a dup idle ticket per stall)', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const src = fs.readFileSync(path.join(root, 'bots', '_supervisor', 'botwatch.mjs'), 'utf8');
+    const block = src.slice(src.indexOf("key: 'no-progress'"), src.indexOf("key: 'no-progress'") + 2500);
+    assert.match(block, /active: \(s\) => false,/);
 });

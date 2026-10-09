@@ -51,3 +51,21 @@ export function makeWedgeTracker() {
 export const falseHoldActive = (s) => !!(s._wedge && s._wedge.pinnedMs >= 10 * 60000
     && (s._wedge.hpDrop >= 3 || s._wedge.pinnedMs >= 20 * 60000)
     && !/sleep|^bed$/i.test(s.skill || ''));
+
+// ── SURVIVAL-CHURN tracker (T-0073): a HEALTHY + FREE bot stuck in a survival-reflex loop (kite / circle /
+//    dig all night) with pickTier FLAT. Continuous churn time; tier advance or leaving churn resets. ──
+export const _REFLEX_RE = /Fighting|Outmatched|digging in|kit(e|ing)|running from|flee|getting out|Drowning|dig(ging)? out|escaping|MLG|clutch|swim|heading for air/i;
+export function makeSurvivalChurnTracker() {
+    let tier0 = null, since = null;
+    return (s, t) => {
+        if (since === null) since = t;
+        const reflexLines = (s.events || []).filter(l => _REFLEX_RE.test(l)).length;
+        const churning = (s.hp != null && s.hp >= 14)
+            && !/MAROONED|ENTOMB|POCKET/i.test(s.mob || '')
+            && reflexLines >= 8;
+        const tier = churning ? (s.pickTier || 'none') : null;
+        if (tier !== tier0) { tier0 = tier; since = t; }   // tier advance OR churn-off → reset
+        return { churnMs: (churning && tier0 != null) ? (t - since) : 0, reflexLines };
+    };
+}
+export const survivalChurnActive = (s) => !!(s._churn && s._churn.churnMs >= 15 * 60000);
