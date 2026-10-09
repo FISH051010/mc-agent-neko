@@ -66,9 +66,12 @@ export function animalInRange(animal, botPos, botY) {
 }
 
 /** 会话锁存 (纯函数; 状态由调用方挂在 bot._foodFloorLatch)。 */
-export function updateFoodFloorLatch(latch, { food, counts, animalNear, now = Date.now() }) {
+// ★T-0134 (18:40:50Z 死亡复盘): 锁存只在内存 → 18:38 重启后丢失, food 15 不 ≤6 不再触发, hp 停在 1 (food<18 不回血)
+//   → 一次挖出窒息即死、铁装全丢。触发也要看"回不了血": hp<10 且 food<18 同样开会话 — 状态可由 hp/food 重建, 不怕重启。
+export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, now = Date.now() }) {
     const L = latch || { active: false, kills: 0, since: 0 };
-    if (!L.active) return food <= FOOD_FLOOR ? { active: true, kills: 0, since: now } : L;
+    const cannotRegen = Number.isFinite(hp) && hp < DESCENT_MIN_HP && food < FOOD_RELEASE;
+    if (!L.active) return (food <= FOOD_FLOOR || cannotRegen) ? { active: true, kills: 0, since: now } : L;
     const cooked = countMatching(counts, COOKED_RE);
     const fed = food >= FOOD_RELEASE;
     if (L.kills >= SESSION_KILL_CAP || (fed && (cooked >= STOCK_COOKED || !animalNear)))

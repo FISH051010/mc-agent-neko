@@ -254,3 +254,14 @@ test('监工加急#6: 夜链 MINE_THROUGH_NIGHT 也受 hp<10 门 (否则剔掉�
     assert.ok(/_hpOkForNightMine/.test(src.slice(src.lastIndexOf('\n', j), j)), 'alreadyDeepEnclosed branch is hp-gated');
     assert.ok(/import \{ DESCENT_MIN_HP \} from '\.\/framework\/food_floor\.js'/.test(src));
 });
+
+test('T-0134: 重启后锁存丢失也要能重建 — hp 1 / food 15 (回不了血) 必须开会话; hp 满 food 15 不开', async () => {
+    const { updateFoodFloorLatch } = await import('../src/agent/framework/food_floor.js');
+    assert.equal(updateFoodFloorLatch(null, { food: 15, counts: {}, animalNear: true, hp: 1 }).active, true, '18:38 restart live: hp1 food15 → session');
+    assert.equal(updateFoodFloorLatch(null, { food: 15, counts: {}, animalNear: true, hp: 20 }).active, false, 'healthy → no session');
+    const w = world({ food: 15 }); w.vitals.hp = 1;
+    const bot = fakeBot(LIVE);
+    w.landmarks.animal = { x: 60, y: 76, z: 33, dist: 10, meta: 'cow', age: 1000 };
+    const ff = proposeTasks(w, bot).find(p => p.kind === 'FOOD_FLOOR');
+    assert.ok(ff && !ff.args[0].scout, 'hunts the nearby cow (no scouting above food 6)');
+});

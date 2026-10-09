@@ -720,7 +720,7 @@ export function proposeTasks(world, bot) {
         // ★监工拍板: 会话锁存 (food≤6 触发 → food≥18 且熟食≥4 / 附近无动物时 food≥18 / 猎满 6 只 才释放)
         let _latch;
         if (!foodInstincts && bot) {
-            bot._foodFloorLatch = updateFoodFloorLatch(bot._foodFloorLatch, { food: vitals.food, counts: invCounts(bot),
+            bot._foodFloorLatch = updateFoodFloorLatch(bot._foodFloorLatch, { food: vitals.food, counts: invCounts(bot), hp: vitals.hp,
                 animalNear: animalInRange(_animal, _bp, _bp ? _bp.y : NaN) });
             _latch = bot._foodFloorLatch;
         }
