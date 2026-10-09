@@ -2855,6 +2855,8 @@
 
 - **★C385-S mineDown 空洞中止计入朝向记忆(T-0139)**（2026-10-10，worker-stuck，T-0139）: 证据: 10-10 02:58:23→26 与 03:03:06/27 @-3,43,-1: mineDown 'no floor support under -4,41,-1 (air)' dig=0 原地中止 3 连 → ★dispatch-cooldown GO_UNDERGROUND 5min。机理: 只有 fluid 中止写入 `bot._mineDownFluidAvoid`(下次换向),空洞中止不写 → 确定性朝向每次撞同一洞穴空腔。**改**(③ `skills/mineDown.js`,热加载): 抽出导出纯函数 `rememberAbortedHeading`/`rotateAwayFromAborted`(开局换向也走它);no-floor 中止调用前者。四向皆坏仍走既有 relocate-then-retry。**回归测试**: `test/minedown_void_heading.test.mjs`(3 条 `T-0139:`)。第二层(单次派发内横移重开,T-0137②)另条。子 skill 热加载,合并即生效。
 
+- **★C386-S mineDown 遇洞穴空腔就地转向/横移重开竖井(T-0137②, 监工规格)**（2026-10-10，worker-stuck，T-0137 第②步由 worker-tier 转交）: 证据: 03:03:06/27 @-3,43,-1 heading -1,0: 'no floor support under -4,41,-1 (air)' dug=0 原地中止,每次派发都靠 3 连败冷却后重派。机理: 空洞中止=结束整次派发;人类会转个向或侧挪几格接着挖。**改**(③ `skills/mineDown.js`,热加载): 新导出纯函数 `planVoidHop(bn,cx,cy,cz,sx,sz,avoid,R=4)`: ① 先就地换向到"下一级台阶脚/头无流体、其下 3 格实心"的基本方向;② 否则沿两侧垂直线、再沿反向线走 ≤4 格(沿途脚下实心、无流体、非不可破),找"下方 3 格实心且有可行台阶方向"的列;都没有→null。步进循环里空洞中止先记朝向(C385-S),再 `planVoidHop`,turn 直接换向、hop 用 `walkVoidHop`(挖开脚/头逐格前进,同 wedgeSidestep)到位后 `continue`——同一次派发内继续下挖,每派发 ≤3 次;规划/行走失败才诚实中止。打 `void hop N/3: turned|moved Nb to x,z → heading …`。**回归测试**: `test/minedown_void_hop.test.mjs`(4 条,复刻 03:03 现场的洞穴环);T-0139 源码钉随结构更新。**可证伪预测**: 洞穴区下潜出现 `void hop` 行且后续 dig>0,不再出现同点 3 连 'no floor support' + GO_UNDERGROUND 冷却。子 skill 热加载,合并即生效。
+
 ---
 
 ---

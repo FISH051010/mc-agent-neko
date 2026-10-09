@@ -42,6 +42,43 @@ function stairSafety(reads) {
     return { safe: true, reason: 'ok' };
 }
 
+// ★T-0137② VOID HOP (监工规格): a 'no floor support' abort (cave void under the next stair cell) used to end the
+//   dispatch → 3-strike cooldown → re-dispatch onto the same void (live 03:03:06/27 @-3,43,-1). A human turns
+//   or shuffles a few blocks sideways and starts the stair again. Pure planner over blockAt-style reads:
+//   ① turn in place to a cardinal whose stair cell has 3 solid blocks under it; else
+//   ② walk ≤4 blocks along a perpendicular/reverse line on solid footing to a column with 3 solid below and a
+//      viable stair heading from there. Returns null when nothing safe is in reach (honest abort).
+export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
+    const nm = (b) => (b && b.name) || 'air';
+    const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
+    const passable = (b) => !FLUID.test(nm(b)) && !UNBREAKABLE.test(nm(b));   // diggable or open
+    const avoided = (dx, dz) => avoid.some(a => a.sx === dx && a.sz === dz);
+    const stairOk = (x, y, z, dx, dz) => {
+        const fx = x + dx, fz = z + dz;
+        if (!passable(bn(fx, y - 1, fz)) || !passable(bn(fx, y, fz)) || !passable(bn(fx, y + 1, fz))) return false;
+        return solid(bn(fx, y - 2, fz)) && solid(bn(fx, y - 3, fz)) && solid(bn(fx, y - 4, fz));   // 3 solid below the new feet
+    };
+    const CARD = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    for (const [dx, dz] of CARD) {
+        if ((dx === sx && dz === sz) || avoided(dx, dz)) continue;
+        if (stairOk(cx, cy, cz, dx, dz)) return { kind: 'turn', sx: dx, sz: dz, path: [] };
+    }
+    for (const [lx, lz] of [[-sz, sx], [sz, -sx], [-sx, -sz]]) {   // perpendiculars first, then back away
+        const path = [];
+        for (let d = 1; d <= R; d++) {
+            const x = cx + lx * d, z = cz + lz * d;
+            if (!passable(bn(x, cy, z)) || !passable(bn(x, cy + 1, z)) || !solid(bn(x, cy - 1, z))) break;   // footing must hold
+            path.push([x, z]);
+            if (!(solid(bn(x, cy - 2, z)) && solid(bn(x, cy - 3, z)))) continue;    // column needs 3 solid below
+            for (const [dx, dz] of CARD) {
+                if (dx === -lx && dz === -lz) continue;                              // don't stair back toward the void
+                if (stairOk(x, cy, z, dx, dz)) return { kind: 'hop', x, z, sx: dx, sz: dz, path: path.slice() };
+            }
+        }
+    }
+    return null;
+}
+
 // ★T-0139: heading memory for step-0 terrain aborts, shared by the fluid abort and the no-floor (cave void)
 //   abort. The no-floor abort used to skip it → every re-dispatch walked the same deterministic heading into
 //   the same void (live 10-10 02:58:23→26 @-3,43,-1: 3× 'no floor support … (air)', dig=0 → GO_UNDERGROUND
@@ -143,6 +180,26 @@ export default async function mineDown(bot, ctx, opts = {}) {
 
     log_(`START pos=${Math.round(bot.entity.position.x)},${Math.round(bot.entity.position.y)},${Math.round(bot.entity.position.z)} hp=${Math.round(bot.health)} food=${bot.food} heading=${sx},${sz} targetY=${targetY}`);
     let dug = 0, ore = 0, abort = null, noProg = 0;
+    let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
+    // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
+    const walkVoidHop = async (path) => {
+        for (const [tx, tz] of path) {
+            const cyf = Math.floor(bot.entity.position.y);
+            for (const by of [cyf + 1, cyf]) {
+                const b = bn(tx, by, tz);
+                if (b && b.boundingBox === 'block') { try { await skills.breakBlockAt(bot, tx, by, tz); } catch (e) {} }
+            }
+            try {
+                await bot.lookAt(new Vec3(tx + 0.5, cyf + 0.5, tz + 0.5), true);
+                bot.setControlState('forward', true);
+                const t0 = Date.now();
+                while (Date.now() - t0 < 1500) { const pp = bot.entity.position; if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) < 0.45) break; await new Promise(r => setTimeout(r, 100)); }
+            } finally { try { bot.setControlState('forward', false); } catch (e) {} }
+            const pp = bot.entity.position;
+            if (Math.hypot(pp.x - (tx + 0.5), pp.z - (tz + 0.5)) > 0.8) return false;
+        }
+        return true;
+    };
 
     // ★C248b mid-dive pickaxe-survival guard (root-harden — see memory resource-floor-bootstrap-kit).
     // C248 gates the DISPATCH (don't start a dive on a dying lone pick), but a pick that starts
@@ -588,7 +645,22 @@ export default async function mineDown(bot, ctx, opts = {}) {
             break;
         }
         // No solid support under the new feet (cliff/cave) => don't blind-drop; stop.
-        if (/^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) { abort = `no floor support under ${fx},${cy - 2},${fz} (${nm(support)}) — stop, don't free-fall`; rememberAbortedHeading(bot, sx, sz); break; }   // ★T-0139 next dispatch turns away from the void
+        if (/^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) {
+            rememberAbortedHeading(bot, sx, sz);   // ★T-0139 next dispatch turns away from the void
+            // ★T-0137② turn / sidestep ≤4b to a column with 3 solid below and restart the stair — this dispatch
+            if (voidHops < 3) {
+                const near = (bot._mineDownFluidAvoid || []).filter(a => Date.now() - a.at < ABORT_HEADING_TTL_MS && Math.hypot(a.x - cur.x, a.z - cur.z) < 8);
+                const plan = planVoidHop(bn, cx, cy, cz, sx, sz, near);
+                if (plan && (plan.kind === 'turn' || await walkVoidHop(plan.path))) {
+                    voidHops++;
+                    log_(`void hop ${voidHops}/3: ${plan.kind === 'turn' ? 'turned' : `moved ${plan.path.length}b to ${plan.x},${plan.z}`} → heading ${plan.sx},${plan.sz} (cave under ${fx},${cy - 2},${fz})`);
+                    sx = plan.sx; sz = plan.sz; noProg = 0;
+                    continue;
+                }
+                log_(`void hop ${plan ? 'walk failed' : 'no safe column within 4b'} — abort`);
+            }
+            abort = `no floor support under ${fx},${cy - 2},${fz} (${nm(support)}) — stop, don't free-fall`; break;
+        }
 
         if (i < 3) log_(`DIAG step${i} cur=${cur.x.toFixed(2)},${cur.y.toFixed(2)},${cur.z.toFixed(2)} cx,cy,cz=${cx},${cy},${cz} fwd=${fx},${fz} sx,sz=${sx},${sz} blocks: newFeet(${fx},${cy - 1},${fz})=${nm(newFeet)} newHead(${fx},${cy},${fz})=${nm(newHead)} clear(${fx},${cy + 1},${fz})=${nm(clear)} support(${fx},${cy - 2},${fz})=${nm(support)}`);
         try {
