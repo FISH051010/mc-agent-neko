@@ -44,6 +44,9 @@ export function famineStall(bot) {
         return !lethal && food <= 2 && !v.canRegen;
     } catch (e) { return false; }
 }
+function hasPickaxe(bot) {
+    try { return bot.inventory.items().some(i => /_pickaxe$/.test(i.name || '')); } catch (e) { return false; }
+}
 // mobility 救援态 — kernelDriver 见之让位; arbiter.dispatchYieldFloor 认让位戳 (T-0080 契约两端同口径)
 export const MOBILITY_YIELD_RE = /ENTOMBED|POCKET|MAROONED|SEALED|SWIM/;
 export function reflexBusy(bot) {
@@ -55,6 +58,11 @@ export function reflexBusy(bot) {
         //   的窄缝(coverReal 安全),让位只会空等;觅食派发会带 bot 走出去(走出后 POCKET 自然解除)。
         if (famineStall(bot)) return false;
         const m = bot._mobility && bot._mobility.state;
+        // ★T-0086 竖井底 POCKET 互等: POCKET = 无水平出口、头顶开、被覆盖 — 正是 mineDown 自挖 1x1 竖井
+        //   的常态。有镐的 bot 在石头里不是被困(挖哪都通), 让位只换来 mobility 的 30s 等待 + step-up 把
+        //   bot 抬高 1 格撤销下挖 (live 10-10 00:40/42/44/47 四连, 每次 mineDown 返回后空等 ~30s)。
+        //   有镐时直接派发 commitment(挖掘/寻路自会挖穿); 无镐的 POCKET 才是真窄缝, 照旧让位给垫/挖反射。
+        if (m === 'POCKET' && hasPickaxe(bot)) return false;
         if (m && MOBILITY_YIELD_RE.test(String(m))) return true;
         // ★FROZEN-ALIVE FIX (live -24,50,-31 pin ~6min): the passive `enclosed` flag (a ceiling
         // overhead) is NOT a reason to defer — a bot mining/sheltering underground is "enclosed"

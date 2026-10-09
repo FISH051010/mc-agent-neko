@@ -2821,6 +2821,8 @@
 
 - **★C376-S 部署锁补"捎带判定" `deploy-lock.mjs live <sha>`(T-0114)**（2026-10-10，worker-stuck，T-0114；锁本体=监工 f43a911）: 证据: 10-10 00:21 worker-death 的 C356-C358(128cbf9 落地 00:19:22)随别人的重启上线,若各自再"为自己的提交重启"即第 4 次叠加重启(00:21-00:26 已 3 次)。机理: 部署者只知道"我合并了",不知道"运行中的进程是否已包含它";提交时间≠落地时间(rebase 后的分支稍后 ff-merge)。**改**(④ `bots/_supervisor/deploy-lock.mjs`): 纯函数 `landedAt(reflog, contains)`(分支 reflog 中最早仍包含该提交的 tip 时间)+`alreadyLive({landedMs, procStartMs})`;CLI `live <sha> [--proc main|botwatch] [--repo]` 用 `git merge-base --is-ancestor` 走 reflog、PowerShell 读 init_agent/botwatch 的 CreationDate,exit 0=已上线不必重启。docs 部署锁节加"捎带判定先于拿锁"。实测: 14d991f(落 16:21:58Z)/128cbf9(16:19:22Z) vs main 16:26:00Z → 已上线;f43a911(16:26:43Z)→未上线。**回归测试**: `test/deploy_lock_live.test.mjs`(2 条 `T-0114:`)。**回滚**: revert(纯工具,无需重启)。
 
+- **★C377-S 竖井底 POCKET 不再让位互等(T-0086)**（2026-10-10，worker-stuck，T-0086）: 证据: 10-10 00:40/00:42/00:44/00:47 四连(GO_UNDERGROUND/DUSK_MINE_NIGHT mineDown targetY14/12): 每次 mineDown 返回(或被 commitment 翻转中断)后 bot 停在自挖 1x1 竖井底 → mobility=POCKET → kernelDriver `reflexBusy`(MOBILITY_YIELD_RE 含 POCKET) 让位 → POCKET 反射 30s 后才 `Pocketed — carving a step out` 并 `POCKET step-up climb` 把 bot 抬高 1 格(y44/36/26/15,撤销下挖) → FREE → 才重派 mineDown。每次空等 ~30s + 倒退 1 格。机理: POCKET(无水平出口+头顶开+被覆盖)正是 mineDown 竖井的常态;有镐的 bot 在石头里不是被困,两边互相等待=T-0080 同型互让。**改**(③ `skills/kernelDriver.js` `reflexBusy`): `POCKET && 背包有任意 *_pickaxe` → 不算 busy,直接派 commitment;无镐 POCKET 与 ENTOMBED/MAROONED/SEALED/SWIM(_STUCK) 照旧让位。**回归测试**: `test/kernel_driver_pocket.test.mjs`(3 条 `T-0086:`,含假时钟真跑主循环:旧码 POCKET 下 5000 拍零派发,新码相邻两次派发 ≤1 拍)。**可证伪预测**: 下潜期间 progress 不再出现 `POCKET step-up climb` 紧跟 mineDown 重派;mineDown 重派间隔从 ~30s 降到 ~1.5s。**回滚**: revert;kernelDriver 顶层 sticky 需 re-arm。
+
 ---
 
 ---
