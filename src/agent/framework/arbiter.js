@@ -45,6 +45,33 @@ const LLM_FALLBACK_TTL_MS = 30000; // 超时/解析失败的负缓存 — API �
 const DOC_CACHE_MS = 15000;        // 矩阵文件缓存 (监工可热改文件, 15s 内生效)
 const LOG_DEDUP_MS = 10000;        // 同对同 verdict 的日志限频
 const LOG_MAX_ENTRIES = 300;       // arbitration.json log 数组封顶
+const DISPATCH_YIELD_FRESH_MS = 3000; // kernelDriver 让位戳的新鲜窗 (它每 ~0.8s 重打一次)
+const HARD_TRAP_RE = /ENTOMBED|SEALED/;   // 真被封死: 子技能在跑也必须放 mobility 挖出 (同 modes.js admin 门)
+
+/**
+ * ★T-0080 调度让位地板 — 决策层与仲裁器的契约必须一致, 否则就是互相让位的死锁。
+ * 实录 2026-10-09 15:42:11→15:45:12 (新世界开局): mobility 判 MAROONED → kernelDriver
+ * reflexBusy() 让位不派发 (等反射先动); 同刻 mode:mobility 来抢身体, holder=ws:* (kernelDriver
+ * 自己, 正在空等) 矩阵未命中 → 问 LLM → 4s 超时回退 holder 胜 → march 也不动 → 双方互等到
+ * MAROONED 180s 最短驻留过期, 整整 3 分钟零动作。
+ * 判据: holder 是受监督技能 (非 mode) 且 —
+ *   (a) kernelDriver 正在为 mobility 让位 (bot._dispatchYield 新鲜, 它让位的理由就是
+ *       "让反射先跑", 仲裁器再判 holder 胜 = 谁都不动), 或
+ *   (b) 真被封死 ENTOMBED/SEALED — 子技能在跑也得放挖出 (不能等子技能跑完)。
+ * 子技能正在跑时的 soft MAROONED/POCKET/SWIM 不在此地板内 (照旧走矩阵/LLM)。
+ */
+export function dispatchYieldFloor(bot, holder, claimant) {
+    try {
+        if (!bot || !holder || !claimant) return false;
+        if (holder.kind === 'mode') return false;
+        if (claimant.name !== 'mode:mobility') return false;
+        const m = String((bot._mobility && bot._mobility.state) || '');
+        if (!m || m === 'FREE') return false;
+        if (HARD_TRAP_RE.test(m)) return true;
+        const y = bot._dispatchYield;
+        return !!(y && y.reason === 'mobility' && Date.now() - (y.at || 0) < DISPATCH_YIELD_FRESH_MS);
+    } catch (e) { return false; }
+}
 
 /** bot 挂载的仲裁器状态 (红线: 无模块级可变状态)。 */
 function st(bot) {
@@ -239,6 +266,10 @@ export function resolve(holder, claimant, ctx = {}) {
         // 2. 矩阵直查 (永久规则: 种子 + LLM persist 沉淀)
         const hit = lookupMatrix(doc.matrix, holder.name, claimant.name);
         if (hit) return logVerdict(bot, holder, claimant, hit.verdict, 'matrix', hit.rule, ctx);
+
+        // 2.5 调度让位地板 (T-0080) — 在 LLM 缓存之前: 一条 30s 的超时负缓存 'holder' 也会续命死锁
+        if (dispatchYieldFloor(bot, holder, claimant))
+            return logVerdict(bot, holder, claimant, 'claimant', 'floor', 'dispatch-yield', ctx);
 
         // 3. LLM 短期缓存 (persist:false 的裁决 / 超时负缓存)
         const s = st(bot);

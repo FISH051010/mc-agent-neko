@@ -44,6 +44,8 @@ export function famineStall(bot) {
         return !lethal && food <= 2 && !v.canRegen;
     } catch (e) { return false; }
 }
+// mobility 救援态 — kernelDriver 见之让位; arbiter.dispatchYieldFloor 认让位戳 (T-0080 契约两端同口径)
+export const MOBILITY_YIELD_RE = /ENTOMBED|POCKET|MAROONED|SEALED|SWIM/;
 export function reflexBusy(bot) {
     try {
         // ★饥饿觅食解锁: 纯饥饿僵局(非 LETHAL)时,绝不让 reflex 门把觅食派发卡死。决策层此刻
@@ -53,7 +55,7 @@ export function reflexBusy(bot) {
         //   的窄缝(coverReal 安全),让位只会空等;觅食派发会带 bot 走出去(走出后 POCKET 自然解除)。
         if (famineStall(bot)) return false;
         const m = bot._mobility && bot._mobility.state;
-        if (m && /ENTOMBED|POCKET|MAROONED|SEALED|SWIM/.test(String(m))) return true;
+        if (m && MOBILITY_YIELD_RE.test(String(m))) return true;
         // ★FROZEN-ALIVE FIX (live -24,50,-31 pin ~6min): the passive `enclosed` flag (a ceiling
         // overhead) is NOT a reason to defer — a bot mining/sheltering underground is "enclosed"
         // BY DEFINITION. When mobility has already released to FREE (state not a rescue state)
@@ -173,7 +175,16 @@ export default async function kernelDriver(bot, ctx) {
         if (!c || !c.skill) { await wait(1500); continue; }
 
         // Defer to the reflex layer if it's mid-rescue — short wait so ① runs first.
-        if (reflexBusy(bot)) { await wait(800); continue; }
+        if (reflexBusy(bot)) {
+            // ★T-0080 让位戳: 告诉仲裁器"派发器正在为 mobility 让位"— 否则 mode:mobility 抢身体时
+            //   holder=ws:*(就是这里在空等)被 LLM 超时回退判胜, 双方互等 = 3min 零动作死锁。
+            //   arbiter.dispatchYieldFloor 认这个戳 (3s 新鲜窗; 这里每 ~0.8s 重打)。
+            try {
+                const m = String((bot._mobility && bot._mobility.state) || '');
+                if (MOBILITY_YIELD_RE.test(m)) bot._dispatchYield = { reason: 'mobility', state: m, at: Date.now() };
+            } catch (e) {}
+            await wait(800); continue;
+        }
 
         // Dispatch only on a skill change (avoid stomping a still-running child). The
         // commitment's args are forwarded positionally, matching customSkill's
