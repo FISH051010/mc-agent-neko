@@ -1318,6 +1318,26 @@ export function oreLineBuried(bot, eye, center, d3) {
     } catch (e) { return { ok: true, why: 'voxel-err(fail-open)' }; }   // C7: never hard-block on internal error
 }
 
+// ★C319 (T-0053): block ids the DESTRUCTIVE fallback may place to build its way out (pillar / bridge) —
+// only fillers we actually CARRY (planning with blocks we lack = a place-path that fails at exec). PURE.
+export const NAV_SCAFFOLD_RE = /^(cobblestone|cobbled_deepslate|dirt|coarse_dirt|sand|red_sand|gravel|stone|granite|diorite|andesite|tuff|netherrack|sandstone|red_sandstone)$|terracotta$/;
+export function scaffoldIdsFromInventory(items, getBlockId) {
+    const ids = [];
+    for (const it of items) {
+        if (NAV_SCAFFOLD_RE.test(it.name || '')) { const id = getBlockId(it.name); if (id != null && !ids.includes(id)) ids.push(id); }
+    }
+    return ids;
+}
+// ★C320 (T-0053): pick the navigation mode from the two A* pre-checks — accept 'partial' (the executor re-plans
+// as it moves). Preference: nd-success > d-success > nd-partial > d-partial; null = genuine no path. PURE.
+export function pickPathMode(ndStatus, dStatus) {
+    if (ndStatus === 'success') return 'nd';
+    if (dStatus === 'success') return 'd';
+    if (ndStatus === 'partial') return 'nd';
+    if (dStatus === 'partial') return 'd';
+    return null;
+}
+
 export async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = true, pickup = false, requireLOS = false } = {}) {
     ensureWaterAwareDigTime(bot);
     const dead = (b) => !b || b.boundingBox === 'empty' || b.name === 'air';
@@ -4712,13 +4732,8 @@ export async function goToGoal(bot, goal) {
     // stranded the bot (every caller, not just migrate which C318 band-aided). Give destructive the
     // fillers we ACTUALLY carry (planning with blocks we lack = a place-path that fails at exec).
     // Non-destructive stays scaffold-free — ordinary travel never improvises placement.
-    const _SCAFFOLD_RE = /^(cobblestone|cobbled_deepslate|dirt|coarse_dirt|sand|red_sand|gravel|stone|granite|diorite|andesite|tuff|netherrack|sandstone|red_sandstone)$|terracotta$/;
-    const _scaffoldIds = [];
-    try {
-        for (const it of bot.inventory.items()) {
-            if (_SCAFFOLD_RE.test(it.name || '')) { const id = mc.getBlockId(it.name); if (id != null && !_scaffoldIds.includes(id)) _scaffoldIds.push(id); }
-        }
-    } catch (e) {}
+    let _scaffoldIds = [];
+    try { _scaffoldIds = scaffoldIdsFromInventory(bot.inventory.items(), (n) => mc.getBlockId(n)); } catch (e) {}
     destructiveMovements.scafoldingBlocks = _scaffoldIds;
     destructiveMovements.liquids.add(mc.getBlockId('water'));
     destructiveMovements.liquids.add(mc.getBlockId('flowing_water'));
@@ -4806,11 +4821,7 @@ export async function goToGoal(bot, goal) {
         _destructivePath = await bot.pathfinder.getPathTo(destructiveMovements, goal, pathfind_timeout);
     }
     // pick: nd-success > d-success > nd-partial > d-partial
-    let _pick = null;
-    if (nonDestructivePath.status === 'success') _pick = 'nd';
-    else if (_destructivePath && _destructivePath.status === 'success') _pick = 'd';
-    else if (nonDestructivePath.status === 'partial') _pick = 'nd';
-    else if (_destructivePath && _destructivePath.status === 'partial') _pick = 'd';
+    const _pick = pickPathMode(nonDestructivePath.status, _destructivePath ? _destructivePath.status : null);
     if (_pick === 'nd') {
         currentMovements = nonDestructiveMovements;
         isDestructive = false;
