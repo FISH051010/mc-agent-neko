@@ -53,6 +53,31 @@ test('T-0164: 20:40:57 复现 — 收不回锭 → 报 false 并落盘滞留记�
     assert.equal(readStranded(), null, 'nothing stranded');
 });
 
+test('T-0164: 两口滞留炉 (-55,21,23 ×8 + -53,22,49 料数未知) → reclaimFurnace 由近及远都收, 空炉也挖回, 记录清空', async () => {
+    writeStranded(null);
+    writeStranded({ x: -55, y: 21, z: 23, item: 'raw_iron', product: 'iron_ingot', n: 8, at: Date.now() });
+    writeStranded({ x: -53, y: 22, z: 49, item: 'raw_iron', product: 'iron_ingot', n: null, at: Date.now() });
+    const { readAllStranded } = await import('../bots/_supervisor/skills/smeltSafe.js');
+    assert.equal(readAllStranded().length, 2);
+    const { default: reclaimFurnace } = await import('../bots/_supervisor/skills/reclaimFurnace.js');
+    const inv = {}; const visits = [];
+    let pos = { x: -43, y: 63, z: 25 };
+    const bot = { entity: { get position() { return { ...pos, offset(dx, dy, dz) { return { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }; } }; } },
+                  blockAt: () => ({ name: 'furnace' }) };
+    let first = true;
+    const skills = {
+        goToPosition: async (b, x, y, z) => { pos = { x, y, z }; visits.push(`${x},${y},${z}`); },
+        clearNearestFurnace: async () => { if (first) { inv.iron_ingot = (inv.iron_ingot || 0) + 8; first = false; } return true; },   // 第二口是空炉
+        collectBlock: async () => { inv.furnace = (inv.furnace || 0) + 1; return true; },
+    };
+    const ok = await reclaimFurnace(bot, { skills, world: { getInventoryCounts: () => ({ ...inv }) }, log: () => {} });
+    assert.equal(ok, true);
+    assert.deepEqual(visits, ['-55,21,23', '-53,22,49'], 'nearest first, then the second within 64b');
+    assert.equal(inv.iron_ingot, 8);
+    assert.equal(inv.furnace, 2, 'empty furnace still picked up (furnace is an asset)');
+    assert.equal(readAllStranded().length, 0);
+});
+
 test('T-0164: 滞留记录 ≤64 格 → 提 RECLAIM_FURNACE(reclaimFurnace); 收回后 isGoalDone; 太远不提', () => {
     writeStranded({ x: -54, y: 22, z: 24, item: 'raw_iron', product: 'iron_ingot', n: 8, at: Date.now() });
     const w = JSON.parse(JSON.stringify(EMPTY_WORLD));

@@ -55,12 +55,24 @@ export function smeltLedger(item, before, after) {
 const STRANDED_F = path.resolve(process.cwd(), 'bots', '_supervisor', 'stranded_smelt.json');
 const STRANDED_MAX_AGE_MS = 3 * 3600 * 1000;
 const STRANDED_REACH = 64;
-export function readStranded() {
-    try { const s = JSON.parse(fs.readFileSync(STRANDED_F, 'utf8').replace(/^﻿/, '')); return s && Number.isFinite(s.x) ? s : null; } catch (e) { return null; }
+// 多条记录 (监工: 一口炉收完, 64 格内的下一口顺路收)。旧单对象格式兼容读; n=null = 料数未知 (只知道炉在)。
+const sameSpot = (a, b) => Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1 && Math.abs(a.z - b.z) <= 1;
+export function readAllStranded() {
+    try {
+        const j = JSON.parse(fs.readFileSync(STRANDED_F, 'utf8').replace(/^﻿/, ''));
+        return (Array.isArray(j) ? j : [j]).filter(s => s && Number.isFinite(s.x) && Date.now() - (s.at || 0) <= STRANDED_MAX_AGE_MS);
+    } catch (e) { return []; }
 }
+function saveAllStranded(list) {
+    try { if (list.length) fs.writeFileSync(STRANDED_F, JSON.stringify(list)); else fs.rmSync(STRANDED_F, { force: true }); } catch (e) {}
+}
+export function readStranded() { return readAllStranded()[0] || null; }
+/** rec → 追加/同位覆盖; null → 清空全部。 */
 export function writeStranded(rec) {
-    try { if (rec) fs.writeFileSync(STRANDED_F, JSON.stringify(rec)); else fs.rmSync(STRANDED_F, { force: true }); } catch (e) {}
+    if (!rec) return saveAllStranded([]);
+    saveAllStranded([...readAllStranded().filter(s => !sameSpot(s, rec)), rec]);
 }
+export function removeStranded(rec) { saveAllStranded(readAllStranded().filter(s => !sameSpot(s, rec))); }
 /** 就在炉边: 清炉 (锭+残料+燃料回包) 再把炉挖回背包 (随身炉, 同 replenishKit ⑨离场收台)。返回 {got, furnace}。 */
 export async function clearAndPickUp(bot, { skills, world }, item, product) {
     const before = { ...(world.getInventoryCounts(bot) || {}) };
@@ -75,31 +87,41 @@ export async function clearAndPickUp(bot, { skills, world }, item, product) {
     }
     return { got, furnace };
 }
-/** 回滞留炉收产物/残料并收炉。true = 收回了东西。炉已不在/过期 → 清记录; 太远 → 保留记录, 不阻塞本次冶炼。 */
-export async function reclaimStranded(bot, { skills, world, log }) {
-    const rec = readStranded();
-    if (!rec) return false;
-    if (Date.now() - (rec.at || 0) > STRANDED_MAX_AGE_MS) { writeStranded(null); return false; }
-    const p = bot.entity && bot.entity.position;
-    if (!p) return false;
-    const d = Math.hypot(p.x - rec.x, p.y - rec.y, p.z - rec.z);
-    if (d > STRANDED_REACH) { log(bot, `stranded furnace @${rec.x},${rec.y},${rec.z} (${rec.n} ${rec.item}) ${Math.round(d)}b away — too far, keep record`); return false; }
-    const before = world.getInventoryCounts(bot) || {};
-    try { if (d > 3) await skills.goToPosition(bot, rec.x, rec.y, rec.z, 2); } catch (e) {}
-    if (bot.interrupt_code) return false;
-    let fb = null;
-    try { fb = bot.blockAt(p.offset(rec.x - p.x, rec.y - p.y, rec.z - p.z)); } catch (e) {}
-    if (fb && !/furnace/.test(fb.name || '')) { log(bot, `stranded furnace @${rec.x},${rec.y},${rec.z} is gone (${fb.name}) — dropping record`); writeStranded(null); return false; }
-    const { got, furnace } = await clearAndPickUp(bot, { skills, world }, rec.item, rec.product);
-    log(bot, `reclaim stranded furnace @${rec.x},${rec.y},${rec.z}: +${got} (${rec.product}/${rec.item}, expected ${rec.n})${furnace ? ' + furnace picked up' : ''}`);
-    if (got > 0 || furnace) writeStranded(null);
-    return got > 0;
+/** 回滞留炉收产物/残料并收炉 (由近及远; all=false 只收最近一口)。炉已不在/收完 → 删记录; 太远 → 保留。
+ *  返回 {got, furnaces}: got = 收回的锭+料, furnaces = 挖回背包的炉数 (空炉也挖回, 熔炉本身是资产)。 */
+export async function reclaimStranded(bot, { skills, world, log }, { all = false } = {}) {
+    let got = 0, furnaces = 0;
+    for (let i = 0; i < 4; i++) {
+        const p = bot.entity && bot.entity.position;
+        if (!p || bot.interrupt_code) break;
+        const dist = (s) => Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z);
+        const recs = readAllStranded().sort((a, b) => dist(a) - dist(b));
+        const rec = recs.find(s => dist(s) <= STRANDED_REACH);
+        if (!rec) {
+            if (recs.length && i === 0) log(bot, `stranded furnace(s) all >${STRANDED_REACH}b away (nearest ${Math.round(dist(recs[0]))}b) — keep records`);
+            break;
+        }
+        const d = dist(rec);
+        try { if (d > 3) await skills.goToPosition(bot, rec.x, rec.y, rec.z, 2); } catch (e) {}
+        if (bot.interrupt_code) break;
+        const q = bot.entity.position;
+        let fb = null;
+        try { fb = bot.blockAt(q.offset(rec.x - q.x, rec.y - q.y, rec.z - q.z)); } catch (e) {}
+        if (fb && !/furnace/.test(fb.name || '')) { log(bot, `stranded furnace @${rec.x},${rec.y},${rec.z} is gone (${fb.name}) — dropping record`); removeStranded(rec); if (!all) break; continue; }
+        const r = await clearAndPickUp(bot, { skills, world }, rec.item || 'raw_iron', rec.product || 'iron_ingot');
+        got += r.got; furnaces += r.furnace ? 1 : 0;
+        log(bot, `reclaim stranded furnace @${rec.x},${rec.y},${rec.z}: +${r.got} (${rec.product || '?'}/${rec.item || '?'}, expected ${rec.n ?? 'unknown'})${r.furnace ? ' + furnace picked up' : ''}`);
+        if (r.got > 0 || r.furnace) removeStranded(rec);
+        else break;   // 到了炉边却既没收到东西也没挖回炉 — 别在同一口上打转, 记录留给下次
+        if (!all) break;
+    }
+    return { got, furnaces };
 }
 export default async function smeltSafe(bot, ctx, item, num = 1) {
     const { skills, world } = ctx;
     const log = (b, m) => { ctx.log(b, m); progSS(m); };
     // ★T-0164: 上次滞留在炉里的料/锭先收回 (收回的锭可能直接满足本次需求)
-    if (await reclaimStranded(bot, { skills, world, log }).catch(() => false)) {
+    if (((await reclaimStranded(bot, { skills, world, log }).catch(() => null)) || {}).got > 0) {
         const prod = SMELT_PRODUCT[item];
         if (prod && (world.getInventoryCounts(bot)[prod] || 0) >= num) { log(bot, `reclaimed ${prod} covers this request (${num}) — done`); return true; }
     }

@@ -247,11 +247,14 @@ export const STRANDED_REACH = 64;
 const STRANDED_MAX_AGE_MS = 3 * 3600 * 1000;
 export function strandedFurnaceInReach(world) {
     try {
-        const s = JSON.parse(readFileSync(SUP('stranded_smelt.json'), 'utf8').replace(/^﻿/, ''));
-        if (!s || !Number.isFinite(s.x) || Date.now() - (s.at || 0) > STRANDED_MAX_AGE_MS) return null;
+        const j = JSON.parse(readFileSync(SUP('stranded_smelt.json'), 'utf8').replace(/^﻿/, ''));
         const p = world && world.pos;
         if (!p || !Number.isFinite(p.x)) return null;
-        return Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z) <= STRANDED_REACH ? s : null;
+        const d = (s) => Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z);
+        // 可多条 (旧单对象兼容): 取最近一口在 64 格内、未过期的
+        return (Array.isArray(j) ? j : [j])
+            .filter(s => s && Number.isFinite(s.x) && Date.now() - (s.at || 0) <= STRANDED_MAX_AGE_MS && d(s) <= STRANDED_REACH)
+            .sort((a, b) => d(a) - d(b))[0] || null;
     } catch (e) { return null; }
 }
 function ironArmorGoalDone(world, bot) {
