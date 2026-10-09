@@ -77,11 +77,14 @@ export const mobilityStuckActive = (s) => STUCK_MOBILITY_RE.test(s.mob || '')
     && !(s.wm && s.wm.time && !s.wm.time.isDay && s.wm.cover && s.wm.cover.coverReal && (!s.threat || (s.threat.actionable | 0) === 0));
 // ── MOBILITY-STALE (T-0124): the mobility classifier itself stopped updating. 2026-10-09 16:57Z–17:25Z a missing
 //    import threw ReferenceError every tick, swallowed by a bare catch → bot._mobility frozen for 1.5h, kernelDriver
-//    froze twice, and no detector noticed (every other detector READS mob and trusted the frozen value). Fires on
-//    vitals.mobAge > 30s (classifier runs every ~2s) or a raw '?' state. Only meaningful while vitals are fresh.
-export const MOBILITY_STALE_SEC = 30;
+//    froze twice, and no detector noticed (every other detector READS mob and trusted the frozen value).
+//    ★2026-10-10 修正 (T-0126 误报): mobility 不是 always-on 观察者 —— 自己在执行、被暂停、或别的模式占着执行槽
+//    (例: self_preservation 处理贴脸苦力怕) 时, ModeController 合法地不调它的 update, mobAge 涨到 1~2 分钟是正常的。
+//    所以分两档: 崩溃 = catch 路径写的 '?' 状态 (精确); 饿死 = 5 分钟都没被排程 (本身就不正常, T-0122 类)。
+export const MOBILITY_STALE_SEC = 300;
+export const mobilityCrashed = (s) => /^\?/.test(s.mobRaw || '');
 export const mobilityStaleActive = (s) => !!s.v && s.ageS < 60
-    && ((Number.isFinite(s.mobAge) && s.mobAge > MOBILITY_STALE_SEC) || /^\?/.test(s.mobRaw || ''));
+    && (mobilityCrashed(s) || (Number.isFinite(s.mobAge) && s.mobAge > MOBILITY_STALE_SEC));
 // ── BOOTSTRAP resource-floor deadlock (T-0012): 0 usable picks AND no pickaxe in the bag (a table does NOT clear it). ──
 export const bootstrapDeadlockActive = (s) => s.picks === 0 && !s.has(/_pickaxe$/);
 // ── FALSE-SHELTER (T-0040/T-0085): the SILENT night near-miss — sheltering intent but roof NOT sealed. ──

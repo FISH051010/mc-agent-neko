@@ -125,10 +125,12 @@ test('T-0012: BOOTSTRAP deadlock = no usable pick AND no pickaxe item; a craftin
 // ── T-0124: the mobility classifier silently stopped for 1.5h; no detector noticed ─────────────────────────
 import { mobilityStaleActive } from '../bots/_supervisor/botwatch-trackers.mjs';
 
-test('T-0124: MOBILITY-STALE fires when the classifier has not refreshed bot._mobility for >30s', () => {
+test('T-0124/T-0126: MOBILITY-STALE fires on a crashed classifier or >5min unscheduled, not on a 1-2min reflex hold', () => {
   const v = { x: 0, y: 64, z: 0 };
   assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 2, mobRaw: 'FREE' }), false);
-  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 300, mobRaw: 'ENTOMBED' }), true);   // live: frozen in ENTOMBED
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 600, mobRaw: 'ENTOMBED' }), true);   // starved >5min
+  // T-0126 false positive: self_preservation held the slot vs a creeper @2.7b → mobility legitimately unscheduled ~93s
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 93, mobRaw: 'ENTOMBED' }), false);
   assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: null, mobRaw: '?' }), true);         // live: '?' after restart
 });
 

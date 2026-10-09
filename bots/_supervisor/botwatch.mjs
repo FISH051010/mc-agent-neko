@@ -200,7 +200,7 @@ const D = [
         active: mobilityStaleActive,
         ticket: (s, dur) => ({
             type: 'framework', severity: 'critical', dedupKey: 'mobility-stale',
-            title: `mobility 状态机停摆 ${Math.round(dur / 1000)}s: mobAge=${s.mobAge}s mob=${s.mobRaw || '?'} (分类器未在更新)`.slice(0, 140),
+            title: (/^\?/.test(s.mobRaw || '') ? `mobility 分类器崩溃 ${Math.round(dur / 1000)}s: mob='?' (catch 路径, 查 CLASSIFY ERROR)` : `mobility 分类器 ${s.mobAge}s 未被排程 (>5min, 疑被反射长期占槽)`).slice(0, 140),
             detail: `vitals 新鲜(${s.ageS}s)但 bot._mobility 已 ${s.mobAge}s 未被分类器刷新 (正常 ~2s)。查 progress.txt '[mobility] ★CLASSIFY ERROR' 与 modes.js mobility update 的异常; 期间所有依赖 mob 的反射/检测/验收结论不可信。`.slice(0, 400),
             evidence: { pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, mobAge: s.mobAge, mob: s.mobRaw, skill: s.skill, progressTail: s.progTail },
         }),
