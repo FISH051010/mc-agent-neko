@@ -58,6 +58,26 @@ const _blk = (k) => {
     return false;
 };
 // ★C339 (T-0064): a LOG farther than arm-adjacent (2.2b) that we cannot see = reaching through leaf canopy. PURE.
+// ★C299/C309-A (T-0041) + C321 (T-0055) full-bag discard plan, PURE (moved verbatim from _ensureInvRoom).
+// Pure junk → discard ALL; whitelisted bulk over its KEEP-cap → trim the surplus. Never tools/armor/food/
+// wood/saplings/seeds/iron.
+export const CHOP_JUNK_RE = /terracotta$|^red_sand$|^sand$|^clay_ball$|^cactus$|^gravel$|^granite$|^diorite$|^andesite$|^tuff$|^ink_sac$|^raw_copper$|^copper_ingot$|^lapis_lazuli$|^pointed_dripstone$|^dripstone_block$|^raw_gold$|^amethyst_shard$|^calcite$/;
+export const CHOP_BULK_CAP = { cobblestone: 128, cobbled_deepslate: 128, stone: 64, coal: 64, charcoal: 64, sandstone: 48, red_sandstone: 48, sand: 48, red_sand: 48, gravel: 48, dirt: 64, netherrack: 64, torch: 64, sugar_cane: 16 };
+export function buildDiscardPlan(items) {
+    const _haveOf = (n) => items.reduce((s, i) => s + (i.name === n ? i.count : 0), 0);
+    const plan = [];
+    const planned = new Set();
+    for (const it of items) {                       // C299: pure junk → discard ALL
+        if (CHOP_JUNK_RE.test(it.name || '') && !planned.has(it.name)) { plan.push({ name: it.name, num: -1 }); planned.add(it.name); }
+    }
+    for (const name of Object.keys(CHOP_BULK_CAP)) {                     // C321: over-cap bulk (skip junk already dump-all)
+        if (planned.has(name)) continue;
+        const surplus = _haveOf(name) - CHOP_BULK_CAP[name];
+        if (surplus > 0) { plan.push({ name, num: surplus }); planned.add(name); }
+    }
+    return { plan, planned };
+}
+
 export function xrayTrunkSkip(dist, canSee) {
     return dist > 2.2 && !canSee;
 }
@@ -946,7 +966,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
     // Add the non-bootstrap bulk she actually carries. KEEP dirt (sapling planting / T-0030) + cobble
     // (filler/seal) + iron/coal + food/tools/wood/saplings — only toss what's useless for the
     // survival→iron→diamond path (copper has no tools, lapis is far-future enchant, dripstone is decor).
-    const _JUNK_RE = /terracotta$|^red_sand$|^sand$|^clay_ball$|^cactus$|^gravel$|^granite$|^diorite$|^andesite$|^tuff$|^ink_sac$|^raw_copper$|^copper_ingot$|^lapis_lazuli$|^pointed_dripstone$|^dripstone_block$|^raw_gold$|^amethyst_shard$|^calcite$/;
+    const _JUNK_RE = CHOP_JUNK_RE;   // module-level export (test/inventory_room.test.mjs)
     const _emptySlots = () => { try { return typeof bot.inventory.emptySlotCount === 'function' ? bot.inventory.emptySlotCount() : 9; } catch (e) { return 9; } };
     const _ensureInvRoom = async (want = 5) => {
         try {
@@ -966,18 +986,9 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // KEEP-cap: NEVER touches tools/armor/food/wood/sapling/seeds — only bulk building/fuel/dirt
             // the bot demonstrably over-hoards (T-0055 root: 377 cobble+157 coal+107 sandstone+60 dirt
             // filled the bag → chopped logs landed unstorable → total stuck 0 → trees mis-blacklisted).
-            const _BULK_CAP = { cobblestone: 128, cobbled_deepslate: 128, stone: 64, coal: 64, charcoal: 64, sandstone: 48, red_sandstone: 48, sand: 48, red_sand: 48, gravel: 48, dirt: 64, netherrack: 64, torch: 64, sugar_cane: 16 };
+            const _BULK_CAP = CHOP_BULK_CAP;
             if (_pitOK) {
-                const plan = [];
-                const planned = new Set();
-                for (const it of bot.inventory.items()) {                       // C299: pure junk → discard ALL
-                    if (_JUNK_RE.test(it.name || '') && !planned.has(it.name)) { plan.push({ name: it.name, num: -1 }); planned.add(it.name); }
-                }
-                for (const name of Object.keys(_BULK_CAP)) {                     // C321: over-cap bulk (skip junk already dump-all)
-                    if (planned.has(name)) continue;
-                    const surplus = _haveOf(name) - _BULK_CAP[name];
-                    if (surplus > 0) { plan.push({ name, num: surplus }); planned.add(name); }
-                }
+                const { plan, planned } = buildDiscardPlan(bot.inventory.items());
                 if (plan.length) {
                     const pre = [...planned].reduce((s, n) => s + _haveOf(n), 0);
                     try { await skills.smartDiscard(bot, plan); } catch (e) { _dbg(`★C299/C321 smartDiscard fail: ${e.message}`); }
