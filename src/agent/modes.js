@@ -4394,6 +4394,17 @@ const modes_list = [
                         // bot dug seq 126→129 on the SAME stone block, ok:false ms:5005 each, never
                         // broke free). Scale the cutoff to the block's real digTime×1.4 + 1.5s (cap 20s)
                         // and extend the body-dig lock to match so no other owner steals the slot mid-dig.
+                        // ★T-0142: equip the FASTEST tool for THIS block in THIS situation before timing the dig —
+                        // death #4 held a wooden pick (stone floating in water: 28150ms, > the 15s air supply)
+                        // while an iron pick (9400ms) sat in the pack; ensurePickForStone accepts ANY held pick.
+                        try {
+                            const fp0 = bot.entity.position.floored();
+                            const _inWater = !!bot.entity.isInWater || /water/.test((bot.blockAt(fp0.offset(0, 1, 0)) || {}).name || '') || /water/.test((bot.blockAt(fp0) || {}).name || '');
+                            const tools = bot.inventory.items().filter(it => /_pickaxe$|_shovel$|_axe$/.test(it.name || '')).map(it => ({ name: it.name, type: it.type }));
+                            if (bot.heldItem) tools.push({ name: bot.heldItem.name, type: bot.heldItem.type });
+                            const plan = skills.escapeDigPlan(fresh, tools, { inWater: _inWater, onGround: !!bot.entity.onGround });
+                            if (plan && (!bot.heldItem || bot.heldItem.name !== plan.tool)) { try { await skills.equip(bot, plan.tool); } catch (e) {} }
+                        } catch (e) {}
                         // ★T-0143: same clock bot.dig really uses (in water / airborne each ×5, enchant/effects).
                         const digMs = mobilityDigTimeoutMs(bot, fresh);
                         bot._bodyDigLockUntil = Date.now() + digMs + 2000;

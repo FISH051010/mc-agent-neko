@@ -6396,6 +6396,56 @@ export function breakWouldFlood(blockAt, pos) {
 }
 
 /**
+ * ★T-0142 (death #4 10-09 19:12:35 溺死 @y47 封闭水袋): ENTOMBED 挖出拿着木镐在水下悬浮挖石头 ——
+ * 真实耗时 28150ms (水下 ×5、不着地 ×5), 但超时按 digTime(held) 陆地值 1150ms 算成 ~3.1s →
+ * 每次 dig-timeout 中止 → 进度清零 → 永远挖不穿, 9s 溺死。包里有铁镐 (9400ms) 却没用。
+ * 人类: 水下脱困用最快的镐, 一口气挖完不松手。
+ * @param block prismarine block (有 digTime)
+ * @param tools [{name, type}] 候选工具 (背包镐 + 当前手持)
+ * @returns {{tool:string, digMs:number, budgetMs:number}|null}
+ */
+export function escapeDigPlan(block, tools, { inWater = false, onGround = true, capMs = 30000 } = {}) {
+    let best = null;
+    for (const t of tools || []) {
+        let ms;
+        try { ms = block.digTime(t.type, false, !!inWater, !onGround, [], {}); } catch (e) { continue; }
+        if (!Number.isFinite(ms)) continue;
+        if (!best || ms < best.digMs) best = { tool: t.name, digMs: ms };
+    }
+    if (!best) return null;
+    return { ...best, budgetMs: Math.min(capMs, Math.round(best.digMs * 1.4) + 1500) };
+}
+
+/**
+ * ★T-0141 (death #5 10-09 19:12:53: 裸装夜重生 → bunkerDown 徒手挖 grass/dirt 2 格 → 立刻封顶时
+ * 背包还没有土 → 'Can't seal' + 45s 冷却 → 敞顶坑里被僵尸村民打死)。挖出的方块先变成掉落物,
+ * 有 ~0.5s 拾取延迟才进背包; 原语挖完立即解析料 = 必然无料。人类: 挖完那一下土就在手里了 ——
+ * 这里等脚边掉落物被捡起 (只在附近确有掉落物时等, 最多 timeoutMs)。
+ * @returns {Promise<string|null>} 可用封顶料名
+ */
+export async function awaitCapMaterial(bot, { timeoutMs = 1500, radius = 2.5, pollMs = 100 } = {}) {
+    let name = resolveCapBlock(bot);
+    if (name) return name;
+    const dropNear = () => {
+        try {
+            const me = bot.entity.position;
+            return Object.values(bot.entities || {}).some(e => e && e !== bot.entity && e.position
+                && (e.name === 'item' || e.displayName === 'Item' || e.objectType === 'Item')
+                && e.position.distanceTo(me) <= radius);
+        } catch (e) { return false; }
+    };
+    if (!dropNear()) return null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+        await new Promise(r => setTimeout(r, pollMs));
+        name = resolveCapBlock(bot);
+        if (name) return name;
+        if (bot.interrupt_code || bot.health <= 0) break;
+    }
+    return null;
+}
+
+/**
  * 执行原语: 把 bot 头顶封上。按 planOverheadCap 走 支点/加深/放置, 放置一律 positioning:false
  * (绝不为了"够到"封顶格而寻路离开竖井)。每步前重读位置 + 重解析封顶料。
  * @param {object} opts maxDeepen: 最多再往下挖几格 (默认 2); useSupport: 允许垫支点 (默认 true)
@@ -6411,7 +6461,9 @@ export async function capOverhead(bot, opts = {}) {
         const feet = bot.entity.position.floored();
         const plan = planOverheadCap((p) => bot.blockAt(p), feet);
         if (plan.action === 'capped') return true;
-        const capName = resolveCapBlock(bot);
+        // ★T-0141: just-dug blocks are still item drops for ~0.5s — wait for pickup before declaring "no material".
+        const capName = (plan.action === 'place' || (plan.action === 'support' && deepened >= maxDeepen))
+            ? await awaitCapMaterial(bot) : resolveCapBlock(bot);
         const canDeepen = deepened < maxDeepen;
         if (plan.action === 'place') {
             if (!capName) { log(bot, `${tag}: no cap block (dirt/stone/full block) in inventory — cannot roof.`); return false; }
@@ -6429,7 +6481,7 @@ export async function capOverhead(bot, opts = {}) {
             deepened = maxDeepen;   // 挖不下去 — 不再尝试加深
         }
         if (plan.action === 'support' && useSupport && supportFails < 2) {
-            const supName = resolveCapBlock(bot);
+            const supName = resolveCapBlock(bot) || await awaitCapMaterial(bot);
             const have = supName ? bot.inventory.items().filter(it => it.name === supName).reduce((a, it) => a + it.count, 0) : 0;
             const total = bot.inventory.items().filter(it => isCapBlockName(it.name, bot.registry)).reduce((a, it) => a + it.count, 0);
             if (supName && total >= 2 && have >= 1) {

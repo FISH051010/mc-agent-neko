@@ -12,7 +12,23 @@
 
 ---
 
-## C363. ★SEALED 脱困重力感知: 不钻砂砾柱下、不在砂砾下往上挖, 优先不塌的墙（modes.js mobility + skills.gravityOverColumn 需重启,T-0132,worker-death,⏳待重启）
+## C365. ★水下脱困挖掘: 选最快的镐 + 按真实(水下×5/悬浮×5)挖掘时间给超时（modes.js guardedDig + skills.escapeDigPlan 需重启,T-0142,worker-death,⏳待重启）
+
+**证据**: death #4 10-09 19:12:35Z drowning @-2,46,3 coveredAbove=7, mineDiamonds 中挖进封闭水袋: 19:12:10 →SWIM, 19:12:24 →ENTOMBED, `dig retry (ENTOMBED) stone@-3,48,3: dig-timeout` ×4 约 3s 一次, held=wooden_pickaxe(包里有 iron_pickaxe), act_trace g=0(不着地)。
+**机理**: guardedDig 超时 = `digTime(held)` 陆地值×1.4+1.5s。prismarine 实测石头: 木镐 陆地 1150ms / 水下悬浮 28150ms; 铁镐 400 / 9400。超时 ~3.1s → 每次中止 → 挖掘进度清零 → 永远挖不穿; 选镐只要"手上是镐"就放行(木镐), 背包首把而非最快。氧气 15s 内木镐不可能挖穿, 铁镐来得及。
+**改动**: skills.js 纯函数 `escapeDigPlan(block, tools, {inWater,onGround})` 用 block.digTime(type,false,inWater,!onGround) 选最快工具并给 budget=min(30s, 1.4×+1.5s)。guardedDig 判 inWater(isInWater/脚头格水)+onGround, 换最快工具, 超时按真实值(上限 20s→30s)。
+**可证伪预测**: 水下 ENTOMBED/SEALED 挖出不再出现 ~3s 节奏的 `dig-timeout`; 挖出期间 held 为最快镐(iron>stone>wood)。仍溺死则看是不是氧气本身不够(需先上浮换气/头顶造气泡, 另修)。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0142: …'(prismarine-block 真实 digTime)。
+
+## C364. ★裸装夜重生封坑: 封顶前等刚挖的土被捡进背包（skills.awaitCapMaterial + capOverhead 需重启,T-0141/T-0043,worker-death,⏳待重启）
+
+**证据**: death #5 10-09 19:12:53Z slain by Zombie Villager d=0.3 @y66, 重生(19:12:36 @4.5,68,5.5 夜)后 17s: agent.log 'Broke grass_block … Dug down 1 blocks' / 'Broke dirt' → 19:12:41 `Can't seal here, no mobs — standing down`(45s 冷却) → 敞顶 2 深坑里被打死。第二次重生后 19:12:58 才 'sealed night hold'。
+**机理**: 重生后 bunkerDown 反射确实立即徒手下挖(反射存在), 但挖出的方块先是掉落物, 有 ~0.5s 拾取延迟; capOverhead 挖完立刻解析料 → 裸装背包里没土 → 无料直接 false → 'Can't seal' → 无怪时 45s 冷却 → 怪来时坑是敞的。
+**改动**: skills.js `awaitCapMaterial(bot)`: 无料但 2.5b 内有掉落物时每 100ms 重查背包, 最多 1.5s; 附近无掉落物立即返回(不拖延)。capOverhead 在 place / 加深预算用尽的 support 分支先等料。
+**可证伪预测**: 裸装夜重生后 bunkerDown 在 <5s 内封顶('sealed night hold'), 不再出现重生后紧跟 'Can't seal here, no mobs'。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0141: …'。
+
+## C363. ★SEALED 脱困重力感知: 不钻砂砾柱下、不在砂砾下往上挖, 优先不塌的墙（modes.js mobility + skills.gravityOverColumn 需重启,T-0132,worker-death,🟡已上线 02:44:32）
 
 **证据**: death #3 10-09 18:40:50Z `suffocation` @100,66,-39 underground coveredAbove=6 tod=5099(白天) action=mode:mobility hp=1。18:36→18:40 mobility SEALED↔FREE 每 6-10s 切换, 横向掘进 17 格(95,66,-56→100,66,-39), vitals 背包 gravel 8→16→25→35→37 = 在砂砾层里挖。
 **机理**: C341 SEALED 挖出只做了防水(C347), 不看重力方块: 挖开砂砾墙 → 上方整列塌下回填缺口(→又判 SEALED) → bot 踏进缺口或执行向上挖时, 落下的砂砾进头格 → 窒息; hp=1(食物开关关闭, 回不了血)一下即死。人类: 挖砂砾站旁边挖到不掉为止, 不钻砂砾柱下; 能换方向就换不塌的墙。

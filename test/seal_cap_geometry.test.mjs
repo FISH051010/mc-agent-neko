@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -144,4 +144,39 @@ test('T-0132: a breach column under gravel keeps cascading — never step in / n
     assert.equal(gravityOverColumn(base, 1, 66, 0), false);
     // gravel far above (beyond the 3-cell span) doesn't block
     assert.equal(gravityOverColumn(gravelAt([new Vec3(1, 72, 0)]), 1, 66, 0), false);
+});
+
+test('T-0141: cap material from a block dug a moment ago — wait for the drop to be picked up, not "no material" (death #5)', async () => {
+    const items = [];
+    const bot = {
+        registry,
+        entity: { position: new Vec3(4.5, 66, 5.5) },
+        entities: { 7: { name: 'item', position: new Vec3(4.5, 66.2, 5.5) } },
+        inventory: { items: () => items.map(([name, count]) => ({ name, count })) },
+    };
+    setTimeout(() => items.push(['dirt', 2]), 300);   // vanilla pickup delay ~10 ticks
+    const t0 = Date.now();
+    assert.equal(await awaitCapMaterial(bot, { timeoutMs: 1500 }), 'dirt');
+    assert.ok(Date.now() - t0 < 1200);
+    // nothing on the ground → answer immediately (don't stall a swarm-pressed bunker for nothing)
+    const bare = { registry, entity: { position: new Vec3(0, 66, 0) }, entities: {}, inventory: { items: () => [] } };
+    const t1 = Date.now();
+    assert.equal(await awaitCapMaterial(bare, { timeoutMs: 1500 }), null);
+    assert.ok(Date.now() - t1 < 50);
+});
+
+test('T-0142: underwater escape dig picks the fastest pick and budgets the REAL (wet, floating) dig time (death #4 drown)', async () => {
+    const { default: prismarineBlock } = await import('prismarine-block');
+    const Block = prismarineBlock(registry);
+    const stone = Block.fromStateId(registry.blocksByName.stone.defaultState, 0);
+    const tools = ['wooden_pickaxe', 'iron_pickaxe', 'stone_pickaxe'].map(n => ({ name: n, type: registry.itemsByName[n].id }));
+    const wet = escapeDigPlan(stone, tools, { inWater: true, onGround: false });
+    assert.equal(wet.tool, 'iron_pickaxe');
+    assert.ok(wet.digMs > 9000, `floating underwater stone is slow: ${wet.digMs}`);
+    assert.ok(wet.budgetMs > wet.digMs, 'timeout must exceed the real dig time or every attempt aborts and resets progress');
+    // the old land-only estimate (wooden ~1150ms → ~3.1s budget) would abort a 28s wet dig
+    const woodOnly = escapeDigPlan(stone, tools.slice(0, 1), { inWater: true, onGround: false });
+    assert.ok(woodOnly.digMs > 25000);
+    const land = escapeDigPlan(stone, tools, { inWater: false, onGround: true });
+    assert.ok(land.digMs < 1000);
 });
