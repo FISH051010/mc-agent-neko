@@ -408,12 +408,35 @@ export function createMindServer(host_public = false, port = 8080) {
     //   http.Server 的 EADDRINUSE 是 'error' 事件；不监听它 = Unhandled 'error' event
     //   → 进程当场崩，用户看到的是 `at Server.setupListenHandle (node:net:1937:16)` 这种
     //   完全无法自助的东西。最常见的触发场景就是「用户把启动.bat 双击了两次」。
+    // ★2026-10-09 (开发机实测: 控制面板启动失败: listen EACCES ::1:8765, watchdog 每分钟重拉、
+    //   bot 永远进不了世界): Windows 上 Hyper-V / WSL / Docker 的 winnat 会按 100 个一段动态
+    //   「保留」端口(`netsh int ipv4 show excludedportrange protocol=tcp` 可见, 本机当时
+    //   8741-8840 被占), 每次开机位置还会变。被保留的端口任何程序都 listen 不了, 报 EACCES ——
+    //   这跟「已被占用」不是一回事: 换个端口就能起来, 不该整个进程退出。
+    //   所以 EACCES 时按候选表顺次换端口(都避开常见保留段), 全不行才退回系统分配(端口 0)。
+    //   实际端口从 server.address() 读, mindcraft.init 会把它传给 agent 子进程和面板地址。
+    //   EADDRINUSE 仍然直接退出: 最常见原因是程序被双开, 换端口只会造出两份在跑的 bot。
+    const fallbackPorts = [...new Set([port, 18765, 28765, 38765, 0].map(Number))];
+    let attempt = 0;
+    server.on('listening', () => {
+        const actual = server.address()?.port;
+        if (actual !== Number(port)) {
+            console.warn(`⚠️ 控制面板端口 ${port} 被系统保留(EACCES), 已改用 ${actual}。`);
+        }
+        console.log(`MindServer running on port ${actual} on host ${host}`);
+    });
     server.on('error', (err) => {
+        if (err && err.code === 'EACCES' && attempt + 1 < fallbackPorts.length) {
+            console.warn(`控制面板端口 ${fallbackPorts[attempt]} 无权限监听(多半被 Windows 动态保留), 尝试 ${fallbackPorts[attempt + 1] || '系统分配端口'}…`);
+            attempt++;
+            server.listen(fallbackPorts[attempt], host);
+            return;
+        }
         if (err && err.code === 'EADDRINUSE') {
             const line = '='.repeat(70);
             console.error(`
 ${line}
-  控制面板端口 ${port} 已经被占用，程序无法启动。
+  控制面板端口 ${fallbackPorts[attempt]} 已经被占用，程序无法启动。
 
   最常见的原因：本程序已经在运行了（黑窗口开了两个？任务栏找找看）。
   同一个端口只能有一个程序用，关掉多余的那个再试。
@@ -429,9 +452,7 @@ ${line}
         globalThis.process.exit(1);
     });
 
-    server.listen(port, host, () => {
-        console.log(`MindServer running on port ${port} on host ${host}`);
-    });
+    server.listen(fallbackPorts[0], host);
 
     return server;
 }

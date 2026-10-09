@@ -57,6 +57,22 @@ node bots/_supervisor/ticket.mjs update T-0007 --status verifying   # 已部署,
 node bots/_supervisor/ticket.mjs update T-0007 --status closed --note "实机验证通过:..."
 ```
 
+## ★回归测试钉死（2026-10-09 立为原则）
+
+**每修一个 bug，必须同时在 `test/` 里加一条能把它钉死的测试**，否则不许转 `fixed`。理由：这套系统里同一个
+bug 反复回来是常态（T-0010/13/16 三连复发、FF-0713 合并把旧修复冲掉、上游同步时一行冲突就能悄悄撤销某个防护），
+"实机观察没复发"只能证明当下没触发，挡不住下一次重构或合并把它改回去。
+
+- **先红后绿**：测试要能在**修复前的代码上失败**、修复后通过。写完先 `git stash` 掉修复跑一次确认它真的红过，
+  再恢复（stash 用 `git stash push -m <唯一tag>` + 按 SHA apply，别用裸 pop，见 worktree 规则）。不会红的测试等于没钉。
+- **钉机理不钉表象**：断言要对准根因那条判据（例："裸装新角色 + 旧 death_log → 必须归档"、"food=0 低血不得产出 HOLD"），
+  不是"某函数被调用过"。纯函数/判据优先抽出来测；涉及 bot 状态的用现有 `*.sim.test.mjs` 的假 bot 套路。
+- **命名带单号**：`test/<主题>.test.mjs` 里 `test('T-0123: <一句话机理>', …)`，ticket `--note` 写上测试路径，
+  方便以后 grep 单号就能找到"这个坑被谁钉住"。
+- **跑法**：`npm test`（= `node --test "test/**/*.test.mjs"`）。改码后、部署前必须全绿；合并上游/同步分支后也必须全绿。
+- **边界**：mock/单测 ≠ 游戏内验收（`closed` 仍要实机验证）。测试的职责是**防复发**，不是证明修好了。
+  确实无法离线复现的（纯物理时序类），在 ticket 里写明"无法单测的原因 + 用什么实机信号兜底"，不能默默跳过。
+
 ## ★Autonomous 工作契约（agent 不空转 / 观察中不阻塞接单）
 
 **核心：每个 agent 同一时刻只"真正在改" ≤1 张单（`in_progress`）；首次修完转"观察中"就立刻去接下一张，永不空转。**
@@ -101,7 +117,7 @@ loop:
 
 只有一个 bot、一个世界，所以**部署/重启必须串行**，一次一个补丁：
 
-1. `node --check` 改动的文件（语法）
+1. `node --check` 改动的文件（语法）+ `npm test` 全绿（含本单新增的回归测试，见上「回归测试钉死」）
 2. 判断层级：
    - `bots/_supervisor/skills/<子skill>.js`（chopWood/feedUp 等）→ **热加载**，下次调用即生效，无需重启
    - `src/agent/**`（① 层 modes/skills/framework）+ **顶层 sticky `missionNether.js`** → **必须重启 main.js**

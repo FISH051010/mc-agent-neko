@@ -72,6 +72,8 @@ async function main() {
             console.log('\nTo take work:  node bots/_supervisor/ticket.mjs claim <id> --as <your-unique-tag>');
             console.log('Pick a UNIQUE tag (claude-A / claude-B / user) so claims don\'t collide across sessions.');
             console.log('Read docs/parallel-tickets.md for the full pipeline + deploy gate rules.');
+            console.log('★RULE: every bug fix ships with a regression test in test/ (fails before the fix, passes after; name it "T-xxxx: ...").');
+            console.log('        Run `npm test` before deploy. No pinning test = not `fixed`. See docs/parallel-tickets.md「回归测试钉死」.');
             return;
         }
         if (cmd === 'list') {

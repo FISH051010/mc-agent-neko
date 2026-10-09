@@ -15,16 +15,22 @@ export async function init(host_public=false, port=8080, auto_open_ui=true) {
         return;
     }
     mindserver = createMindServer(host_public, port);
-    mindserver_port = port;
     connected = true;
+    // 实际端口可能因 EACCES 回退而不同于 settings (见 mindserver.js), 等 listen 成功后以它为准:
+    // agent 子进程靠这个端口回连 mindserver, 填错就是 bot 永远连不上面板。
+    if (!mindserver.listening) {
+        await new Promise((resolve) => mindserver.once('listening', resolve));
+    }
+    mindserver_port = mindserver.address()?.port || port;
     if (auto_open_ui) {
         setTimeout(() => {
             // check if browser listener is already open
             if (numStateListeners() === 0) {
-                open('http://localhost:'+port);
+                open('http://localhost:'+mindserver_port);
             }
         }, 3000);
     }
+    return mindserver_port;
 }
 
 export async function createAgent(settings) {

@@ -179,7 +179,8 @@ if (args.doctor) {
 }
 
 // ── 启动 ─────────────────────────────────────────────────────────────────────
-Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui);
+// await: 端口可能因 Windows 保留段回退到别的值, 面板地址和 agent 回连都要用实际端口。
+settings.mindserver_port = await Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui);
 
 const panelUrl = `http://localhost:${settings.mindserver_port}`;
 
