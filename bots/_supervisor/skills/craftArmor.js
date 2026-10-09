@@ -17,6 +17,10 @@
 // Red lines honored: interrupt+death checked EVERY pass; no module-level state (loop
 // locals only); no infinite retry (stall>=2 on the same piece → stop).
 // Invoked via: {"skill":"craftArmor"}  ctx = { skills, world, mc, Vec3, log }
+// ★T-0151 防护优先序 (胸 > 腿 > 盔 > 靴), 与 framework/armor_gate.PROTECTION_ORDER 同序。
+export const PROTECTION_PIECES = (tier) => tier === 'diamond'
+    ? [['diamond_chestplate', 8], ['diamond_leggings', 7], ['diamond_helmet', 5], ['diamond_boots', 4]]
+    : [['iron_chestplate', 8], ['iron_leggings', 7], ['iron_helmet', 5], ['iron_boots', 4]];
 export default async function craftArmor(bot, ctx, opts = {}) {
     const { skills, world, log } = ctx;
     const maxMs = (opts && opts.maxMs) || 180000;
@@ -76,8 +80,12 @@ export default async function craftArmor(bot, ctx, opts = {}) {
     for (let pass = 0; pass < 4; pass++) {
         if (bot.interrupt_code || bot.health <= 0 || Date.now() - t0 > maxMs) break;
 
-        const target = PIECES.find(([n]) => !havePiece(n));
-        if (!target) break; // full set held/worn — done
+        // ★T-0151 先甲后钻 (监工拍板): order='protection' → 胸>腿>盔>靴, 挑造得起的最高防护件 (能造几件造几件);
+        //   都造不起 → 停 (诚实零进度)。默认仍是 cheapest-first (稀缺料先换到"有"甲)。
+        const target = (opts && opts.order === 'protection')
+            ? (PROTECTION_PIECES(TIER).find(([n, c]) => !havePiece(n) && c <= _matBudget()) || null)
+            : PIECES.find(([n]) => !havePiece(n));
+        if (!target) break; // full set held/worn (or nothing affordable in protection order) — done
         const [piece, cost] = target;
 
         // ★材料保留额执行点: 这件甲会吃掉镐的保留材料 → 停 (钻甲留 9 钻给 3 钻镐; 铁甲留 3 铁给镐)。
