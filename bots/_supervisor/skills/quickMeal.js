@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { HUNTABLE_RE } from '../../../src/agent/framework/food_floor.js';
+import { HUNTABLE_RE, skyOpenAt } from '../../../src/agent/framework/food_floor.js';
 const { goals, Movements } = mfp;
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
 
@@ -86,6 +86,7 @@ async function hostileDecision(bot) {
 
 async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
+    let legs = 0, legsFailed = 0, moved = 0, firstErr = null;
     setSafeMovements(bot);
     for (const wp0 of scoutWaypoints(origin, scoutRadius, scoutToward)) {
         if (Date.now() - t0 > scoutMs) break;
@@ -102,12 +103,22 @@ async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutT
         const found = pickHuntTarget(bot, radius, maxDy);
         if (found) return found;
         const legMs = Math.min(20000, scoutMs - (Date.now() - t0));
+        // ★T-0189 (23:21:15-17Z 实录: "bounded scout" 0.15-0.4s 就 "found nothing"; 上线以来只成功过一次): 旧 GoalNear 把目标高度钉在
+        //   起点 y — 24-96 格外地形高低不一, 目标点不可达, pathfinder 立即拒绝, 33 个航点 0.2s 全败。改 GoalNearXZ (不限高度);
+        //   单段不可达就换下一个点, 记首个失败原因, 全不可达时如实写进日志。
+        const p0 = bot.entity.position, x0 = p0.x, z0 = p0.z;
         try {
-            await race(bot.pathfinder.goto(new goals.GoalNear(Math.round(wp.x), Math.round(origin.y), Math.round(wp.z), 3)), legMs);
-        } catch (e) {}
+            const r = await race(bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(wp.x), Math.round(wp.z), 3)).then(() => 'ok', (e) => e), legMs);
+            if (r && r !== 'ok') { legsFailed++; if (!firstErr) firstErr = String((r && r.message) || r).slice(0, 80); }
+        } catch (e) { legsFailed++; if (!firstErr) firstErr = String(e && e.message || e).slice(0, 80); }
         try { bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+        const q = bot.entity.position;
+        moved += Math.hypot(q.x - x0, q.z - z0);
+        legs++;
     }
-    return pickHuntTarget(bot, radius, maxDy);
+    const last = pickHuntTarget(bot, radius, maxDy);
+    if (!last) prog(`scout: ${legs} legs, ${legsFailed} unreachable, moved ${moved.toFixed(0)}b in ${((Date.now() - t0) / 1000).toFixed(1)}s${firstErr ? ` (first fail: ${firstErr})` : ''}`);
+    return last;
 }
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -139,7 +150,8 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     const radius = opts.radius ?? 48, maxDy = opts.maxDy ?? 6, maxMs = opts.maxMs ?? 60000;
     // ⓪ 饿着在矿里 → 先上浮 (监工拍板: 在矿里的要先回地面觅食); 单独限时, 不吃猎杀的 60s 预算
     // ★监工加急#3: 阈值与 depthBand 同口径 (surface = y≥62); 旧 y<60 在 y60 跳过上浮 → 直接失败 3 连败冷却
-    if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 62) {
+    // ★T-0189 (23:21:15Z 实录: y61 本在地表 mob=FREE, "surfaced y 61→61" 空上浮): 头顶见天 (skyLight≥14) 就不上浮。
+    if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 62 && skyOpenAt(bot) !== true) {
         const y0 = Math.round(bot.entity.position.y);
         prog(`starving underground y=${y0} food=${bot.food} — surfaceUp first (≤${Math.round((opts.surfaceMaxMs ?? 120000) / 1000)}s)`);
         await race(skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
@@ -185,7 +197,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             await approach();
             // ★T-0167 (21:03:01 实录: y56 封闭地下, 猪在 44 格外地面 → 安全寻路 0s 无路, "approached → 44.4b" 照样出手,
             //   3 连败 FOOD_FLOOR 冷却 5min)。接近没缩短距离且人在地下 → 先上浮 (≤60s) 再接近一次。
-            if (d0 - target.position.distanceTo(bot.entity.position) < 2 && bot.entity.position.y < 62 && !opts._surfaced) {
+            if (d0 - target.position.distanceTo(bot.entity.position) < 2 && bot.entity.position.y < 62 && skyOpenAt(bot) !== true && !opts._surfaced) {
                 const y0 = Math.round(bot.entity.position.y);
                 prog(`approach made no progress (${d0.toFixed(1)}b) underground y=${y0} — surfaceUp first (≤60s), then retry`);
                 await race(skills.customSkill(bot, 'surfaceUp', 63), Math.min(left(), 60000));

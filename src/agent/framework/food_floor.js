@@ -49,6 +49,16 @@ function horizDist(animal, botPos) {
 export const FOOD_RELEASE = 18;
 export const STOCK_COOKED = 4;
 export const SESSION_KILL_CAP = 6;
+/** ★T-0189 头顶见天: 头部方块 skyLight≥14 → true; <14 → false; 无光照数据 → null (调用方回落 y 判据)。 */
+export function skyOpenAt(bot) {
+    try {
+        const p = bot.entity.position;
+        const b = bot.blockAt(p.offset ? p.offset(0, 1, 0) : { x: p.x, y: p.y + 1, z: p.z });
+        if (!b || !Number.isFinite(b.skyLight)) return null;
+        return b.skyLight >= 14;
+    } catch (e) { return null; }
+}
+
 export const DESCENT_MIN_HP = 10;
 // ★T-0188 (监工: 07:15 hp=11 food=11 零食物不回血, FOOD_FLOOR 无状态触发 hp<10 与 arbiter eatFloor hp≤12 口径不一 → hp 10-12 卡死):
 //   "回不了血" 统一判据 hp≤REGEN_HP_MAX 且 food<FOOD_RELEASE — FOOD_FLOOR 会话触发 / arbiter.eatFloor / pickAutoEatFood 应急档三处共用。
@@ -83,7 +93,7 @@ export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, now 
 }
 
 /** 决策判据 (纯函数)。返回 null 或 proposal 片段。latch 缺省时退回旧口径 (food≤6 且零可吃)。 */
-export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand, latch, hp }) {
+export function foodFloorProposal({ foodInstincts, overworld, phase, food, actionable, counts, animal, botY, botPos, depthBand, latch, hp, skyOpen }) {
     if (foodInstincts || !overworld || phase !== 'day' || (actionable || 0) > 0) return null;
     if (latch) {
         if (!latch.active || (latch.kills || 0) >= SESSION_KILL_CAP) return null;
@@ -97,7 +107,10 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
     const starving = starvingNoFood({ food, counts });
     // ★T-0156 (监工加急 10-10): 19:56:59 y18 food 4-6 (未到 starving≤3) → 只带 scout 不带 surfaceFirst →
     //   矿道里侦察 0.4s 就"found nothing" ×3 → 冷却。地下要侦察就必须先上浮; 地下判据也认 botY<62 (不只 depthBand)。
-    const underground = (Number.isFinite(botY) && botY < 62) || !!(depthBand && depthBand !== 'surface');
+    // ★T-0189 (23:21:15Z 实录: y61 本在地表 mob=FREE → 被判地下 → surfaceUp 空转): 头顶见天 (skyOpen=true) 一律不算地下;
+    //   确知不见天 (false) 算地下; 无光照数据 (null/undefined) 才回落 y/depthBand 判据。
+    const underground = skyOpen === true ? false
+        : (skyOpen === false || (Number.isFinite(botY) && botY < 62) || !!(depthBand && depthBand !== 'surface'));
     // ★监工加急 #2 + 拍板: 侦察只在 food≤6 时做 (锁存期间 food 已回 7-17 且附近没动物 → 不提, 不为存粮侦察)。
     // ★T-0188 补: "回不了血" (hp≤12 且 food<18) 且包里零可吃 也要侦察/先上浮 — 这是为回血不是存粮 (07:15 hp11 food11 地下零动物 → 不提 → 带 11 血下矿)。
     const huntNeed = food <= FOOD_FLOOR || (cannotRegen(hp, food) && countMatching(counts, EDIBLE_RE) === 0);

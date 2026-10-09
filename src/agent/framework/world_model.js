@@ -24,7 +24,7 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt } from './food_floor.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
@@ -788,7 +788,7 @@ export function proposeTasks(world, bot) {
         }
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
             actionable: threat.actionable, counts: invCounts(bot), animal: _animal,
-            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch, hp: vitals.hp });   // ★T-0188 回不了血也侦察
+            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch, hp: vitals.hp, skyOpen: skyOpenAt(bot) });   // ★T-0188 回不了血也侦察; ★T-0189 头顶见天不算地下
         if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
     }
 
