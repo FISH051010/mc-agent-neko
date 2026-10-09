@@ -23,6 +23,7 @@ import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
+import { toolUpkeepPlan } from './kit_gate.js';
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -168,6 +169,11 @@ const BANK_GEAR_ENABLED = false;
     }
 })();
 
+function invCounts(bot) {
+    const c = {};
+    try { for (const it of bot.inventory.items()) c[it.name] = (c[it.name] || 0) + it.count; } catch (e) {}
+    return c;
+}
 function invCount(bot, re) {
     try { return bot.inventory.items().filter(i => re.test(i.name || '')).reduce((s, i) => s + i.count, 0); } catch (e) { return 0; }
 }
@@ -1262,22 +1268,11 @@ export function proposeTasks(world, bot) {
     //     not proposed (BOOTSTRAP_KIT's wood buffer + surface foraging own restocking); crafting
     //     failure → craftChain returns false → normal 3x/5min cooldown, no livelock.
     if (overworld && kit.picks >= 1 && !kit.sufficientForUnderground && !threat.actionable) {
-        const cobbleCt = invCount(bot, /^(cobblestone|cobbled_deepslate)$/);
-        const sticksCt = invCount(bot, /^stick$/);
         const tableCarried = invCount(bot, /^crafting_table$/) >= 1;
-        const wants = [];
-        if (!tableCarried) wants.push(['crafting_table', 1]);
-        if (sticksCt < 4) wants.push(['stick', 1]);                       // 1 craft = 4 sticks
-        const durableStonePlus = /stone|iron|diamond|netherite/.test(kit.pickTier || '');
-        if (!durableStonePlus || kit.picks < 2) wants.push(['stone_pickaxe', 1]);
-        const needsCobble = wants.some(([n]) => n === 'stone_pickaxe');
-        // Affordability must match the ACTUAL craft cost or the proposal burns an honest
-        // 3x/5min cooldown on an unaffordable craft (live 2026-07-02 01:48: woodUnits>=2
-        // passed with 2 planks while the wanted crafting_table alone costs 4 — craftChain
-        // rightly failed 3x). Sum the plank-equivalents of what's actually wanted:
-        // table=4 planks, stick craft=2 planks, pick handle covered by the stick want.
-        const woodNeed = wants.reduce((s, [n]) => s + (n === 'crafting_table' ? 4 : n === 'stick' ? 2 : 0), 0);
-        const materialsOk = (!needsCobble || cobbleCt >= 3) && woodUnits(bot) >= Math.max(2, woodNeed);
+        // ★T-0060: wants/affordability live in kit_gate.toolUpkeepPlan (shared with isGoalDone). It drops an
+        // unaffordable stone pick when the wood-only remainder (table/sticks) alone restores the descent gate.
+        const { wants } = toolUpkeepPlan({ picks: kit.picks, pickTier: kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) });
+        const materialsOk = wants.length > 0;
         if (wants.length && materialsOk) {
             push({ kind: PROPOSAL_KIND.TOOL_UPKEEP, priority: 47, skill: 'craftChain',
                    args: [wants],
@@ -1441,8 +1436,9 @@ export function isGoalDone(kind, world, bot) {
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
         case PROPOSAL_KIND.TOOL_UPKEEP:
+            // ★T-0060: done = gate restored OR nothing affordable left to craft (same口径 as the proposal).
             return !!(w.kit && w.kit.sufficientForUnderground)
-                || invCount(bot, /^(cobblestone|cobbled_deepslate)$/) < 3 || woodUnits(bot) < 2;
+                || toolUpkeepPlan({ picks: (w.kit && w.kit.picks) || 0, pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) }).wants.length === 0;
         // ★P0-1 REPLENISH_KIT done = 补给基线的迟滞释放: 总镐数>=2 且 planksEq>=8。触发是 <2/<4
         // (proposeTasks 1c) — 触发↔释放刻意不对称(planks <4 触发但 >=8 才放手), 与 GET_FOOD 的
         // FOOD_STOCK buffer 同思路: 补到有富余再走, 防 4↔5 边界抖动的提案轮转。
