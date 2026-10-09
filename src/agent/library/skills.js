@@ -2593,9 +2593,10 @@ export async function breakBlockAt(bot, x, y, z) {
         // Add timeout to prevent infinite hanging
         const digTimeout = 60000; // 60 seconds max
         const digPromise = gazeHold(bot, block, bot.dig(block, true));
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Dig timeout')), digTimeout)
-        );
+        let _digTo = null;   // cleared in finally — a successful dig must not leave a 60s timer pending
+        const timeoutPromise = new Promise((_, reject) => {
+            _digTo = setTimeout(() => reject(new Error('Dig timeout')), digTimeout);
+        });
         // ★Interrupt-aware: poll bot.interrupt_code so a supervisor cancel / mode preempt aborts
         // the dig within ~200ms instead of waiting out the 60s timeout. Without this, an in-flight
         // bot.dig() ignored cancel for up to 60s, and a chained mining loop compounded that to the
@@ -2620,6 +2621,7 @@ export async function breakBlockAt(bot, x, y, z) {
             throw error;  // Re-throw other errors
         } finally {
             if (_digIv) clearInterval(_digIv);
+            if (_digTo) clearTimeout(_digTo);
         }
     }
     else {
