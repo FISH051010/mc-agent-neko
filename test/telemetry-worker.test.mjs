@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const telemetryUrl = pathToFileURL(path.resolve('src/utils/telemetry.js')).href;
+// 锚定仓库根而非 cwd: npm test 在临时目录里跑 (test/run.mjs)。
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const telemetryUrl = pathToFileURL(path.join(repoRoot, 'src', 'utils', 'telemetry.js')).href;
 
 async function inTempDir (fn) {
   const dir = await fs.mkdtemp(path.resolve('.tmp-telemetry-'));

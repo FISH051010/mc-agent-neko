@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Vec3 from 'vec3';
 import { findBlocksOffThread } from '../src/utils/block_scan.js';
 
@@ -188,7 +189,9 @@ test('superseded bot releases the shared scan queue', async () => {
 });
 
 test('source contains no literal high-radius synchronous findBlocks calls', () => {
-  const roots = ['src', path.join('bots', '_supervisor', 'skills')];
+  // 锚定仓库根而非 cwd: npm test 在临时目录里跑 (test/run.mjs)。
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const roots = [path.join(repoRoot, 'src'), path.join(repoRoot, 'bots', '_supervisor', 'skills')];
   const offenders = [];
   const visit = (entry) => {
     for (const dirent of fs.readdirSync(entry, { withFileTypes: true })) {
