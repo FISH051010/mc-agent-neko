@@ -691,7 +691,11 @@ export default async function mineDown(bot, ctx, opts = {}) {
         // reflexes (death #10: kept chipping stone underwater while the rescue dig couldn't get the slot).
         try {
             const _hb = bot.blockAt(cur.floored().offset(0, 1, 0));
-            if (skills.drowningPriority && skills.drowningPriority({ headInWater: /water/.test((_hb && _hb.name) || ''), oxygen: bot.oxygenLevel })) {
+            const _fb = bot.blockAt(cur.floored());
+            // ★T-0174 hotfix (23:03 live: dry land y68 hp20 but bot.oxygenLevel stale at -1..2 after a drowning death →
+            //   mineDown aborted 3× → GO_UNDERGROUND cooldown). O2 only counts while the body is actually in water.
+            const _headW = /water/.test((_hb && _hb.name) || ''), _feetW = /water/.test((_fb && _fb.name) || '');
+            if (_headW || (_feetW && Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel < 12)) {
                 rememberAbortedHeading(bot, sx, sz);
                 abort = `head in water / O2=${bot.oxygenLevel} — stop mining, yield to swim/escape (T-0174)`;
                 break;
