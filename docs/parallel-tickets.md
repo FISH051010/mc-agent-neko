@@ -157,6 +157,7 @@ loop:
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 | ~~fc52c61 (overseer)~~ ✅ main 17:36:40Z + botwatch 01:38 上线 | src/agent/modes.js + src/websocket/ws_server.js + botwatch | main.js **和** botwatch | ⚠**有行为变化**：MOBILITY-STALE 检测器(mobility 分类器停更>30s 报警, T-0124 后续)。只加时间戳/字段/检测器, 不改决策 |
 | ~~1845609 (overseer)~~ ✅ 02:38 重启上线 | src/websocket/ws_server.js | main.js | vitals 从未分类显示 NONE(非 '?')，消除重启后 MOBILITY-STALE 误报；只改观测字段 |
+| ff15388 (overseer) | src/process/init_agent.js + 新 exit_trace.js | main.js | agent 进程退出留痕 bots/_supervisor/exit_log.jsonl；纯观测，无行为变化 |
 
 **部署锁（2026-10-10 起为强制机制）**：同一时刻只允许一个 agent 重启 stack / re-arm sticky。
 实录撞车：worker-death 已 comment "deploying now"，worker-stuck 的扫描漏看，又杀了刚拉起 12 秒的 main.js。口头约定靠每人各自扫评论，必漏。现在：
