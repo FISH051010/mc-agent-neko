@@ -115,6 +115,7 @@ let EYE_TARGET_DEFAULT = 14; // eyes of ender to stock: 12 frames + throw-losses
 let BLAZE_ROD_TARGET = 7;  // 7 rods = 14 blaze powder = 14 eyes (matches EYE_TARGET_DEFAULT)
 // ── ★T-0092 depth bands (区分采铁 vs 采钻 两个深度目标, 别让 mineDown 用默认 targetY=45 浅带). ──
 const IRON_TARGET_Y = 14;  // iron/coal band: y8..y16 sweet spot for iron (1.21 wide-distribution)
+const UNDERGROUND_IRON_Y_MAX = 56;   // ★T-0160 铁分布上沿 (1.18+ 三角分布 -24..56 主峰 y16); 这层以下横挖就有铁
 const DIAMOND_TARGET_Y = -54; // diamond band: y-54..-59 peak; bedrock at y-64 (1.21) — stay above it
 // ── ★P0-1 REPLENISH_KIT 补给不变量 (review-2026-07-04-distance.md 结构洞#1: 木→棍/台→镐链没有
 //    一等 kind, 只作为前置 gate 散落在消费技能里; buffer 地下归零 → 消费者集体 yield →
@@ -1329,6 +1330,17 @@ export function proposeTasks(world, bot) {
                args: [{ targetY: IRON_TARGET_Y }],
                rationale: `kitted + gate open — descend to the iron band (y${IRON_TARGET_Y}) and mine iron (have ${ironForArmor(bot)}/${IRON_BUFFER}), stay committed underground`,
                hints: { targetY: IRON_TARGET_Y, tier: tier.level, iron: ironForArmor(bot) } });
+        // ★T-0160 (20:23:02Z 实录): y40 mineDown 连 3 次 'fluid near stair cell'/relocate failed → GO_UNDERGROUND 冷却 5min,
+        //   bot 已在地下 (石镐+3 木镐+11 煤) 却 FREE_PLAY 空等。人类: 下不去就在这层横挖找铁 (y40 本就在铁分布内)。
+        //   只在 GO_UNDERGROUND 冷却中补位 (不改常态下潜); 换 kind=GET_IRON_TOOLS 免被同一冷却过滤, 攒够 3 铁后同 kind 自然转熔炼/锻造。
+        const _guCd = bot && bot._kindCooldownUntil && bot._kindCooldownUntil[PROPOSAL_KIND.GO_UNDERGROUND];
+        const _y = w.pos && Number.isFinite(w.pos.y) ? w.pos.y : null;
+        if (_guCd && Date.now() < _guCd && _y != null && _y <= UNDERGROUND_IRON_Y_MAX && time.phase === 'day'
+            && tier.rank === 2 && ironForArmor(bot) < 3 && !hasIronTierPick(w)) {
+            push({ kind: PROPOSAL_KIND.GET_IRON_TOOLS, priority: 45, skill: 'branchMine', args: [24],
+                   rationale: `GO_UNDERGROUND cooled (mineDown can't descend here) but already underground y${_y} — branch-mine this level for iron (${ironForArmor(bot)}/3)`,
+                   hints: { y: _y, fallback: 'go-underground-cooldown' } });
+        }
     }
 
     // 5b) ★TOOL-BUDGET UPKEEP (2026-07-02 断镐夜困 root fix): kit.sufficientForUnderground
