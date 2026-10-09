@@ -18,6 +18,11 @@ const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()
 
 const CROP_MATURE_AGE = { wheat: 7, carrots: 7, potatoes: 7, beetroots: 3 };
 const CROP_REPLANT = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato', beetroots: 'beetroot_seeds' };
+// ★T-0089: after every FINISHED pass (productive or farmed-out) stamp bot._villageHarvestCooldownUntil —
+// modes.js computeOpening skips VILLAGE_HARVEST while it's in the future. Without it a farmed-out village
+// pins opening.phase=VILLAGE_HARVEST forever (live -68,71,8: no-op re-dispatch every 1.6s, pinned 450s+).
+// Night / hostile defers are not a finished pass and don't stamp. Pinned by test/village_harvest_cooldown.sim.test.mjs.
+const COOLDOWN_MS = 480000;   // 8 min ≈ enough for crops to regrow a little
 
 export default async function villageHarvest(bot, ctx) {
     const { skills, world, mc } = ctx;
@@ -53,7 +58,8 @@ export default async function villageHarvest(bot, ctx) {
             crops = matureCrops(32);
         }
     }
-    if (!crops.length) { prog('villageHarvest: no mature crops within 32b of here (village may be farmed out / landmark stale) — false.'); return false; }
+    const stampCooldown = () => { try { bot._villageHarvestCooldownUntil = Date.now() + COOLDOWN_MS; } catch (e) {} };
+    if (!crops.length) { stampCooldown(); prog('villageHarvest: no mature crops within 32b of here (village may be farmed out / landmark stale) — cooldown 8min, false.'); return false; }
 
     // 1) Harvest up to 12 mature crops, pick up as we go.
     let harvested = 0;
@@ -93,6 +99,7 @@ export default async function villageHarvest(bot, ctx) {
         try { await skills.consume(bot, 'bread'); ate = true; } catch (e) { break; }
     }
 
+    stampCooldown();
     prog(`villageHarvest: pass done — harvested=${harvested} replanted=${replanted} bread+${breadCrafted} ate=${ate} food=${bot.food}`);
     if (harvested > 0 || breadCrafted > 0 || ate) return { harvested, replanted, breadCrafted, ate };
     return false;

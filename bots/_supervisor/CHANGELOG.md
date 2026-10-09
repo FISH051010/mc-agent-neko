@@ -12,6 +12,18 @@
 
 ---
 
+## C361. ★T-0089 回归补回: villageHarvest 每趟完成都写 _villageHarvestCooldownUntil（villageHarvest.js 热加载即生效,worker-tests,🟡已生效待观测)
+- **触发**: 补回归测试时发现 modes.js computeOpening 的 `!_villCooldown` 门读 `bot._villageHarvestCooldownUntil`，全仓 0 处写入——当年写戳的 villageHarvest 版本从未提交，现行 99 行重写版没有它。采空村 32b 内 opening.phase 永远 VILLAGE_HARVEST，只靠 kernel 3 连败冷却兜底。
+- **改动**: villageHarvest 完成一趟（有收获或采空零收获）后打 8min 冷却戳；夜间/有怪的让位不打。
+- **预测**: 采空村附近不再反复派 villageHarvest；progress 出现 `cooldown 8min, false` 后 opening 转 SCOUT/DONE。
+- **钉子**: test/village_harvest_cooldown.sim.test.mjs（修复前 3/4 红，含读写字段契约）。
+
+## C360. ★T-0116 BOM 静默杀派发回归(C251 同类): agent.js 死后 sticky 重挂 + modes.readJsonCached 改走 BOM-safe 读取器（src/ 需重启,已登记捎带队列,worker-tests,⏳待生效)
+- **触发**: C251 只修了 bridge.mjs；v0.2.0 新增的 agent.js 原地重生 sticky 重挂直接 `JSON.parse(readFileSync(sticky_skill.json))`，PowerShell 写过（带 BOM）即抛错→重挂失败→LLM 脑接管走回怪堆。readJsonCached（advisory/migrate_state）同样无 BOM 处理且静默 null。
+- **改动**: 新 src/utils/json_io.js（剥 BOM、parse 失败回调不静默；readJsonCached 移入），两处改用。
+- **预测**: 带 BOM 的 sticky_skill.json 死后照样重挂；events/console 不再出现 `Unexpected token` 重挂失败。
+- **钉子**: test/bom_json.test.mjs（含全仓 sticky_skill.json 读者 BOM-safe 扫描）。遗留: 多个热加载 skill 直读 advisory.json/keepinv.json 仍不剥 BOM。
+
 ## C359. ★黎明亡灵窗: 无甲时不在亡灵未晒死的黎明起步长途 migrate(force 也要过)（③migrate.js 热加载即生效,T-0120,worker-death,🟡已生效待观测）
 
 **证据**: death #2 10-09 16:16:59 `shot:Skeleton` d=11 @96,75,16 tod=479 skill=migrate gear 全空, keepInventory 关 → 背包 38→0。前因见 C358(夜坑 hold 被 NO-OP 逃逸 force-migrate)。
