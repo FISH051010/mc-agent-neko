@@ -34,6 +34,17 @@ test('T-0119: any real setBed path re-arms GET_BED', () => {
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1 }, [['sheep', 55, 0]])), true, 'sheep within 64');
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, white_wool: 3 })), true, 'wool in pack');
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, string: 4 })), true, 'string → wool');
-    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, wooden_sword: 1 }, [['spider', 30, 0]])), true, 'sword + spider');
+    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, iron_sword: 1 }, [['spider', 30, 0]])), true, 'real sword + spider within 48');
+    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, wooden_sword: 1 }, [['spider', 10, 0]])), true, 'wooden sword: close spider only');
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, red_bed: 1 })), true, 'bed in pack');
+});
+
+const hungry = (bot, food) => { bot.food = food; return bot; };
+
+test('T-0119: setBed\'s hunger gates are mirrored — food<6 shrinks the sheep hunt to 12b and kills the spider hunt', () => {
+    // live 10-10 01:42 food=0: 'setBed: no sheep within 12 (… fit=close-only) — defer' ×3 → dispatch-cooldown
+    assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1, iron_sword: 1 }, [['sheep', 30, 0], ['spider', 20, 0]]), 0)), false);
+    assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1 }, [['sheep', 10, 0]]), 0)), true, 'adjacent sheep is still hunted');
+    assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1, iron_sword: 1 }, [['spider', 30, 0]]), 7)), false, 'spider 48b venture needs food>=8');
+    assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1, white_wool: 3 }), 0)), true, 'wool in pack needs no hunt');
 });

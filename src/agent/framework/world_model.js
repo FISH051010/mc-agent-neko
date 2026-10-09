@@ -1948,13 +1948,21 @@ export function woolPathVisible(bot) {
  *  else, come back when sheep show up (entities load as the bot roams, so this re-arms by itself). */
 export function bedErrandFeasible(bot) {
     try {
-        if (woolPathVisible(bot) || invCount(bot, /^string$/) >= 4) return true;
+        // pack paths need no hunt (NOT woolPathVisible: its 48b sheep clause ignores setBed's food gate)
+        if (invCount(bot, /_bed$/) >= 1 || invCount(bot, /_wool$/) >= 3 || invCount(bot, /^string$/) >= 4) return true;
         const me = bot.entity && bot.entity.position;
         if (!me) return false;
         const ents = Object.values(bot.entities || {});
-        const near = (re, r) => ents.some(e => e && re.test(e.name || '') && e.position && e.position.distanceTo(me) <= r);
-        if (near(/^sheep$/, 64)) return true;
-        return invCount(bot, /_sword$/) >= 1 && near(/^spider$/, 48);
+        const near = (re, r) => r > 0 && ents.some(e => e && re.test(e.name || '') && e.position && e.position.distanceTo(me) <= r);
+        // ★T-0119 返工 (live 10-10 01:42 food=0: 'setBed: no sheep within 12 … fit=close-only' ×3): setBed shrinks
+        //   its hunts by hunger — sheep 64b only at food>=6 (else 12b); spider 48b needs a non-wooden sword +
+        //   food>=8, 12b needs any sword + food>=6, else no spider hunt at all. Mirror those gates exactly.
+        const food = Number.isFinite(bot.food) ? bot.food : 20;
+        if (near(/^sheep$/, food >= 6 ? 64 : 12)) return true;
+        const swords = (bot.inventory.items() || []).filter(i => /_sword$/.test(i.name || ''));
+        const strongSword = swords.some(i => !/^wooden_sword$/.test(i.name));
+        const spiderRange = (strongSword && food >= 8) ? 48 : (swords.length && food >= 6) ? 12 : 0;
+        return near(/^spider$/, spiderRange);
     } catch (e) { return false; }
 }
 
