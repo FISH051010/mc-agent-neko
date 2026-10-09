@@ -37,7 +37,7 @@ test('T-0166: mobility.classify owns the state write; update() reuses the same-t
     assert.match(update, /let st = \(now - \(this\._classifiedAt \|\| 0\) < 1000\) \? this\._classifiedSt : this\.classify\(agent, now\);/);
 });
 
-test('T-0166: observer cadence — classifies every 2s, skips while mobility is off or mid-burst', async () => {
+test('T-0166: observer cadence — classifies every 2s, skips only while the mobility burst runs', async () => {
     // evaluate the observer's update against a stub mobility mode (extract the function body from source)
     const obs = modeBlock('mobility_observer');
     const body = obs.slice(obs.indexOf('update: async function (agent) {') + 'update: async function (agent) {'.length, obs.lastIndexOf('}'));
@@ -52,5 +52,6 @@ test('T-0166: observer cadence — classifies every 2s, skips while mobility is 
     t += 500;  await run({});          assert.equal(calls, 1, 'throttled <2s');
     t += 1600; await run({});          assert.equal(calls, 2);
     mob.active = true; t += 3000; await run({}); assert.equal(calls, 2, 'own burst running → leave its state alone');
-    mob.active = false; mob.on = false; t += 3000; await run({}); assert.equal(calls, 2, 'mode off → no classification');
+    // live 21:17:18→21:18:00 mobAge 21: surfaceUp setOn('mobility', false) to freeze the REFLEX — observation must go on
+    mob.active = false; mob.on = false; t += 3000; await run({}); assert.equal(calls, 3, 'reflex switched off (surfaceUp freeze) → still classified');
 });

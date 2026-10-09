@@ -2917,6 +2917,8 @@
 
 - **★C396-S 换址隧道步进遇服务端 ghost 方块: 停滞即补挖重走(T-0161 续)**（2026-10-10，worker-stuck，T-0161）: 诊断 (519d1d6) 实录 10-09 21:06:30-51 @0..6,59,37 ×4 'walk stopped early: cell k/9 … feet=air head=air floor=stone ground=true', bot 停在下一格墙面前 (pos 0.78/2.63/5.63 = 格面-0.3) — 挖掘只在客户端生效, 服务端仍实心。walkDugPath 没有 mineDown 楼梯步进那样的 forceUnghost, 3 次失败 → DUSK_MINE_NIGHT 冷却 5min; 且旧 0.8 到达容差恰好放行"贴在 ghost 面前"的身体 (面前 = 0.8), 失败落到下一格。修: 每格行走带停滞检测 (0.5s 无进展), 未到格则对脚/头格做 ghost 挖 (客户端 air 也 bot.dig, 2s race + stopDigging) 等 250ms 服务端纠正后重走, 每格 ≤2 次; 到达门 0.8→0.6。测试 test/walk_dug_path_ghost.test.mjs。
 
+- **★C397-S mobility_observer 在反射被冻结时也照常观察(T-0166 续)**（2026-10-10，worker-stuck，T-0166）: 实录 10-09 21:17:18→21:18:00 surfaceUp 爬升期间 mobAge 涨到 21 — surfaceUp 用 setOn('mobility', false) 冻结反射防抢身体, 观察者门 `!mob.on` 连分类一起停了。修: 观察者只在 mobility 自身 burst 执行中跳过, 不再看 mob.on (关的是动作, 不是世界模型)。测试 test/mobility_observer.test.mjs 更新。
+
 ---
 
 ---

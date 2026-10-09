@@ -3981,7 +3981,9 @@ const modes_list = [
         always: true,   // ★T-0166 pure observer: must tick even while self_preservation/another mode is active
         update: async function (agent) {
             const mob = modes_list.find(m => m.name === 'mobility');
-            if (!mob || !mob.on || mob.active) return;   // own burst running: its state stays as the burst saw it
+            // own burst running: its state stays as the burst saw it. NOT gated on mob.on — surfaceUp etc. setOn(false)
+            //   to freeze the REFLEX; the model must keep observing (live 21:17:18→21:18:00 mobAge 21 during surfaceUp).
+            if (!mob || mob.active) return;
             const now = Date.now();
             if (now - (mob._classifiedAt || 0) < 2000) return;
             mob.classify(agent, now);
