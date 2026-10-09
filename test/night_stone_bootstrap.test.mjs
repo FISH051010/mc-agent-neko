@@ -62,3 +62,13 @@ test('T-0175: computeNightPlan 链序 — STONE_BOOTSTRAP 在整夜下矿之后�
     for (const g of ['!durablePick', 'hasTablePath', '_hpOkForNightMine', 'actionable === 0', '_gravityPitTrap()'])
         assert.ok(gate.includes(g), `gate has ${g}`);
 });
+
+test('T-0185: NIGHT_STONE_BOOTSTRAP 冷却中 → computeNightPlan 跳过它落到挖三填一 (不留整夜无计划的洞)', () => {
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const fn = src.slice(src.indexOf('const computeNightPlan = () =>'));
+    const iBoot = fn.indexOf("decision: 'STONE_BOOTSTRAP'");
+    const gate = fn.slice(fn.lastIndexOf('if (', iBoot), iBoot);
+    assert.ok(/_nsbCooled/.test(gate) && /!_nsbCooled/.test(gate), 'gate checks the kind cooldown');
+    const def = fn.slice(0, iBoot);
+    assert.ok(/_kindCooldownUntil\.NIGHT_STONE_BOOTSTRAP > Date\.now\(\)/.test(def), 'cooldown read from bot._kindCooldownUntil');
+});

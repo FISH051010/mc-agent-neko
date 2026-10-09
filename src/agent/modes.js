@@ -6597,7 +6597,10 @@ const modes_list = [
                     // ★T-0175 (监工, 第十四夜实录 -15,63,11: 2 木镐 + 8 板 + 3 原木整夜 DIG_ONE_CAP 零产出): 木镐预算 ~118 < 200 夜挖门。
                     //   人类: 坑底往下挖几格拿圆石, 用木板现做台, 当场造石镐(+石剑), 整夜靠石镐挖。排在挖三填一之前;
                     //   无怪 + 不在重力柱上 + 非封死 + 血/食够 (同夜挖门) 才做, 否则照旧挖三填一封坑。
-                    if (!durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
+                    // ★T-0185 (23:06:36-51Z 实录: -8,69,-8 空洞上 mineDown dug=0 ×3 → NIGHT_STONE_BOOTSTRAP 冷却): 冷却中
+                    //   决策仍返 STONE_BOOTSTRAP 则提案被过滤 → 整夜无夜计划 (挖三填一被挡)。冷却中跳过, 落到挖三填一。
+                    const _nsbCooled = !!(bot._kindCooldownUntil && bot._kindCooldownUntil.NIGHT_STONE_BOOTSTRAP > Date.now());
+                    if (!_nsbCooled && !durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
                         && y > 20 && !/ENTOMBED|SEALED/.test(mob || '') && !_gravityPitTrap())
                         return { decision: 'STONE_BOOTSTRAP', reason: `wood picks only (budget ${picksBudget}) — dig down for cobble, craft stone pick+sword in place, then mine the night`, targetY: Math.max(17, y - 6) };
                     // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
