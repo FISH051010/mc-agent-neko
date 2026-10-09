@@ -30,6 +30,12 @@ export function shouldChopBeforeCrafting({ picks, planksEq }) {
     return true;
 }
 
+/** ★T-0147 叫停被限时竞赛甩下的 chopWood: bump 代号 (chopWood 每 iter 查 _superseded) + 中止进行中的挖掘。 */
+export function supersedeChop(bot) {
+    try { bot._chopGen = (bot._chopGen || 0) + 1; } catch (e) {}
+    try { bot.stopDigging && bot.stopDigging(); } catch (e) {}
+}
+
 // ★T-0111 离场收台 — 敲 6 格内的台并确认捡回。kernel 切承诺的 interrupt 只是"该走了", 不是危险:
 //   暂时屏蔽它把台带走 (≤maxMs), 结束后原样恢复 (期间若有人再置 interrupt 也保留)。
 export async function reclaimTable(bot, { skills, world }, { maxMs = 6000 } = {}) {
@@ -271,9 +277,13 @@ export default async function replenishKit(bot, ctx, opts = {}) {
                     new Promise((_, rej) => setTimeout(() => rej(new Error('replenish-chop-timeout')), 120000)),
                 ]);
             } catch (e) {
+                // ★T-0147 (19:23:47Z 实录): 限时到了只停寻路/按键, chopWood 循环本身没叫停 → 幽灵 chopWood 继续 iter9/10
+                //   砍树, 与随后派发的 mineDown 抢挖掘 ("Digging aborted" ×3 → GO_UNDERGROUND 冷却)。用 chopWood 自带的
+                //   代号让位机制 (_chopGen bump → _superseded() 下一 iter 自杀) + stopDigging 真正叫停。
+                supersedeChop(bot);
                 try { bot.pathfinder && bot.pathfinder.stop(); } catch (_) {}
                 try { bot.clearControlStates(); } catch (_) {}
-                prog(`replenishKit: ② chopWood incomplete: ${e.message}`);
+                prog(`replenishKit: ② chopWood incomplete: ${e.message} (superseded orphan chop loop)`);
             }
             prog(`replenishKit: ② chopWood result logs ${lb}→${logsHeld()} planksEq=${planksEq()}`);
         }
