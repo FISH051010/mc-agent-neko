@@ -28,6 +28,7 @@ import { wsServer } from '../websocket/ws_server.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import fs from 'fs';
 import { dataPath, expandUserPath } from '../utils/paths.js';
+import { archiveStaleWorldStateOnSwitch } from './world_scope.js';
 
 // ★2026-08-07 路径统一: 本文件所有监工状态文件原来都是裸相对 'bots/_supervisor/xxx' (相对 CWD)。
 // 分发包里代码在 <包根>/app/、CWD 在 <包根>, 靠 bootstrap 的 chdir 才勉强对得上 —— 但那是兜底网,
@@ -399,45 +400,8 @@ export class Agent {
     // prepNether/achieve死区, botwatch hotspot…) sees a clean log on a new world without per-reader
     // edits. Pure-additive, swallow all errors — a miss just leaves the old behavior, never worse.
     async _archiveStaleWorldStateOnSwitch() {
-        const b = this.bot;
-        const isNaked = () => {
-            const items = (b.inventory ? b.inventory.items() : []) || [];
-            const armorN = b.inventory ? [5, 6, 7, 8].filter(s => b.inventory.slots[s]).length : 0;
-            const hasTool = items.some(i => /_pickaxe$|_axe$|_sword$|_shovel$|_hoe$/.test(i.name));
-            const hasShield = items.some(i => i.name === 'shield') || (b.inventory && b.inventory.slots[45] && b.inventory.slots[45].name === 'shield');
-            const totalItems = items.reduce((s, i) => s + (i.count || 0), 0);
-            // fresh character: no armor worn, no tool/weapon/shield, only a tiny scrap of starter blocks
-            return armorN === 0 && !hasTool && !hasShield && totalItems <= 16;
-        };
-        if (!isNaked()) return;                                  // has gear → same-world reconnect, never reset
-        // (a) defeat inventory LOAD-LAG: a real fresh char is still naked after 5s; lag has resolved by then.
-        await new Promise((r) => setTimeout(r, 5000));
-        if (!isNaked()) return;                                  // gear loaded in → was just lag, not a new world
-        // read newest death to apply guard (b)
-        let recent = null;
-        try {
-            const lines = fs.readFileSync(SUP('death_log.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
-            if (lines.length) {
-                const last = JSON.parse(lines[lines.length - 1]);
-                const ageMin = (Date.now() - new Date(last.ts).getTime()) / 60000;
-                const p = b.entity && b.entity.position;
-                const near = !!(p && typeof last.x === 'number' && Math.hypot(last.x - p.x, last.z - p.z) < 24);
-                recent = { ageMin, near, n: lines.length };
-            }
-        } catch (e) { recent = null; }
-        if (!recent || recent.n < 1) return;                    // nothing to contaminate
-        // (b) same-world bot that died naked moments ago → its log is still relevant, keep it.
-        if (recent.ageMin < 10 && recent.near) return;
-        const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
-        const archived = [];
-        for (const f of ['death_log.jsonl', 'landmarks.json', 'bed.json']) {
-            try { if (fs.existsSync(SUP(f))) { fs.renameSync(SUP(f), SUP(`${f}.${ts}.oldworld`)); archived.push(f); } } catch (e) {}
-        }
-        try {
-            fs.appendFileSync(SUP('progress.txt'),
-                `[${new Date().toISOString()}] [world-scope] ★C333 NEW-WORLD detected (naked fresh char, armor=0/tools=0; newest death ${recent.ageMin.toFixed(0)}min ago near=${recent.near}) → archived ${archived.join(',') || 'none'} (phantom-hazard reset)\n`);
-        } catch (e) {}
-        console.log(`🌍 C333 world-switch: archived stale coordinate state [${archived.join(',')}] — naked fresh character, old log won't poison death-zones`);
+        // logic lives in world_scope.js so test/world_scope.test.mjs can pin it (T-0065)
+        return archiveStaleWorldStateOnSwitch(this.bot, { sup: SUP });
     }
 
     async initBot() {
