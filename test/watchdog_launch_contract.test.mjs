@@ -29,3 +29,20 @@ test('T-0109: every supervisor script watchdog.ps1 launches exists, or its launc
     assert.ok(launches >= 4, `expected the keep-alive launches to be found (got ${launches})`);
     assert.deepEqual(problems, []);
 });
+
+test('T-0095: watchdog takes the Global\\NekoWatchdogSingleton mutex and EXITS when another watchdog holds it', () => {
+    // live 06-25: a new watchdog.ps1 spawned every 1-2 min (scan-and-kill TOCTOU race) → two restarters → risk of
+    // double `node main.js` corrupting the world. The named OS mutex is the atomic singleton.
+    const src = fs.readFileSync(path.join(root, 'watchdog.ps1'), 'utf8');
+    assert.ok(src.includes("New-Object System.Threading.Mutex($true, 'Global\\NekoWatchdogSingleton', [ref]$createdNew)"));
+    const at = src.indexOf('$wdMutex.WaitOne(0)');
+    assert.ok(at > 0);
+    assert.match(src.slice(at, at + 500), /if \(-not \$owns\) \{[^}]*?exit 0/);
+});
+
+test('T-0100: night sealing owns the body — prepNether stamps _nightSealingUntil, mobility skips MAROONED escalation while it is fresh at night', () => {
+    const prep = fs.readFileSync(path.join(root, 'bots', '_supervisor', 'skills', 'prepNether.js'), 'utf8');
+    assert.match(prep, /bot\._nightSealingUntil = Date\.now\(\) \+ 12000/);
+    const modes = fs.readFileSync(path.join(root, 'src', 'agent', 'modes.js'), 'utf8');
+    assert.match(modes, /if \(_isNightMob && bot\._nightSealingUntil && now < bot\._nightSealingUntil\) \{ this\.regAnchor = /);
+});
