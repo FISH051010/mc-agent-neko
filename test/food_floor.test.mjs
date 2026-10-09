@@ -181,3 +181,30 @@ test('18:04 实录: 41.7 格的羊 → quickMeal 必须先安全寻路贴近再�
         assert.equal(r.gotMeat, true, 'approached then killed');
     } finally { process.chdir(cwd); }
 });
+
+test('监工#5: 苦力怕 6-16 格不逼近 → 背离侦察; ≤6 格 → 收手且返回 deferred (不计 strike); FOOD_FLOOR 免 NO-OP 强制 migrate', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qm5-'));
+    fs.mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
+    const cwd = process.cwd(); process.chdir(home);
+    try {
+        const { default: quickMeal, awayPoint } = await import('../bots/_supervisor/skills/quickMeal.js');
+        const { isDispatchFailure, NOOP_EXEMPT_KIND } = await import('../bots/_supervisor/skills/kernelDriver.js');
+        const ap = awayPoint({ x: 0, z: 0 }, { x: 10, z: 0 }, 24);
+        assert.ok(ap.x < -23 && Math.abs(ap.z) < 1e-9, 'away = opposite side of the creeper');
+        const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
+        // (a) creeper at 10b, static → scout heads away (first goto target x < 0)
+        const goals = [];
+        const botA = { food: 0, entity: { position: V(0, 70, 0) }, entities: { 9: { name: 'creeper', position: V(10, 70, 0) } },
+            pathfinder: { stop() {}, setMovements() {}, goto: async (g) => { goals.push(g); } }, clearControlStates() {} };
+        const ctx = { world: { getInventoryCounts: () => ({ coal: 60 }) },
+            skills: { customSkill: async () => {}, attackEntity: async () => {}, pickupNearbyItems: async () => {}, consume: async () => {} } };
+        await quickMeal(botA, ctx, { radius: 48, maxDy: 6, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 1500 });
+        assert.ok(goals.length >= 1 && goals[0].x < 0, `first leg away from creeper (x=${goals[0] && goals[0].x})`);
+        // (b) creeper at 2.7b (18:13 live) → defer, not a failure/strike
+        const botB = { ...botA, entities: { 9: { name: 'creeper', position: V(2.7, 70, 0) } }, pathfinder: { stop() {}, setMovements() {}, goto: async () => {} } };
+        const r = await quickMeal(botB, ctx, { radius: 48, maxDy: 6, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 1200 });
+        assert.equal(r.deferred, true);
+        assert.equal(isDispatchFailure(r, false), false, 'hostile-near defer is not a strike');
+        assert.ok(NOOP_EXEMPT_KIND.test('FOOD_FLOOR'));
+    } finally { process.chdir(cwd); }
+});

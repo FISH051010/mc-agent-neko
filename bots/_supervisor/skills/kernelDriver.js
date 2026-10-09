@@ -104,7 +104,8 @@ export function noopIsProgress(anchor, anchorSig, p, sig) {
 // isDay → legitNightHold 失效 → force migrate 拉出口袋 → 云杉荫下骷髅未晒死 → shot:Skeleton, 掉光装备)。
 // 夜间/hold 类承诺"站着不动"就是它的成功态 (kernel.js NO_DELTA_EXEMPT 同一判据) — 绝不当空转逃逸;
 // 天亮后决策层换承诺 → noopSkill 变化 → 锚点自然重置。
-export const NOOP_EXEMPT_KIND = /^(NIGHT_|DUSK_GO_BED$|HOLD$|SLEEP$|FREE_PLAY$)/;
+// ★T-0069: FOOD_FLOOR 自带移动 (上浮/背离敌对侦察/贴近猎杀); 因敌对 deferred 时原地等是对的 — hp=1 被强制 migrate 才是送死。
+export const NOOP_EXEMPT_KIND = /^(NIGHT_|DUSK_GO_BED$|HOLD$|SLEEP$|FREE_PLAY$|FOOD_FLOOR$)/;
 export function noopEscapePlan(w, kind) {
     w = w || {};
     if (kind && NOOP_EXEMPT_KIND.test(String(kind))) return null;

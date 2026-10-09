@@ -41,12 +41,64 @@ function setSafeMovements(bot) {
 }
 
 /** ★监工加急 #2 有界侦察: hp=1 任何伤害致死 → 安全寻路 (最多下落 2 格、不跑酷、不挖、水极贵), 16 格内有敌对立即收手。 */
+// ★18:16:41 实录 (黎明): 16 格内有敌对 → 侦察秒中止 ×3 → 计 strike 冷却 5min。黎明亡灵几秒内就晒死 —
+//   先原地不动等它消失 (≤maxWaitMs, 计入总上限), 仍在才放弃, 且放弃算"延后"不算失败。
+export async function waitHostileClear(bot, maxWaitMs, stepMs = 1000) {
+    const t0 = Date.now();
+    while (hostileWithin(bot, 16)) {
+        if (Date.now() - t0 >= maxWaitMs) return false;
+        try { bot.pathfinder && bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+        await new Promise(r => setTimeout(r, stepMs));
+    }
+    return true;
+}
+
+export function nearestHostile(bot) {
+    const me = bot.entity && bot.entity.position;
+    if (!me) return null;
+    let best = null;
+    for (const e of Object.values(bot.entities || {})) {
+        if (!e || !e.position || !HOSTILE_RE.test(e.name || '')) continue;
+        const d = e.position.distanceTo(me);
+        if (!best || d < best.dist) best = { name: e.name, pos: e.position, dist: d, entity: e };
+    }
+    return best;
+}
+
+/** 背离敌对的航点 (纯函数): 从 me 沿 (me - hostile) 方向走 dist 格。 */
+export function awayPoint(me, hostilePos, dist) {
+    const dx = me.x - hostilePos.x, dz = me.z - hostilePos.z, d = Math.hypot(dx, dz) || 1;
+    return { x: me.x + dx / d * dist, z: me.z + dz / d * dist };
+}
+
+// ★监工#5 (18:16:44 实录: 苦力怕自昨夜贴身打转, 白天不晒死, 侦察秒收手×3 → 冷却): 敌对在 6-16 格且没在逼近
+//   → 背离它侦察 (人类 1 血见苦力怕: 走开去找吃的); 只有 ≤6 格或正在逼近才收手, 交给 self_preservation。
+async function hostileDecision(bot) {
+    const h1 = nearestHostile(bot);
+    if (!h1 || h1.dist >= 16) return { action: 'go' };
+    if (h1.dist <= 6) return { action: 'yield', h: h1 };
+    await new Promise(r => setTimeout(r, 600));
+    const h2 = nearestHostile(bot);
+    if (h2 && h2.dist <= 6) return { action: 'yield', h: h2 };
+    if (h2 && h2.dist < h1.dist - 0.4) return { action: 'yield', h: h2 };   // 正在逼近
+    return { action: 'away', h: h2 || h1 };
+}
+
 async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
     setSafeMovements(bot);
-    for (const wp of scoutWaypoints(origin, scoutRadius, scoutToward)) {
+    for (const wp0 of scoutWaypoints(origin, scoutRadius, scoutToward)) {
         if (Date.now() - t0 > scoutMs) break;
-        if (hostileWithin(bot, 16)) { prog('scout aborted: hostile within 16b (hp-critical)'); break; }
+        let wp = wp0;
+        const hd = await hostileDecision(bot);
+        if (hd.action === 'yield') {
+            prog(`scout paused: ${hd.h.name} ${hd.h.dist.toFixed(1)}b (≤6 or closing) — yield to self_preservation, wait ≤15s`);
+            if (!(await waitHostileClear(bot, Math.min(15000, Math.max(0, scoutMs - (Date.now() - t0)))))) { prog('scout deferred: hostile still near'); return 'hostile'; }
+        } else if (hd.action === 'away') {
+            const me = bot.entity.position;
+            const ap = awayPoint(me, hd.h.pos, 24);
+            if (Math.hypot(ap.x - origin.x, ap.z - origin.z) <= scoutRadius) { wp = ap; prog(`scout away from ${hd.h.name} ${hd.h.dist.toFixed(1)}b → (${Math.round(ap.x)},${Math.round(ap.z)})`); }
+        }
         const found = pickHuntTarget(bot, radius, maxDy);
         if (found) return found;
         const legMs = Math.min(20000, scoutMs - (Date.now() - t0));
@@ -109,6 +161,8 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         if (!target && opts.scout) {
             prog(`starving, no animal ≤${radius}b — bounded scout ≤${opts.scoutRadius ?? 96}b/${Math.round((opts.scoutMs ?? 90000) / 1000)}s`);
             target = await scoutForAnimal(bot, { radius, maxDy, scoutRadius: opts.scoutRadius ?? 96, scoutMs: opts.scoutMs ?? 90000, scoutToward: opts.scoutToward });
+            // ★监工#5: 因敌对收手 = unwind 语义, 不计 strike (返回非失败的 deferred, kernel 1.5s 后重派, 每次最多等 15s)
+            if (target === 'hostile') return { deferred: true, reason: 'hostile-near' };
             prog(target ? `scout found ${target.name}` : 'scout found nothing');
             t0 = Date.now();   // 侦察有自己的 ≤scoutMs 上限; 猎杀/烤/吃重新计 maxMs
             if (!target) return opts._surfaced ? { ok: true, surfaced: true, scouted: true } : { failed: true, reason: 'scout-found-nothing' };
@@ -125,7 +179,10 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             setSafeMovements(bot);
             try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
             try { bot.pathfinder.stop(); } catch (e) {}
-            if (hostileWithin(bot, 16)) { prog('approach aborted: hostile within 16b (hp-critical)'); stopBody(); return { failed: true, reason: 'hostile-near' }; }
+            const hd = await hostileDecision(bot);   // 同侦察口径: ≤6 格或逼近才收手; 6-16 格不逼近 → 继续猎 (目标就在眼前)
+            if (hd.action === 'yield' && !(await waitHostileClear(bot, Math.min(15000, Math.max(0, left()))))) {
+                prog(`approach deferred: ${hd.h.name} ${hd.h.dist.toFixed(1)}b (hp-critical)`); stopBody(); return { deferred: true, reason: 'hostile-near' };
+            }
             prog(`approached ${target.name} → ${target.position.distanceTo(bot.entity.position).toFixed(1)}b`);
         }
         await race(skills.attackEntity(bot, target, true), Math.min(left(), 25000));
