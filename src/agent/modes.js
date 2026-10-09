@@ -27,7 +27,7 @@ import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.j
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn } from './framework/mobility_signals.js';
@@ -4066,9 +4066,12 @@ const modes_list = [
                 // out of; a genuine night trap simply waits till dawn (matches the ticket's "next-day chew-out").
                 const _todMob = (() => { try { return bot.time.timeOfDay; } catch (e) { return 0; } })();
                 const _isNightMob = _todMob >= 13000 && _todMob <= 23000;
-                if (st === 'FREE' && enc && !inWater && !_isNightMob) {
-                    let _sr = false;
-                    try { _sr = detectSealedRoom(bot).sealed; } catch (e) {}
+                // ★T-0135: during a confirmed escape episode a breach cell can read POCKET (1-wide) — keep escaping.
+                if ((st === 'FREE' || (this._sealedEpisode && st === 'POCKET')) && enc && !inWater && !_isNightMob) {
+                    let _srObj = { sealed: false };
+                    try { _srObj = detectSealedRoom(bot); } catch (e) {}
+                    const _sr = !!_srObj.sealed;
+                    let _debounceSealed = false;
                     // ★STUCK-DEBOUNCE (C341 daytime FP fix): a MINING bot is constantly in transiently-bounded
                     // pockets (dig a chamber → flood momentarily <CAP → "sealed") and advances through them; the
                     // raw check fired SEALED↔FREE every 10-30s underground (live 12:36-42, 7×), making it dig
@@ -4098,8 +4101,18 @@ const modes_list = [
                     else if (!this._sealedSince || (this._sealedAnchor && _pp.distanceTo(this._sealedAnchor) > 3)) {
                         this._sealedSince = now; this._sealedAnchor = _pp.clone();   // newly sealed / moved (mining) → (re)start timer
                     } else if (now - this._sealedSince > 10000) {
-                        st = 'SEALED';                                               // bounded + stuck ≥10s = genuine trap
+                        _debounceSealed = true;                                      // bounded + stuck ≥10s = genuine trap
                     }
+                    // ★T-0135: a confirmed trap opens an escape episode — no 10s re-debounce per dug cell.
+                    const _esc = sealedEscapeStep({ episode: this._sealedEpisode, sr: _srObj, enc, night: _isNightMob, now,
+                        debounceSealed: _debounceSealed && !_stationaryTask });
+                    if (!this._sealedEpisode && _esc.episode) { try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0135 sealed escape episode START @${Math.round(_pp.x)},${Math.round(_pp.y)},${Math.round(_pp.z)}\n`); } catch (e) {} }
+                    if (this._sealedEpisode && !_esc.episode) { try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0135 sealed escape episode END (${_srObj.reason || 'open'}) after ${Math.round((now - this._sealedEpisode.since) / 1000)}s, moved ${this._sealedEpisodeFrom ? Math.round(_pp.distanceTo(this._sealedEpisodeFrom)) : '?'}b\n`); } catch (e) {} }
+                    if (!this._sealedEpisode && _esc.episode) this._sealedEpisodeFrom = _pp.clone();
+                    this._sealedEpisode = _esc.episode;
+                    if (_esc.st) st = _esc.st;
+                } else if (this._sealedEpisode && (_isNightMob || !enc || inWater)) {
+                    this._sealedEpisode = null;                                      // night = shelter, sky = out, water = other reflex
                 }
                 // regional entrapment check (only escalates FREE — the others have own reflexes)
                 const p = bot.entity.position;

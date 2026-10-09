@@ -21,13 +21,13 @@ export function detectSealedRoom(bot) {
             if (/lava/.test((f && f.name) || '') || /lava/.test((h && h.name) || '')) return false;
             return true;
         };
-        if (!stand(start)) return { sealed: false };
+        if (!stand(start)) return { sealed: false, reason: 'no-stand' };   // mid-step / standing in a fresh breach — NOT evidence of open space
         const CAP = 130;                       // > CAP reachable cells ⇒ "open enough", not a trap
         const seen = new Set([`${start.x},${start.y},${start.z}`]);
         const q = [start];
         let head = 0;
         while (head < q.length) {
-            if (seen.size > CAP) return { sealed: false };          // flood spilled out → open
+            if (seen.size > CAP) return { sealed: false, reason: 'spill' };   // flood spilled out → open
             const c = q[head++];
             for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
                 const n = c.offset(dx, dy, dz);
@@ -38,6 +38,26 @@ export function detectSealedRoom(bot) {
         }
         return { sealed: true, cells: seen.size };                 // flood exhausted within cap + covered ⇒ sealed
     } catch (e) { return { sealed: false }; }
+}
+
+// ★T-0135 SEALED ESCAPE EPISODE. The classifier only escalates FREE→SEALED after the room has stayed sealed
+// ~10s with the bot barely moving (C341 debounce, so a MINING bot isn't flagged on every transient pocket).
+// But once a trap is confirmed, each dug cell made detectSealedRoom answer 'no-stand' (bot mid-step / in the
+// breach) → debounce reset → another 10s wait per cell: live 10-10 18:38:58→18:40:50 SEALED↔FREE every
+// 6-11s, ~17s per cell. A human mining out of a sealed room keeps digging the same way. So: a confirmed trap
+// opens an episode; inside it the room stays SEALED (no re-debounce) until the flood genuinely spills
+// ('spill' = open space reached), the cover lifts (sky), night falls (the room is then a shelter), or the
+// episode ages out. Pure — pinned by test/sealed_escape.test.mjs.
+export const SEALED_EPISODE_MAX_MS = 5 * 60000;
+export function sealedEscapeStep({ episode, sr, enc, night, now, debounceSealed }) {
+    if (night || !enc) return { st: null, episode: null };
+    if (episode && now - episode.since > SEALED_EPISODE_MAX_MS) episode = null;
+    if (episode) {
+        if (sr && (sr.sealed || sr.reason === 'no-stand')) return { st: 'SEALED', episode: { ...episode, lastAt: now } };
+        return { st: null, episode: null };                       // flood spilled → escaped
+    }
+    if (debounceSealed) return { st: 'SEALED', episode: { since: now, lastAt: now } };
+    return { st: null, episode: null };
 }
 
 // fleeMove heading choice (moved verbatim from modes.js). dx,dz = unit vector away from the threat;
