@@ -4740,6 +4740,26 @@ const modes_list = [
                     // so this reflex keeps the body burst after burst instead of 1 burst per 12s.
                     try { bot._mobility = { ...(bot._mobility || {}), state: 'SWIM_STUCK', since: this.stateSince }; } catch (e) {}
                 });
+            } else if (st === 'ENTOMBED' && (() => {
+                // ★T-0105: a breathable 1×1 pocket at night is the night shelter itself (nightShelter /
+                // bunkerDown built it on purpose) — do NOT dig it open. Taking damage / water / daylight
+                // → falls through to the normal instant dig-out below.
+                try {
+                    const fp = bot.entity.position.floored();
+                    const shelter = skills.entombedIsNightShelter({
+                        timeOfDay: bot.time && bot.time.timeOfDay,
+                        feetName: (bot.blockAt(fp) || {}).name,
+                        headName: (bot.blockAt(fp.offset(0, 1, 0)) || {}).name,
+                        msSinceDamage: Date.now() - (bot.lastDamageTime || 0),
+                    });
+                    if (shelter && Date.now() - (this._entNightShelterLogAt || 0) > 30000) {
+                        this._entNightShelterLogAt = Date.now();
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ENTOMBED at night in a breathable pocket @${fp.x},${fp.y},${fp.z} — treating as night shelter, no dig-out (T-0105)\n`); } catch (e) {}
+                    }
+                    return shelter;
+                } catch (e) { return false; }
+            })()) {
+                try { bot._mobility = { ...(bot._mobility || {}), state: 'ENTOMBED', since: this.stateSince, nightShelter: true }; } catch (e) {}
             } else if (st === 'ENTOMBED') {
                 // instant dig-out, reflex priority — no stagnation timer, no material
                 // gate (entombed = the gate's exception BY DEFINITION). Head toward the

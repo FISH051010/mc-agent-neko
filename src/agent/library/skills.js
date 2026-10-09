@@ -6320,6 +6320,20 @@ export function isSealedPocket(blockAt, feet) {
     return true;
 }
 
+/**
+ * ★T-0105 (10-09 16:06:40 实录: nightShelter 刚封好 1×1 口袋 3s, mobility 判 ENTOMBED 立即去挖自己
+ * 刚放的原木墙 → 16:06:48 FREE, 口袋被拆)。ENTOMBED 挖出反射是为"被埋/窒息/困死"写的; 但夜里一个
+ * 头脚两格都是空气、不在水里、没在掉血的封闭口袋就是庇护本身 (C341 已给 SEALED 加 DAYLIGHT-ONLY,
+ * ENTOMBED 漏了)。人类: 天黑了缩在坑里等天亮, 不会把顶刨开。挨打/进水/天亮 → 照常挖出。
+ */
+export function entombedIsNightShelter({ timeOfDay, feetName, headName, msSinceDamage }) {
+    const night = Number.isFinite(timeOfDay) && timeOfDay >= 12000 && timeOfDay <= 23200;
+    if (!night) return false;
+    const breathable = (n) => /^(air|cave_air|void_air)$/.test(n || '');
+    if (!breathable(feetName) || !breathable(headName)) return false;   // 身体里有方块/水 = 真被埋/淹
+    return !(Number.isFinite(msSinceDamage) && msSinceDamage < 3000);   // 正在掉血(窒息/漏缝挨打) → 不算庇护
+}
+
 const FLUID_RE = /water|lava|kelp|seagrass|bubble_column/;
 /**
  * ★T-0105 溺死链: 挖掉 pos 处方块会不会把液体放进来 (其上方或四个水平邻格是液体)。

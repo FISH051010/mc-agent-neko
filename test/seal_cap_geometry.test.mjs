@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -111,4 +111,13 @@ test('T-0113: logs are NOT cap material while wood is at/below the replenish bas
     // planks count toward the reserve but are never cap material themselves
     assert.equal(resolveCapBlock(fakeBot([['oak_planks', 64], ['oak_log', 1]])), 'oak_log');
     assert.equal(resolveCapBlock(fakeBot([['oak_planks', 64]])), null);
+});
+
+test('T-0105: ENTOMBED in a breathable pocket at night = the shelter, not a burial (16:06:40 self-dig-out)', () => {
+    const base = { timeOfDay: 12259, feetName: 'air', headName: 'air', msSinceDamage: 60000 };
+    assert.equal(entombedIsNightShelter(base), true);
+    assert.equal(entombedIsNightShelter({ ...base, timeOfDay: 6000 }), false, 'daytime → dig out');
+    assert.equal(entombedIsNightShelter({ ...base, headName: 'gravel' }), false, 'block in head = real burial');
+    assert.equal(entombedIsNightShelter({ ...base, feetName: 'water' }), false, 'flooded pocket → escape');
+    assert.equal(entombedIsNightShelter({ ...base, msSinceDamage: 800 }), false, 'taking damage → escape');
 });
