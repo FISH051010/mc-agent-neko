@@ -90,6 +90,24 @@ function isSettleSite(s, settleScore) {
     return (a.landAnimals || 0) >= 2 && !waterBiome && siteScore(a) >= (settleScore ?? 14);
 }
 
+// ★C312 (T-0051) escape-settle bar for a bot FLEEING a death zone / bootstrap-stuck. PURE.
+// ★C324 (T-0055 keystone): require REACHABLE trees≥4, not just visible. The whole T-0055
+// bug was C312 escape-settling in a wooded_badlands with 10 VISIBLE plateau trees the bot
+// could never reach → starved at a "tree-rich" home. reachableTrees (y-band filtered)
+// ensures the escape home actually has wood we can harvest to bootstrap.
+function escapeSettleOk(s) {
+    const a = s || {};
+    const waterBiome = /ocean|river|beach|shore/.test((a.biome || '').toLowerCase());
+    const usableTrees = (a.reachableTrees != null ? a.reachableTrees : a.trees) || 0;
+    return !waterBiome && usableTrees >= 4 && (a.deathsNear || 0) === 0;
+}
+
+// ★MIN-FORCE-ADVANCE (T-0110④): a force-relocate must march ≥48b before it may settle. PURE.
+function forceMinAdvance(opts) {
+    const o = opts || {};
+    return (o.minAdvance != null) ? o.minAdvance : (o.force === true ? 48 : 0);
+}
+
 function norm2(x, z) {
     const m = Math.hypot(x, z);
     return m < 1e-6 ? { x: 0, z: 0, m: 0 } : { x: x / m, z: z / m, m };
@@ -351,7 +369,7 @@ export default async function migrate(bot, ctx, opts = {}) {
     // migrate FOUR times, each settling in place movedBlocks=0 → never left. Require a force-relocate
     // to march a floor distance before it may settle, so it leaves the pocket to fresh ground where
     // trees are reachable / descent works. Caller may override via opts.minAdvance.
-    const minForceAdv = (opts.minAdvance != null) ? opts.minAdvance : (opts.force === true ? 48 : 0);
+    const minForceAdv = forceMinAdvance(opts);
     let imprisonEgressTried = false;   // ★C318 (T-0052): one surfaceUp break-out per imprisonment
     // ★C312 (T-0051): when FLEEING a death zone / bootstrap-stuck, the score>=14 + animals>=2 settle
     // bar (tuned for an IDEAL home) rejects perfectly good ESCAPE sites and traps the bot oscillating
@@ -362,16 +380,7 @@ export default async function migrate(bot, ctx, opts = {}) {
     // real anchor. deathsNear=0 guarantees we're clear of the cluster; trees>=4 guarantees wood to
     // bootstrap; the min-advance guard avoids settling right next to the zone on a fluke.
     const fleeingDeathZone = insideDeathZone || foodDeathsClustered || bootstrapStuck;
-    const escapeSettleOk = (s) => {
-        const a = s || {};
-        const waterBiome = /ocean|river|beach|shore/.test((a.biome || '').toLowerCase());
-        // ★C324 (T-0055 keystone): require REACHABLE trees≥4, not just visible. The whole T-0055
-        // bug was C312 escape-settling in a wooded_badlands with 10 VISIBLE plateau trees the bot
-        // could never reach → starved at a "tree-rich" home. reachableTrees (y-band filtered)
-        // ensures the escape home actually has wood we can harvest to bootstrap.
-        const usableTrees = (a.reachableTrees != null ? a.reachableTrees : a.trees) || 0;
-        return !waterBiome && usableTrees >= 4 && (a.deathsNear || 0) === 0;
-    };
+    // (escapeSettleOk is a module-level PURE export below — pinned by test/migrate_site.test.mjs)
     let waterLegs = 0;   // ★CUMULATIVE water legs (NOT reset on turn) — detects an open-ocean crossing
 
     // ★TRAVERSAL ROBUSTNESS (C222): the old single goToPosition(24b, GoalNear 3D) per leg stalled
@@ -603,4 +612,4 @@ export default async function migrate(bot, ctx, opts = {}) {
     return r;
 }
 
-export { migrate, shouldMigrate, migrateBearing, siteScore, isSettleSite, biomeScore };
+export { migrate, shouldMigrate, migrateBearing, siteScore, isSettleSite, biomeScore, escapeSettleOk, forceMinAdvance };
