@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining } from './framework/night_owner.js';
@@ -3599,6 +3599,41 @@ const modes_list = [
                                 new Promise((_, rej) => setTimeout(() => rej(new Error('suffoc-dig-timeout')), 3000)),
                             ]);
                         } catch (e) { try { bot.stopDigging(); } catch (_) {} }
+                        return;
+                    }
+                } catch (e) {}
+                // ★T-0182 UNOWNED-DANGER FALLBACK (监工通律: 让位必须有人接). In danger (hurt ≤2.5s ago, or head in
+                //   water with O2<10) and NOBODY is driving the body for ≥3s (no non-always mode active, no dig, no
+                //   pathfinder motion, no movement key held) → take it back: swim up / flee (exposed) / bunker.
+                //   Catches every "yield to X, but X isn't there yet" gap generically (T-0168 / T-0175 shapes).
+                try {
+                    const _sp1 = bot.entity.position;
+                    const _hb1 = bot.blockAt(_sp1.floored().offset(0, 1, 0));
+                    const _headInWater = /water/.test((_hb1 && _hb1.name) || '');
+                    const _hurt = now - this.hurtAt < 2500;
+                    const _drownNow = _headInWater && Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel < 10;
+                    let _owned = modes_list.some(m => m && !m.always && m.active);
+                    try { if (!_owned && bot.targetDigBlock) _owned = true; } catch (e) {}
+                    try { if (!_owned && bot.pathfinder && bot.pathfinder.isMoving && bot.pathfinder.isMoving()) _owned = true; } catch (e) {}
+                    try { if (!_owned && ['forward', 'back', 'left', 'right', 'jump', 'sprint'].some(k => bot.controlState && bot.controlState[k])) _owned = true; } catch (e) {}
+                    if (_owned || !(_hurt || _drownNow)) this._unownedSince = 0;
+                    else if (!this._unownedSince) this._unownedSince = now;
+                    const _act = unownedDangerAction({
+                        unownedMs: this._unownedSince ? now - this._unownedSince : 0,
+                        hurtRecently: _hurt, headInWater: _headInWater, oxygen: bot.oxygenLevel,
+                        exposed: _sp1.y >= 50 && !(bot._mobility && bot._mobility.enclosed),
+                    });
+                    if (_act && now - (this._unownedActAt || 0) > 6000) {
+                        this._unownedActAt = now; this._unownedSince = 0;
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [reflex_watchdog] ★UNOWNED DANGER ≥${UNOWNED_DANGER_MS}ms (hp=${Math.round(bot.health)} O2=${bot.oxygenLevel} headInWater=${_headInWater} mob=${(bot._mobility && bot._mobility.state) || '-'}) — nobody driving, taking back: ${_act} (T-0182)\n`); } catch (e) {}
+                        const _spMode = modes_list.find(x => x.name === 'self_preservation');
+                        if (_act === 'swim') {
+                            try { bot.setControlState('jump', true); setTimeout(() => { try { bot.setControlState('jump', false); } catch (e) {} }, 1500); } catch (e) {}
+                        } else if (_spMode && _act === 'flee' && typeof _spMode.sprintFlee === 'function') {
+                            execute(_spMode, agent, () => _spMode.sprintFlee(agent));
+                        } else if (_spMode && typeof _spMode.bunkerDown === 'function') {
+                            execute(_spMode, agent, () => _spMode.bunkerDown(agent));
+                        }
                         return;
                     }
                 } catch (e) {}

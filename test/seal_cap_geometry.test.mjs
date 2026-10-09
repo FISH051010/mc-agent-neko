@@ -274,3 +274,15 @@ test('T-0174: dig-slot rule — rescue digs preempt task digs; while a rescue ho
     assert.equal(taskDigBlockedByRescue({ preemptUntil: 500, now }), false, 'expired lock');
     assert.equal(taskDigBlockedByRescue({ preemptUntil: 0, now }), false, 'no preemption → no lock');
 });
+
+test('T-0182: unowned-danger fallback — in danger with nobody driving for ≥3s → take the body back', async () => {
+    const { unownedDangerAction } = await import('../src/agent/framework/mobility_signals.js');
+    // death #11 shape: head under water, O2 dropping, 11s with act='-'
+    assert.equal(unownedDangerAction({ unownedMs: 3500, hurtRecently: true, headInWater: true, oxygen: 4, exposed: false }), 'swim');
+    // death #8 shape: zombie hitting, underground, nobody acting
+    assert.equal(unownedDangerAction({ unownedMs: 3500, hurtRecently: true, headInWater: false, oxygen: 20, exposed: false }), 'bunker');
+    assert.equal(unownedDangerAction({ unownedMs: 3500, hurtRecently: true, headInWater: false, oxygen: 20, exposed: true }), 'flee', 'exposed surface → run (user order: flee over in-place bunker)');
+    assert.equal(unownedDangerAction({ unownedMs: 1500, hurtRecently: true, headInWater: false, oxygen: 20, exposed: true }), null, 'give the receiver a moment first');
+    assert.equal(unownedDangerAction({ unownedMs: 9000, hurtRecently: false, headInWater: false, oxygen: 20, exposed: true }), null, 'no danger → idle is fine');
+    assert.equal(unownedDangerAction({ unownedMs: 9000, hurtRecently: false, headInWater: true, oxygen: 18, exposed: false }), null, 'controlled dive with air is not danger');
+});

@@ -12,7 +12,15 @@
 
 ---
 
-## C375. ★封顶水袋溺水的反射交接空档: 溺水即升 ENTOMBED + 游泳反射只在 ENTOMBED 已接手时才让位（swim_progress.js + modes.js 需重启,T-0180,worker-death,⏳待重启）
+## C376. ★★通律"让位必须有人接"的常驻兜底: 危险中 ≥3s 无人掌舵 → reflex_watchdog 收回控制（modes.js reflex_watchdog + framework/mobility_signals.unownedDangerAction 需重启,T-0182,worker-death,⏳待重启）
+
+**证据**: 两次"让位没人接"致死 —— death #8(T-0168: self_defense 无武器"把身体交给别的处理器", shouldFlee 健康无武器豁免 return false → 7s 零反射被僵尸打死); death #11(T-0175: swim 反射让位给 ENTOMBED, mobility 12s 才升 ENTOMBED → 11s act='-' 溺死)。监工立通律: 任何让位/交出身体的条件必须以"接收方此刻确实已持有"为前提。
+**机理**: 让位条件与接收方触发条件是两个不同的谓词/计时器, 只要不完全重合就有空档; 逐个修(C368/C375)只能堵已死过的那一对。
+**改动**: framework/mobility_signals.js 纯函数 `unownedDangerAction({unownedMs, hurtRecently, headInWater, oxygen, exposed})` + `UNOWNED_DANGER_MS=3000`。reflex_watchdog(常驻)每拍: 危险(≤2.5s 掉血, 或头在水里 O2<10) 且无人掌舵(无非常驻 mode active / 无 targetDigBlock / 寻路不动 / 移动键全松) 持续 ≥3s → 记 progress + 收回: 水里 jump 1.5s 上游; 暴露地表(y≥50 且非封闭) → self_preservation.sprintFlee; 否则 bunkerDown。6s 节流。逐点普查(Explore)另行回写本单并按需补"接收方就绪"前提。
+**可证伪预测**: 出现 `★UNOWNED DANGER ≥3000ms … taking back: swim|flee|bunker (T-0182)` 后 bot 有动作且掉血停止; 不再出现危险中 act='-' 连续 >3s 的死亡。风险: 夜间封坑 hold 期间被隔墙挠/漏缝打(自保 dwell active=owned 不触发; 若 dwell 不 active 则会 bunker 重封, 可接受)。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0182: unowned-danger fallback…'。
+
+## C375. ★封顶水袋溺水的反射交接空档: 溺水即升 ENTOMBED + 游泳反射只在 ENTOMBED 已接手时才让位（swim_progress.js + modes.js 需重启,T-0180,worker-death,🟡已上线 22:52:46Z）
 
 **证据**: death #11 10-09 22:49:00Z drowning+zombie(0.7) @~-10,44,41 夜, mineDown 挖进天然水洞。22:48:41 →SWIM; 22:48:43 mineDown 按 T-0174 让位(生效); 22:48:43→54 act_trace 全程 act='-' ctrl='-'(无任何反射接手, 无 [swim] 日志); 22:48:54 →ENTOMBED; 22:48:50 hp13(-7), 22:48:58 hp4, 22:49:00 死。
 **机理**: 两条旧修复交接空档 —— T-0104 `sealedWaterTrapYield`(溺水+封闭+头顶实心 → 游泳反射立即让位给 ENTOMBED) vs T-0098 `classifySwim`(封闭水袋要 12s 才升 ENTOMBED)。让位立即发生, 接手要 12s → ~12s 无人掌舵, 僵尸贴身打 + 缺氧。

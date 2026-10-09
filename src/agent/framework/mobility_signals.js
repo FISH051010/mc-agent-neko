@@ -50,6 +50,19 @@ export function taskDigBlockedByRescue({ preemptUntil, now = Date.now(), rescueT
     return Number(preemptUntil) > now;
 }
 
+// ★T-0182 让位必须有人接 (监工通律: "让位/交出身体以接收方此刻已持有为前提"): 两次致死都是"让位没人接" —
+//   T-0168 self_defense 无武器让给 shouldFlee, shouldFlee 豁免 → 零反射; T-0175 swim 让给 mobility, mobility 12s
+//   后才接。逐个修让位条件之外, 再加一道常驻兜底: 处于危险 (≤2.5s 内掉血, 或头在水里且 O2<10) 且 ≥3s 无人掌舵
+//   (无非常驻 mode active / 没在挖 / 寻路不动 / 移动键全松) → 收回控制: 水里先上游, 暴露地表逃, 地下/封闭封坑。
+export const UNOWNED_DANGER_MS = 3000;
+export function unownedDangerAction({ unownedMs, hurtRecently, headInWater, oxygen, exposed, threshold = UNOWNED_DANGER_MS }) {
+    const drowning = !!headInWater && Number.isFinite(oxygen) && oxygen < 10;
+    if (!(hurtRecently || drowning)) return null;
+    if (!(unownedMs >= threshold)) return null;
+    if (headInWater) return 'swim';
+    return exposed ? 'flee' : 'bunker';
+}
+
 // ★T-0123 挖出 burst 截止时间: ENTOMBED/SEALED 的单次 burst (≤2-3 次挖, 每次挖自带 ≤20s 超时) 里还有
 // bot.equip / bot.tool.equipForBlock / lookAt 这类无超时 await — 背包事务不同步时 equip 永不 resolve。
 // 实录 10-10 17:00:48: "Entombed — digging out!" 之后再无 "Mode mobility finished" → mobility 一直 active →
