@@ -73,6 +73,7 @@ export function readState(t = now()) {
 
     return {
         t, v, wm, inv, has, count, deaths, progTail, ageS, mob, picks, ach, pickTier,
+        mobAge: (v && Number.isFinite(v.mobAge)) ? v.mobAge : null, mobRaw: (v && v.mob) || '',
         chunk: v ? `${Math.floor(v.x / 16)},${Math.floor(v.z / 16)}` : '?',
         hp: v ? v.hp : null, food: v ? v.food : null,
         skill: v ? v.skill : null,

@@ -414,6 +414,9 @@ class WSMessageServer {
                     held: (bot.heldItem && bot.heldItem.name) || 'empty',   // exposes digging-with-wrong-tool
                     pickFx,                                                  // effective (non-worn-out) pickaxes
                     armor,                                                   // ★C314-A worn armor pieces (none = defenseless → swarm death risk)
+                    // mobAge: 距 mobility 分类器上次成功评定的秒数 (每 ~2s 一评; null=从未评定)。T-0124 后加: 分类器
+                    //   可能静默停摆 (那次是漏 import 的 ReferenceError 被吞 1.5h), state 字段本身看不出来。
+                    mobAge: (bot._mobility && bot._mobility.at) ? Math.round((Date.now() - bot._mobility.at) / 1000) : null,
                     mob: ((bot._mobility && bot._mobility.state) || '?') + (bot._mobility && bot._mobility.enclosed ? '/ENC' : ''),   // mobility state machine (FREE/POCKET/ENTOMBED/SWIM[/ENC=封闭地穴])
                     pinKicks: bot._persistentPinKicks || 0,   // ★reflex_watchdog escalation: N (>3) = bot is in a PERSISTENT pin the forced-interrupt kick can't break — supervisor should dispatch a relocating recovery (forageExplore/escapePlan). 0 = not pinned / kick still working.
                     // ★2026-07-14 admin 独占标志 (用户令: admin 要求的炼铁/待命是合法站桩): watchdog 的

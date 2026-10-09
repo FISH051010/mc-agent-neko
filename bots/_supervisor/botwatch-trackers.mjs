@@ -75,6 +75,13 @@ export const survivalChurnActive = (s) => !!(s._churn && s._churn.churnMs >= 15 
 //    actionable threat) is CORRECT sheltering, not stuck. ──
 export const mobilityStuckActive = (s) => STUCK_MOBILITY_RE.test(s.mob || '')
     && !(s.wm && s.wm.time && !s.wm.time.isDay && s.wm.cover && s.wm.cover.coverReal && (!s.threat || (s.threat.actionable | 0) === 0));
+// ── MOBILITY-STALE (T-0124): the mobility classifier itself stopped updating. 2026-10-09 16:57Z–17:25Z a missing
+//    import threw ReferenceError every tick, swallowed by a bare catch → bot._mobility frozen for 1.5h, kernelDriver
+//    froze twice, and no detector noticed (every other detector READS mob and trusted the frozen value). Fires on
+//    vitals.mobAge > 30s (classifier runs every ~2s) or a raw '?' state. Only meaningful while vitals are fresh.
+export const MOBILITY_STALE_SEC = 30;
+export const mobilityStaleActive = (s) => !!s.v && s.ageS < 60
+    && ((Number.isFinite(s.mobAge) && s.mobAge > MOBILITY_STALE_SEC) || /^\?/.test(s.mobRaw || ''));
 // ── BOOTSTRAP resource-floor deadlock (T-0012): 0 usable picks AND no pickaxe in the bag (a table does NOT clear it). ──
 export const bootstrapDeadlockActive = (s) => s.picks === 0 && !s.has(/_pickaxe$/);
 // ── FALSE-SHELTER (T-0040/T-0085): the SILENT night near-miss — sheltering intent but roof NOT sealed. ──

@@ -4169,7 +4169,8 @@ const modes_list = [
                     this._lastEnc = enclosed;
                     try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] enclosed → ${enclosed}\n`); } catch (e) {}
                 }
-                bot._mobility = { state: st, since: this.stateSince, exits, enclosed };
+                // at = 本次分类成功的时间戳 → vitals.mobAge → botwatch MOBILITY-STALE (T-0124: 分类器停摆 1.5h 无人察觉)
+                bot._mobility = { state: st, since: this.stateSince, exits, enclosed, at: Date.now() };
             } catch (e) {
                 // ★T-0124: this used to be a bare `return` — a ReferenceError here silently killed the whole
                 //   mobility state machine for 1h+ (bot._mobility frozen/'?'). Never swallow silently: log

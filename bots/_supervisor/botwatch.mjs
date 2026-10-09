@@ -39,7 +39,7 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive } from './botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, mobilityStaleActive } from './botwatch-trackers.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -190,6 +190,19 @@ const D = [
             title: `移动受困 ${s.mob} ${Math.round(dur / 60000)}min @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'}`.slice(0, 140),
             detail: `world_model.mobility=${s.mob} 持续 ${Math.round(dur / 60000)}min; skill=${s.skill} picks=${s.picks} hasTablePath=${s.wm && s.wm.kit ? s.wm.kit.hasTablePath : '?'} hp=${s.hp} food=${s.food}`.slice(0, 240),
             evidence: { pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, vitals: { hp: s.hp, food: s.food, skill: s.skill }, mobility: s.wm ? s.wm.mobility : null, commitment: s.commitment, progressTail: s.progTail },
+        }),
+    },
+    {
+        key: 'mobility-stale', type: 'framework', severity: 'critical', dedupKey: 'mobility-stale', label: 'MOBILITY-STALE',
+        fireMs: 60000, clearMs: 30000,
+        // T-0124: the classifier stopping is invisible to every other detector (they all trust s.mob). One
+        // minute of a stale/'?' mobility model = the reflex layer is blind; page immediately.
+        active: mobilityStaleActive,
+        ticket: (s, dur) => ({
+            type: 'framework', severity: 'critical', dedupKey: 'mobility-stale',
+            title: `mobility 状态机停摆 ${Math.round(dur / 1000)}s: mobAge=${s.mobAge}s mob=${s.mobRaw || '?'} (分类器未在更新)`.slice(0, 140),
+            detail: `vitals 新鲜(${s.ageS}s)但 bot._mobility 已 ${s.mobAge}s 未被分类器刷新 (正常 ~2s)。查 progress.txt '[mobility] ★CLASSIFY ERROR' 与 modes.js mobility update 的异常; 期间所有依赖 mob 的反射/检测/验收结论不可信。`.slice(0, 400),
+            evidence: { pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, mobAge: s.mobAge, mob: s.mobRaw, skill: s.skill, progressTail: s.progTail },
         }),
     },
     {

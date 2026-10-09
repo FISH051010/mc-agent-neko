@@ -121,3 +121,18 @@ test('T-0012: BOOTSTRAP deadlock = no usable pick AND no pickaxe item; a craftin
     assert.equal(bootstrapDeadlockActive({ picks: 0, has: has(['wooden_pickaxe']) }), false);
     assert.equal(bootstrapDeadlockActive({ picks: 1, has: has(['stone_pickaxe']) }), false);
 });
+
+// ── T-0124: the mobility classifier silently stopped for 1.5h; no detector noticed ─────────────────────────
+import { mobilityStaleActive } from '../bots/_supervisor/botwatch-trackers.mjs';
+
+test('T-0124: MOBILITY-STALE fires when the classifier has not refreshed bot._mobility for >30s', () => {
+  const v = { x: 0, y: 64, z: 0 };
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 2, mobRaw: 'FREE' }), false);
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: 300, mobRaw: 'ENTOMBED' }), true);   // live: frozen in ENTOMBED
+  assert.equal(mobilityStaleActive({ v, ageS: 2, mobAge: null, mobRaw: '?' }), true);         // live: '?' after restart
+});
+
+test('T-0124: MOBILITY-STALE stays quiet when vitals themselves are stale (that is the STALE detector)', () => {
+  assert.equal(mobilityStaleActive({ v: { x: 0 }, ageS: 600, mobAge: 900, mobRaw: 'FREE' }), false);
+  assert.equal(mobilityStaleActive({ v: null, ageS: 9999, mobAge: null, mobRaw: '' }), false);
+});
