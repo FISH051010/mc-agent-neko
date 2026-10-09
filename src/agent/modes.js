@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining } from './framework/night_owner.js';
@@ -234,6 +234,13 @@ function tableRecoveryHold(bot) {
         isNight = t >= 13000 && t <= 23000;
     } catch (e) {}
     if (bot.food < 14) return null;
+    // ★T-0182 (普查 #3): this hold makes the ENTOMBED dig-out stand down for prepNether's table recovery — never
+    //   while drowning or being hurt (it had no O2/damage check: with the swim reflex yielding to ENTOMBED, a
+    //   capped water pocket ended up with NOBODY acting).
+    try {
+        const _hb = bot.blockAt(bot.entity.position.floored().offset(0, 1, 0));
+        if (dangerBlocksHold({ headInWater: /water/.test((_hb && _hb.name) || ''), oxygen: bot.oxygenLevel, msSinceDamage: Date.now() - (bot.lastDamageTime || 0) })) return null;
+    } catch (e) {}
     const mob = bot._mobility ? (bot._mobility.state || '') : '';
     const enclosed = !!(bot._mobility && bot._mobility.enclosed);
     if (!(/POCKET|ENTOMBED/.test(mob) || enclosed)) return null;
@@ -570,14 +577,20 @@ const modes_list = [
             try {
                 if (!bot || !bot.entity) return false;
                 const p = bot.entity.position;
-                let creeperClose = false, zombiePointBlank = false;
+                let creeperClose = false, zombiePointBlank = false, zombies = 0;
                 for (const e of Object.values(bot.entities || {})) {
                     if (!(e && e.position && e.name)) continue;
                     const d = e.position.distanceTo(p);
                     if (/creeper/i.test(e.name) && d < 8) { creeperClose = true; break; }   // 爆炸威胁优先, 直接不适用
-                    if (/zombie|husk|drowned/i.test(e.name) && d < 3.5) zombiePointBlank = true;
+                    if (/zombie|husk|drowned/i.test(e.name) && d < 3.5) { zombiePointBlank = true; zombies++; }
                 }
                 if (creeperClose || !zombiePointBlank) return false;
+                // ★T-0182 (普查 #10): "stand and brawl" hands the body to self_defense — it must actually be able to
+                //   take it: a weapon (sword/axe, or a usable fallback pick) and not a pack (self_defense refuses
+                //   ≥3 → nobody acts, the death #8 shape with armour on).
+                const _armed = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name || ''))
+                    || (() => { try { return !!skills.fallbackPickWeapon(bot.inventory.items()); } catch (e) { return false; } })();
+                if (!brawlHandoffReady({ armed: _armed, pointBlankZombies: zombies })) return false;
                 const armorRe = /_helmet$|_chestplate$|_leggings$|_boots$/;
                 const sl = bot.inventory.slots || [];
                 for (let i = 5; i <= 8; i++) { if (sl[i] && armorRe.test(sl[i].name || '')) return true; }   // 穿戴中才算甲
@@ -1459,7 +1472,19 @@ const modes_list = [
             // (the terrain is the enemy); sp only keeps the body for a CLOSE threat.)
             if (bot._mobility && /MAROONED|ENTOMBED/.test(bot._mobility.state)) {
                 const closeThreat = this.nearbyHostiles(bot).some(e => e.position && e.position.distanceTo(bot.entity.position) < 6);
-                if (!closeThreat) return;
+                // ★T-0182 (普查 #1): the yield skipped EVERY branch below — lava/fire, and drowning when the swim yield's own
+                //   head-capped check (sealedWaterTrapYield) wouldn't hold. The march/dig-out cannot handle fire or open
+                //   water; keep those for us. (Capped-pocket drowning still yields via sealedWaterTrapYield below.)
+                let _yield = !closeThreat;
+                try {
+                    const _fb = bot.blockAt(bot.entity.position.floored()), _hb = bot.blockAt(bot.entity.position.floored().offset(0, 1, 0));
+                    _yield = marchYieldAllowed({
+                        closeThreat,
+                        inLavaOrFire: /lava|fire/.test(((_fb && _fb.name) || '') + ((_hb && _hb.name) || '')) || !!(bot.entity && bot.entity.onFire),
+                        headInWater: /water/.test((_hb && _hb.name) || ''), oxygen: bot.oxygenLevel,
+                    });
+                } catch (e) {}
+                if (_yield) return;
             }
             let block = bot.blockAt(bot.entity.position);
             let blockAbove = bot.blockAt(bot.entity.position.offset(0, 1, 0));
@@ -3319,8 +3344,18 @@ const modes_list = [
                 } catch (e) {}
             }
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
-            const swarmed = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), 6) &&
-                Object.values(bot.entities).filter(e => e && mc.isHostile(e) && e.position && e.position.distanceTo(bot.entity.position) < 8).length >= 3;
+            // ★T-0182 (普查 #13/#23): count the swarm with the SAME reach/height-filtered set self_preservation uses
+            //   (shouldFlee's "can win"/"swarmed" decision). Raw mc.isHostile counted walled/elevated mobs here but
+            //   not there → self_preservation said "fight", self_defense said "swarmed, flee" → neither acted.
+            let swarmed;
+            try {
+                const _spm = modes_list.find(m => m.name === 'self_preservation');
+                const _hs = (_spm && typeof _spm.nearbyHostiles === 'function') ? _spm.nearbyHostiles(bot) : null;
+                swarmed = _hs ? (_hs.filter(e => e.position && e.position.distanceTo(bot.entity.position) < 8).length >= 3
+                        && _hs.some(e => e.position && e.position.distanceTo(bot.entity.position) < 6))
+                    : (world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), 6) &&
+                        Object.values(bot.entities).filter(e => e && mc.isHostile(e) && e.position && e.position.distanceTo(bot.entity.position) < 8).length >= 3);
+            } catch (e) { swarmed = false; }
             // ★C353 (T-0063): DISENGAGE the unreachable ranged trap. If we're boxed in a closed pocket
             // and the only threat is a wall-blocked skeleton/stray/pillager we can never melee, stop
             // whiffing at it — return so mobility's POCKET escape (idx 2948, otherwise starved by our
@@ -3612,10 +3647,14 @@ const modes_list = [
                     const _headInWater = /water/.test((_hb1 && _hb1.name) || '');
                     const _hurt = now - this.hurtAt < 2500;
                     const _drownNow = _headInWater && Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel < 10;
-                    let _owned = modes_list.some(m => m && !m.always && m.active);
+                    // "owned" = something is EFFECTIVELY driving: real displacement (≥0.8b in the last 3s) or a dig in
+                    // progress. (普查 #36: 'any mode active / any key held / pathfinder isMoving' counted a holding execute,
+                    // a futile jump against a cap, or a stuck path as "owned" — exactly the gaps that kill.)
+                    const _tr = (this._ownTrail = (this._ownTrail || []).filter(q => now - q.t <= 3000));
+                    _tr.push({ t: now, x: _sp1.x, y: _sp1.y, z: _sp1.z });
+                    const _o = _tr[0];
+                    let _owned = !!_o && now - _o.t >= 2500 ? Math.hypot(_sp1.x - _o.x, _sp1.y - _o.y, _sp1.z - _o.z) >= 0.8 : true;
                     try { if (!_owned && bot.targetDigBlock) _owned = true; } catch (e) {}
-                    try { if (!_owned && bot.pathfinder && bot.pathfinder.isMoving && bot.pathfinder.isMoving()) _owned = true; } catch (e) {}
-                    try { if (!_owned && ['forward', 'back', 'left', 'right', 'jump', 'sprint'].some(k => bot.controlState && bot.controlState[k])) _owned = true; } catch (e) {}
                     if (_owned || !(_hurt || _drownNow)) this._unownedSince = 0;
                     else if (!this._unownedSince) this._unownedSince = now;
                     const _act = unownedDangerAction({
@@ -3632,6 +3671,7 @@ const modes_list = [
                         } else if (_spMode && _act === 'flee' && typeof _spMode.sprintFlee === 'function') {
                             execute(_spMode, agent, () => _spMode.sprintFlee(agent));
                         } else if (_spMode && typeof _spMode.bunkerDown === 'function') {
+                            _spMode.bunkerCooldownUntil = 0;   // 普查 #17: a no-mob seal-fail cooldown would make this a no-op
                             execute(_spMode, agent, () => _spMode.bunkerDown(agent));
                         }
                         return;
@@ -4476,7 +4516,8 @@ const modes_list = [
                 let _drown = false;
                 try {
                     const _fp = bot.entity.position.floored();
-                    _drown = skills.drowningPriority({ headInWater: /water/.test((bot.blockAt(_fp.offset(0, 1, 0)) || {}).name || ''), oxygen: bot.oxygenLevel });
+                    _drown = skills.drowningPriority({ headInWater: /water/.test((bot.blockAt(_fp.offset(0, 1, 0)) || {}).name || ''),
+                        feetInWater: /water/.test((bot.blockAt(_fp) || {}).name || ''), oxygen: bot.oxygenLevel });
                 } catch (e) {}
                 const owner = _drown ? `mobility:DROWN-${why || 'dig'}` : `mobility:${why || 'dig'}`;
                 const _rescue = isRescueDig(owner, _drown);

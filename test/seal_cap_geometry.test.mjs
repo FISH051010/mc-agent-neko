@@ -250,7 +250,7 @@ test('T-0172③: master dig gate refuses digging a gravity column standing over 
 
 test('T-0174: drowning outranks task digging (death #10: mineDown held the dig slot underwater, rescue got "dig slot busy" ×6)', () => {
     assert.equal(drowningPriority({ headInWater: true, oxygen: 20 }), true, 'head under water → rescue first');
-    assert.equal(drowningPriority({ headInWater: false, oxygen: 8 }), true, 'air running out');
+    assert.equal(drowningPriority({ headInWater: false, feetInWater: true, oxygen: 8 }), true, 'air running out (body in water)');
     assert.equal(drowningPriority({ headInWater: false, oxygen: 20 }), false);
     assert.equal(drowningPriority({ headInWater: false, oxygen: undefined }), false);
 });
@@ -285,4 +285,26 @@ test('T-0182: unowned-danger fallback — in danger with nobody driving for ≥3
     assert.equal(unownedDangerAction({ unownedMs: 1500, hurtRecently: true, headInWater: false, oxygen: 20, exposed: true }), null, 'give the receiver a moment first');
     assert.equal(unownedDangerAction({ unownedMs: 9000, hurtRecently: false, headInWater: false, oxygen: 20, exposed: true }), null, 'no danger → idle is fine');
     assert.equal(unownedDangerAction({ unownedMs: 9000, hurtRecently: false, headInWater: true, oxygen: 18, exposed: false }), null, 'controlled dive with air is not danger');
+});
+
+test('T-0182 普查: hand-offs only to a receiver that can take it now', async () => {
+    const { dangerBlocksHold, brawlHandoffReady, marchYieldAllowed } = await import('../src/agent/framework/mobility_signals.js');
+    // #3 tableRecoveryHold must not park the ENTOMBED dig-out while drowning / being hit
+    assert.equal(dangerBlocksHold({ headInWater: true, msSinceDamage: 60000 }), true);
+    assert.equal(dangerBlocksHold({ headInWater: false, msSinceDamage: 800 }), true);
+    assert.equal(dangerBlocksHold({ headInWater: false, msSinceDamage: 60000 }), false);
+    // #10 armoredZombieBrawl → self_defense only when self_defense can actually fight
+    assert.equal(brawlHandoffReady({ armed: false, pointBlankZombies: 1 }), false, 'armour but no weapon (death #8 shape)');
+    assert.equal(brawlHandoffReady({ armed: true, pointBlankZombies: 3 }), false, 'a pack: self_defense refuses ≥3');
+    assert.equal(brawlHandoffReady({ armed: true, pointBlankZombies: 2 }), true);
+    // #1 self_preservation yields to MAROONED/ENTOMBED only when nothing it alone handles is happening
+    assert.equal(marchYieldAllowed({ closeThreat: false, inLavaOrFire: true, headInWater: false, oxygen: 20 }), false);
+    assert.equal(marchYieldAllowed({ closeThreat: false, inLavaOrFire: false, headInWater: true, oxygen: 10 }), false);
+    assert.equal(marchYieldAllowed({ closeThreat: false, inLavaOrFire: false, headInWater: false, oxygen: 20 }), true);
+});
+
+test('T-0174 hotfix: stale bot.oxygenLevel on dry land is not "drowning" (23:03: mineDown aborted 3x on land, O2=-1)', () => {
+    assert.equal(drowningPriority({ headInWater: false, feetInWater: false, oxygen: -1 }), false);
+    assert.equal(drowningPriority({ headInWater: false, feetInWater: true, oxygen: 6 }), true);
+    assert.equal(drowningPriority({ headInWater: true, feetInWater: true, oxygen: 20 }), true);
 });

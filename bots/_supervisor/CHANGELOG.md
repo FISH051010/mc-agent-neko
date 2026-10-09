@@ -12,7 +12,14 @@
 
 ---
 
-## C376. ★★通律"让位必须有人接"的常驻兜底: 危险中 ≥3s 无人掌舵 → reflex_watchdog 收回控制（modes.js reflex_watchdog + framework/mobility_signals.unownedDangerAction 需重启,T-0182,worker-death,⏳待重启）
+## C377. ★让位普查首批 + 陈旧 O2 误判: 4 处高危让位补"接收方就绪"前提, C376 兜底按实效判掌舵, O2 只在身体在水里时可信（modes.js + framework/mobility_signals + skills.drowningPriority 需重启,T-0182/T-0174,worker-death,⏳待重启）
+
+**证据**: (a) 让位普查(Explore, 37 处, 大多不核对接收方): 高危 #10 armoredZombieBrawl(穿甲无武器/一群也"死战不逃", self_defense 无武器不打 = death #8 形状)、#13/#23 swarm 计数口径不一(self_defense 原始 isHostile vs self_preservation 过滤后 → 两边都不接)、#1 self_preservation 对 MAROONED/ENTOMBED 整体让位连岩浆/着火/开放水溺水分支也跳过、#3 tableRecoveryHold 无 O2/受伤检查把 ENTOMBED 挖出原地 park、#36 C376 兜底"有 mode active/按着键/寻路 isMoving 即算掌舵"太宽、bunker 动作在 45s 冷却内是 no-op。(b) 23:03 实机: 陆地 y68 满血, bot.oxygenLevel 溺死重生后陈旧停在 -1..2 → C373 drowningPriority(O2<12) 误判 → mineDown 三连中止 → GO_UNDERGROUND 冷却(4532302 已先热修 mineDown)。
+**改动**: mobility_signals 纯函数 `dangerBlocksHold`(头在水里/3s 内掉血 → 不许 hold)、`brawlHandoffReady`(有武器含后备镐 且 贴脸僵尸 1..2)、`marchYieldAllowed`(近身威胁/着火岩浆/开放水溺水不让位)。modes: tableRecoveryHold 用 dangerBlocksHold; armoredZombieBrawl 用 brawlHandoffReady; sp 的 MAROONED/ENTOMBED 让位用 marchYieldAllowed; self_defense swarmed 改用 self_preservation.nearbyHostiles 同口径。C376 兜底"掌舵"改为实效(3s 内位移≥0.8b 或正在挖), bunker 前清 bunkerCooldownUntil。skills.drowningPriority 加 feetInWater(O2 仅在脚/头在水里时算), guardedDig 调用补脚格; dangerBlocksHold 不看 O2。
+**可证伪预测**: 陆地不再出现 `head in water / O2=-1` 类中止; 穿甲无武器被僵尸贴脸时走 flee/dig-in 而非站桩; 危险中原地 hold 被打 ≥3s 出 `★UNOWNED DANGER … taking back`。普查剩余条目(#33 仲裁器负缓存/#24 DISENGAGE/#11 armoredSoloBrawl/#25 MAROONED 残血/#15 夜挖心跳/#34 kernel actionable 口径)已回写 T-0182 待后续。
+**回滚**: revert, 重启 main.js。回归 seal_cap_geometry 'T-0182 普查…' + 'T-0174 hotfix…'。
+
+## C376. ★★通律"让位必须有人接"的常驻兜底: 危险中 ≥3s 无人掌舵 → reflex_watchdog 收回控制（modes.js reflex_watchdog + framework/mobility_signals.unownedDangerAction 需重启,T-0182,worker-death,🟡已上线 22:56:24Z, 判定已在 C377 收紧）
 
 **证据**: 两次"让位没人接"致死 —— death #8(T-0168: self_defense 无武器"把身体交给别的处理器", shouldFlee 健康无武器豁免 return false → 7s 零反射被僵尸打死); death #11(T-0175: swim 反射让位给 ENTOMBED, mobility 12s 才升 ENTOMBED → 11s act='-' 溺死)。监工立通律: 任何让位/交出身体的条件必须以"接收方此刻确实已持有"为前提。
 **机理**: 让位条件与接收方触发条件是两个不同的谓词/计时器, 只要不完全重合就有空档; 逐个修(C368/C375)只能堵已死过的那一对。

@@ -6460,11 +6460,12 @@ export function breakWouldFlood(blockAt, pos) {
 /**
  * ★T-0174 (death #10 10-09 22:04:16 溺死 @y38): mineDown 进水后仍在水下挖石 (占着挖掘槽 targetDigBlock),
  * mobility ENTOMBED 救援 'dig slot busy' ×6 拿不到槽 → 溺死。保命挖掘排在任务挖掘后面 = 优先级倒置。
- * 人类: 憋不住气了立刻停下手里的活往外挖。判据: 头在水里, 或氧气 < 12 (满 20)。
+ * 人类: 憋不住气了立刻停下手里的活往外挖。判据: 头在水里, 或脚在水里且氧气 < 12 (满 20)。
+ * ★hotfix 23:03: bot.oxygenLevel 在溺死重生后会陈旧停在 -1..2 (陆地满血也是) → 只在身体真在水里时才信 O2。
  */
-export function drowningPriority({ headInWater, oxygen }) {
+export function drowningPriority({ headInWater, feetInWater = false, oxygen }) {
     if (headInWater) return true;
-    return Number.isFinite(oxygen) && oxygen < 12;
+    return !!feetInWater && Number.isFinite(oxygen) && oxygen < 12;
 }
 
 /**

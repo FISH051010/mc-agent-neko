@@ -63,6 +63,24 @@ export function unownedDangerAction({ unownedMs, hurtRecently, headInWater, oxyg
     return exposed ? 'flee' : 'bunker';
 }
 
+// ★T-0182 普查补"接收方就绪"前提 (纯判据, modes 调用):
+/** #3 tableRecoveryHold 等"挖出原地让位 hold": 溺水中 / 刚挨打 → 不得 hold (否则封顶水袋无人掌舵)。 */
+export function dangerBlocksHold({ headInWater, msSinceDamage }) {
+    // (O2 deliberately not used: bot.oxygenLevel goes stale at -1..2 on dry land after a drowning death — 23:03 hotfix)
+    if (headInWater) return true;
+    return Number.isFinite(msSinceDamage) && msSinceDamage < 3000;
+}
+/** #10 armoredZombieBrawl 把身体交给 self_defense: 接收方得真能打 —— 有武器(含可用后备镐)且不是一群(≤2 只贴脸)。 */
+export function brawlHandoffReady({ armed, pointBlankZombies }) {
+    return !!armed && pointBlankZombies >= 1 && pointBlankZombies <= 2;
+}
+/** #1 self_preservation 让位给 MAROONED/ENTOMBED: 近身威胁、着火/岩浆、开放水体溺水时都不让 (那些是 sp 自己的活)。 */
+export function marchYieldAllowed({ closeThreat, inLavaOrFire, headInWater, oxygen }) {
+    if (closeThreat || inLavaOrFire) return false;
+    if (headInWater && Number.isFinite(oxygen) && oxygen <= 14) return false;
+    return true;
+}
+
 // ★T-0123 挖出 burst 截止时间: ENTOMBED/SEALED 的单次 burst (≤2-3 次挖, 每次挖自带 ≤20s 超时) 里还有
 // bot.equip / bot.tool.equipForBlock / lookAt 这类无超时 await — 背包事务不同步时 equip 永不 resolve。
 // 实录 10-10 17:00:48: "Entombed — digging out!" 之后再无 "Mode mobility finished" → mobility 一直 active →
