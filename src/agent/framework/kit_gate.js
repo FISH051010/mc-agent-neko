@@ -56,3 +56,11 @@ export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
     }
     return { wants: [], partial: false };
 }
+
+// ★T-0107 DIG_ONE_CAP (挖三填一) viability, extracted verbatim from modes.js computeNightPlan inputs.
+// Requires a REAL pick: a pickless bot "dig_one"-ing soft dirt buries itself under the forest floor
+// (live 06-30 @y66→y62 capped → dawn trees all "+4 elevated unreachable" → wood=0 bootstrap deadlock).
+// Never in a gravity column, never below y16 (dig_one is a shallow night shelter).
+export function digOneCapViable({ picks, gravityPit, y }) {
+    return picks >= 1 && !gravityPit && y > 16;
+}

@@ -1,5 +1,5 @@
 import * as skills from './library/skills.js';
-import { undergroundKitGate } from './framework/kit_gate.js';
+import { undergroundKitGate, digOneCapViable } from './framework/kit_gate.js';
 import { readJsonCached } from '../utils/json_io.js';
 import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
@@ -6433,7 +6433,7 @@ const modes_list = [
                 //   → chopWood 全 blacklist → wood=0 bootstrap 死锁)。pickless 不能挖矿,dig_one 对它只剩
                 //   "埋自己"的恶果; SEAL_FORT(原地封顶不下挖)同样安全(keepInv + 天亮树仍可达),严格更优。
                 //   故 dig_one 现在要求真镐; pickless 落 SEAL_FORT。(_floorBareDig 仍用于上方 gravity-pit 语义。)
-                const digOneViable = picks >= 1 && !_gravityPitTrap() && y > 16;
+                const digOneViable = digOneCapViable({ picks, gravityPit: _gravityPitTrap(), y });   // framework/kit_gate.js
                 // landmark navigation costs (manhattan-ish straight-line; bedReachCost surfaced for skills)
                 const _bedLm = _nearLm('bed');
                 const _bedReachCost = _bedLm ? _bedLm.dist : null;
