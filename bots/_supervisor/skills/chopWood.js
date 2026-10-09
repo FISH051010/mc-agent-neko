@@ -57,6 +57,11 @@ const _blk = (k) => {
     if (e) _unreach.delete(k);
     return false;
 };
+// ★C339 (T-0064): a LOG farther than arm-adjacent (2.2b) that we cannot see = reaching through leaf canopy. PURE.
+export function xrayTrunkSkip(dist, canSee) {
+    return dist > 2.2 && !canSee;
+}
+
 export default async function chopWood(bot, ctx, count = 8, opts = {}) {
     const { skills, world, log, Vec3, mc } = ctx;
     // ★跨热加载持久化 (实锤: customSkill每次调用重新import本模块,模块级Map全清零 —
@@ -250,7 +255,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             try {
                 const d = bot.entity.position.offset(0, 1.6, 0).distanceTo(block.position.offset(0.5, 0.5, 0.5));
                 const see = (() => { try { return bot.canSeeBlock(block); } catch (e) { return true; } })();
-                if (d > 2.2 && !see) {
+                if (xrayTrunkSkip(d, see)) {
                     _motion('dig.xray_skip', { target: `${block.name}@${block.position.x},${block.position.y},${block.position.z}`, dist: +d.toFixed(1), why });
                     return false;
                 }

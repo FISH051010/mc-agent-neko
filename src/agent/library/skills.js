@@ -1275,6 +1275,43 @@ async function _stepBackForDig(bot, target) {
     } catch (e) { try { bot.clearControlStates(); } catch (_) {} return false; }
 }
 
+// ★C304-V/W (T-0035) ore-line geometry: BURIED vein (line through stone / steep shaft air) → dig a path to
+// it; ore ACROSS a horizontal air gap (ravine) → x-ray → reject. Moved verbatim from the collectBlock closure.
+export const _BURIED_MAX_D3 = 24;          // straight-line commit cap (dig-open-a-path is allowed; farther veins belong to branchMine/mineDown)
+export const _BURIED_MAX_OPEN_RUN = 1;     // ≥2 contiguous open cells on a SHALLOW line = a real horizontal gap → REJECT (true buried vein reads maxRun=0)
+export function oreLineBuried(bot, eye, center, d3) {
+    try {
+        if (d3 > _BURIED_MAX_D3) return { ok: false, why: `too-deep d3=${d3.toFixed(1)}>${_BURIED_MAX_D3}` };
+        const vx = center.x - eye.x, vy = center.y - eye.y, vz = center.z - eye.z;
+        const dist = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (dist < 1.001) return { ok: true, why: 'adjacent' };   // right next to bot — C337 handles it
+        const oreCell = center.floored();
+        const oreKey = `${oreCell.x},${oreCell.y},${oreCell.z}`;
+        const steps = Math.ceil(dist / 0.3);
+        let last = null, n = 0, openN = 0, run = 0, maxRun = 0;
+        for (let s = 1; s < steps; s++) {
+            const t = s / steps;
+            const p = eye.offset(vx * t, vy * t, vz * t);
+            if (p.distanceTo(eye) < 1.6) continue;                // skip bot's own body / tunnel-mouth
+            const cell = p.floored();
+            const key = `${cell.x},${cell.y},${cell.z}`;
+            if (key === last) continue;
+            last = key;
+            if (key === oreKey) continue;                         // the ore's own voxel is solid by definition
+            n++;
+            const b = bot.blockAt(cell);
+            // ★C304-W 补刀: 线上有岩浆 = 朝岩浆凿 → 直接拒, steep-carve 也不豁免 (放宽 open-run
+            // 之前岩浆柱会碰巧被当 gap 拒掉, 放宽后必须显式挡)。
+            if (b && /lava/.test(b.name)) return { ok: false, why: `lava-on-line@${cell.x},${cell.y},${cell.z}` };
+            const isOpen = !b || b.boundingBox === 'empty';       // air/cave_air/water all 'empty'
+            if (isOpen) { openN++; run++; if (run > maxRun) maxRun = run; } else run = 0;
+        }
+        // steep line = the open cells are shaft/pit air above or below — stair-carvable, not a gap
+        const steep = Math.abs(vy) >= dist * 0.55;
+        return { ok: steep || (maxRun <= _BURIED_MAX_OPEN_RUN), why: `n=${n} open=${openN} maxRun=${maxRun}${steep ? ' steep-carve' : ''}` };
+    } catch (e) { return { ok: true, why: 'voxel-err(fail-open)' }; }   // C7: never hard-block on internal error
+}
+
 export async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = true, pickup = false, requireLOS = false } = {}) {
     ensureWaterAwareDigTime(bot);
     const dead = (b) => !b || b.boundingBox === 'empty' || b.name === 'air';
@@ -1838,40 +1875,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     //   ① 上限 12→24: "远"≠"不可达", 挖得动就挖 (下游 C337 LOS+≤4.6 仍锁真实挥镐, 不会x-ray)。
     //   ② open-run 只对【平缓视线】判 gap: 视线陡 (|dy|≥dist*0.55, 头顶/脚下矿井的空气柱) 时,
     //      空气是可以凿楼梯绕上/下去的, 不是沟 — 不再当 gap 拒。
-    const _BURIED_MAX_D3 = 24;          // straight-line commit cap (dig-open-a-path is allowed; farther veins belong to branchMine/mineDown)
-    const _BURIED_MAX_OPEN_RUN = 1;     // ≥2 contiguous open cells on a SHALLOW line = a real horizontal gap → REJECT (true buried vein reads maxRun=0)
-    const _lineBuried = (eye, center, d3) => {
-        try {
-            if (d3 > _BURIED_MAX_D3) return { ok: false, why: `too-deep d3=${d3.toFixed(1)}>${_BURIED_MAX_D3}` };
-            const vx = center.x - eye.x, vy = center.y - eye.y, vz = center.z - eye.z;
-            const dist = Math.sqrt(vx * vx + vy * vy + vz * vz);
-            if (dist < 1.001) return { ok: true, why: 'adjacent' };   // right next to bot — C337 handles it
-            const oreCell = center.floored();
-            const oreKey = `${oreCell.x},${oreCell.y},${oreCell.z}`;
-            const steps = Math.ceil(dist / 0.3);
-            let last = null, n = 0, openN = 0, run = 0, maxRun = 0;
-            for (let s = 1; s < steps; s++) {
-                const t = s / steps;
-                const p = eye.offset(vx * t, vy * t, vz * t);
-                if (p.distanceTo(eye) < 1.6) continue;                // skip bot's own body / tunnel-mouth
-                const cell = p.floored();
-                const key = `${cell.x},${cell.y},${cell.z}`;
-                if (key === last) continue;
-                last = key;
-                if (key === oreKey) continue;                         // the ore's own voxel is solid by definition
-                n++;
-                const b = bot.blockAt(cell);
-                // ★C304-W 补刀: 线上有岩浆 = 朝岩浆凿 → 直接拒, steep-carve 也不豁免 (放宽 open-run
-                // 之前岩浆柱会碰巧被当 gap 拒掉, 放宽后必须显式挡)。
-                if (b && /lava/.test(b.name)) return { ok: false, why: `lava-on-line@${cell.x},${cell.y},${cell.z}` };
-                const isOpen = !b || b.boundingBox === 'empty';       // air/cave_air/water all 'empty'
-                if (isOpen) { openN++; run++; if (run > maxRun) maxRun = run; } else run = 0;
-            }
-            // steep line = the open cells are shaft/pit air above or below — stair-carvable, not a gap
-            const steep = Math.abs(vy) >= dist * 0.55;
-            return { ok: steep || (maxRun <= _BURIED_MAX_OPEN_RUN), why: `n=${n} open=${openN} maxRun=${maxRun}${steep ? ' steep-carve' : ''}` };
-        } catch (e) { return { ok: true, why: 'voxel-err(fail-open)' }; }   // C7: never hard-block on internal error
-    };
+    const _lineBuried = (eye, center, d3) => oreLineBuried(bot, eye, center, d3);   // ★C304-V/W — module-level export oreLineBuried (test/ore_reach_geometry.test.mjs)
     const _oreReachable = async (cand) => {
         try {
             const bp = cand.position;
