@@ -121,9 +121,22 @@ function Restart-Agent($reason, [switch]$ClearWorld) {
         $src = Join-Path $proj $f
         if (Test-Path $src) { try { Copy-Item $src (Join-Path $proj ("crash-$stamp-$f")) -Force } catch {} }
     }
+    # ★2026-09-08 加护栏: 这两处杀进程原本是**路径盲**的 —— 端口杀不看占用者是谁,
+    #   命令行杀只 match 'main.js|init_agent.js' 也不看路径。实录事故: 用户把分发包解压到
+    #   D:\mctest 做新用户实测, watchdog 一次例行 relaunch 就把那个无关实例连根拔了
+    #   (debug.log 只留下 `退出 code=4294967295`, 现象是「bot 莫名其妙就没了」)。
+    #   本机上任何别的 node main.js 都会被误杀。两处都收敛到「命令行里含本仓库路径」。
+    $projPat = [regex]::Escape($proj)
     foreach ($port in 8765, 48909) {
         $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-        if ($c) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }
+        if ($c) {
+            $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)" -ErrorAction SilentlyContinue
+            if ($owner -and $owner.CommandLine -match $projPat) {
+                Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+            } else {
+                Add-Content $log "[$(Get-Date -Format o)] port $port held by FOREIGN pid $($c.OwningProcess) - NOT killing"
+            }
+        }
     }
     # ★2026-07-09 EADDRINUSE crash-loop 根因修: 旧代码只按「监听 48909 的进程」杀。一个还在 BOOT
     #   (fork 了 init_agent, 但 mindserver 还没 listen 48909) 的 main.js 逃过端口杀 → 下面又 launch
@@ -131,14 +144,14 @@ function Restart-Agent($reason, [switch]$ClearWorld) {
     #   重启 → 自持崩溃循环 (实录 agent.err 18:17 连环 EADDRINUSE)。修: 按命令行扫掉所有残留
     #   main.js / init_agent.js 节点进程 (含 mid-boot 的), 再轮询确认 48909 真空出来才 relaunch。
     Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -match 'main\.js|init_agent\.js' } |
+        Where-Object { $_.CommandLine -match 'main\.js|init_agent\.js' -and $_.CommandLine -match $projPat } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 2
     # 轮询确认端口真空 (监听 socket 随进程死立即释放, 无 TIME_WAIT; 给 mid-boot 的 late-bind 兜底)
     $portFreeTries = 0
     while ((Get-NetTCPConnection -LocalPort 48909 -State Listen -ErrorAction SilentlyContinue) -and $portFreeTries -lt 10) {
         Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match 'main\.js|init_agent\.js' } |
+            Where-Object { $_.CommandLine -match 'main\.js|init_agent\.js' -and $_.CommandLine -match $projPat } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         Start-Sleep -Seconds 1
         $portFreeTries++

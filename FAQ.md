@@ -26,9 +26,10 @@
   - The bot will still get stuck occasionally, but not constantly.
     
 - `Why I added the api key but still prompted that the key can't be found?`
-  - Possible reason 1: Did not modify keys.example.json to keys.json.
-  - Possible reason 2: If you use vscode to edit, you need to `ctrl+s` to save the file for the changes to take effect.
-  - Possible reason 3: Not setting the code path correctly in setting.js, use andy.js by default. 
+  - This fork configures keys through the control panel (<http://localhost:8765> → **AI 配置**), not by hand-editing files. Save the key there and press 测试连接 to verify it before starting the bot.
+  - Possible reason 1: The key was saved for a different provider than the one your bot profile actually uses. The panel shows which provider is missing.
+  - Possible reason 2: You edited `keys.json` by hand and Notepad saved it with a UTF-8 BOM or invalid JSON. Re-save it from the panel instead.
+  - Possible reason 3: An environment variable of the same name is set and takes priority over the panel value.
 
 # Common Questions
 - Mod Support? Mindcraft only supports client-side mods like optifine and sodium, though they can be tricky to set up. Mods that change minecraft game mechanics are not supported.

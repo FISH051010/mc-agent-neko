@@ -1,16 +1,19 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
+import { dataPath } from '../utils/paths.js';
 
 
 export class History {
     constructor(agent) {
         this.agent = agent;
         this.name = agent.name;
-        this.memory_fp = `./bots/${this.name}/memory.json`;
+        // ★2026-08-07 路径统一: memory.json / histories 是运行时状态, 原来是裸 './bots/...'
+        // (相对 CWD)。分发包里 CWD 与代码目录分家后靠 bootstrap 的 chdir 兜着才对, 现在显式钉死。
+        this.memory_fp = dataPath('bots', this.name, 'memory.json');
         this.full_history_fp = undefined;
 
-        mkdirSync(`./bots/${this.name}/histories`, { recursive: true });
+        mkdirSync(dataPath('bots', this.name, 'histories'), { recursive: true });
 
         this.turns = [];
 
@@ -45,7 +48,7 @@ export class History {
     async appendFullHistory(to_store) {
         if (this.full_history_fp === undefined) {
             const string_timestamp = new Date().toLocaleString().replace(/[/:]/g, '-').replace(/ /g, '').replace(/,/g, '_');
-            this.full_history_fp = `./bots/${this.name}/histories/${string_timestamp}.json`;
+            this.full_history_fp = dataPath('bots', this.name, 'histories', `${string_timestamp}.json`);
             writeFileSync(this.full_history_fp, '[]', 'utf8');
         }
         try {

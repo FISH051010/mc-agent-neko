@@ -13,10 +13,12 @@
 //   SEAT 2: on a task returning to the queue head (reevaluateHead, design §3.4)
 
 import fs from 'fs';
-import path from 'path';
 import { cancelTrigger, lifecycleKey, getTrigger } from './triggers.js';
+import { dataPath } from '../../utils/paths.js';
 
-const CFG = path.resolve(process.cwd(), 'bots', '_supervisor', 'decision-config.json');
+// ★2026-08-07 路径统一: 原来是 process.cwd() 相对, 分发包里 CWD 与代码目录分家后
+// 会读到不存在的路径 (静默 catch → 永远读到空配置)。改走 dataPath() 单一基准。
+const CFG = dataPath('bots', '_supervisor', 'decision-config.json');
 
 let _enabled = null;        // cached; null = unread
 let _prompter = null;       // injected async (task, world, reason) => verdict, wired by the agent boot

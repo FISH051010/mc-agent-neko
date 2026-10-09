@@ -9,6 +9,10 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
+import { hasProviderKey } from '../utils/keys.js';
+import { getProvider, listProviders } from './providers.js';
+import { stripThink } from '../utils/think.js';
+import { dataPath } from '../utils/paths.js';
 import { withTimeout, EMBED_TIMEOUT_MS } from '../utils/timeout.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +22,11 @@ export class Prompter {
     constructor(agent, profile) {
         this.agent = agent;
         this.profile = profile;
+        // ★合并前先记下**角色配置里显式写的**思考档位/供应商。合并之后 _default.json 的
+        //   "thinking": "off" 会填进来，就分不清"用户特意写的"和"默认补的"了。
+        //   优先级：角色配置 > settings.js 顶层 > profiles/defaults 里的默认值 > 'off'
+        const explicit_thinking = profile ? profile.thinking : undefined;
+        const explicit_provider = profile ? profile.provider : undefined;
         const defaults_dir = path.join(__dirname, '../../profiles/defaults');
         let default_profile = JSON.parse(readFileSync(path.join(defaults_dir, '_default.json'), 'utf8'));
         let base_fp = '';
@@ -57,39 +66,94 @@ export class Prompter {
         if (this.profile.max_tokens)
             max_tokens = this.profile.max_tokens;
 
-        let chat_model_profile = selectAPI(this.profile.model);
-        this.chat_model = createModel(chat_model_profile);
+        // 顶层的 thinking / provider 下发给 model / code_model / vision_model：
+        // 子项自己写了就以自己的为准，没写才继承。
+        this.thinking = explicit_thinking ?? settings.thinking ?? this.profile.thinking ?? 'off';
+        const top_provider = explicit_provider ?? this.profile.provider ?? null;
+        const inherit = (spec) => {
+            if (spec === null || spec === undefined) return spec;
+            const obj = (typeof spec === 'string' || spec instanceof String)
+                ? { model: String(spec) }
+                : { ...spec };
+            if (obj.thinking === undefined) obj.thinking = this.thinking;
+            if (!obj.api && top_provider) obj.api = top_provider;
+            return obj;
+        };
+
+        let chat_model_profile = selectAPI(inherit(this.profile.model));
+        this.chat_model = createModel(chat_model_profile, 'chat');
 
         if (this.profile.code_model) {
-            let code_model_profile = selectAPI(this.profile.code_model);
-            this.code_model = createModel(code_model_profile);
+            let code_model_profile = selectAPI(inherit(this.profile.code_model));
+            this.code_model = createModel(code_model_profile, 'code');
         }
         else {
             this.code_model = this.chat_model;
         }
 
         if (this.profile.vision_model) {
-            let vision_model_profile = selectAPI(this.profile.vision_model);
-            this.vision_model = createModel(vision_model_profile);
+            let vision_model_profile = selectAPI(inherit(this.profile.vision_model));
+            this.vision_model = createModel(vision_model_profile, 'vision');
         }
         else {
             this.vision_model = this.chat_model;
         }
 
-        
+
         let embedding_model_profile = null;
         if (this.profile.embedding) {
             try {
-                embedding_model_profile = selectAPI(this.profile.embedding);
+                embedding_model_profile = selectAPI(inherit(this.profile.embedding));
             } catch (e) {
+                console.warn(`认不出 embedding 配置「${JSON.stringify(this.profile.embedding)}」，改用聊天模型那家。原因：${e?.message || e}`);
                 embedding_model_profile = null;
             }
         }
         if (embedding_model_profile) {
-            this.embedding_model = createModel(embedding_model_profile);
+            this.embedding_model = createModel(embedding_model_profile, 'embedding');
         }
         else {
-            this.embedding_model = createModel({api: chat_model_profile.api});
+            // ★2026-09-09: 聊天那家没有向量服务时**自动借用别家**，而不是直接退化。
+            //   实录: 用户选了 DeepSeek(无 embedding) → skill_library 每次都
+            //   "Error with embedding model, using word-overlap instead." → 挑技能/示例
+            //   退成字面词重叠，选得牛头不对马嘴，而用户完全无从察觉（只是觉得"她好像变笨了"）。
+            //   而这个用户往往已经配了别家的密钥（本例还配了 OpenAI），白白浪费。
+            //   所以: 在**已配好密钥**的供应商里找一个自带向量模型的顶上，找不到才退化。
+            const chat_spec = getProvider(chat_model_profile.api);
+            let borrowed = null;
+            if (chat_spec && !chat_spec.embedding) {
+                for (const p of listProviders()) {
+                    if (!p.embedding) continue;                                  // 这家没有向量服务
+                    if (p.key === chat_model_profile.api) continue;              // 就是聊天那家(已知没有)
+                    if (p.key_name && !hasProviderKey(p.key, p.key_name)) continue;   // 没配密钥，用不了
+                    if (p.region === 'local') continue;                          // 本机模型未必起着，别赌
+                    borrowed = p;
+                    break;
+                }
+            }
+            if (borrowed) {
+                try {
+                    this.embedding_model = createModel(
+                        { api: borrowed.key, model: borrowed.embedding }, 'embedding');
+                    console.log(
+                        `📐 「${chat_spec.label}」不提供文本向量服务，已自动借用你已配置的「${borrowed.label}」` +
+                        `(${borrowed.embedding}) 来做示例/技能检索。想换别家就在「Bot 设定」里显式指定。`
+                    );
+                } catch (e) {
+                    console.warn(`借用「${borrowed.label}」的向量服务失败(${e?.message || e})，退回字面词匹配。`);
+                    borrowed = null;
+                }
+            }
+            if (!borrowed) {
+                if (chat_spec && !chat_spec.embedding) {
+                    console.warn(
+                        `提示：「${chat_spec.label}」不提供文本向量服务，也没有别的已配置供应商能顶上，` +
+                        `机器人挑选参考示例时只能按字面词相似度粗选，效果会打折。` +
+                        `配一个硅基流动的密钥即可自动接管（它的 BAAI/bge-m3 免费额度足够）。`
+                    );
+                }
+                this.embedding_model = createModel({api: chat_model_profile.api}, 'embedding');
+            }
         }
 
         // Time-bound every embed call: on this network the embeddings endpoint
@@ -110,12 +174,16 @@ export class Prompter {
         }
 
         this.skill_libary = new SkillLibrary(agent, this.embedding_model);
-        mkdirSync(`./bots/${name}`, { recursive: true });
+        // ★2026-08-07: 原来这里是 CWD 相对的 `./bots/<name>`，而 _saveToFile 用的是
+        //   __dirname 相对的 `../../bots/<name>/logs` —— 分发包里 CWD 和代码目录不是同一层，
+        //   同一个机器人的 last_profile 和 logs 会落到两个地方。统一走 dataPath()。
+        const bot_dir = dataPath('bots', name);
+        mkdirSync(bot_dir, { recursive: true });
         // ★fix 2026-07-09: writeFileSync is SYNCHRONOUS — its 3rd arg is `options`, not a callback,
         // so the error-handling/success-log callback here never ran (and `new Error(msg, err)` ignores
         // its 2nd arg). This is a one-time boot save (kept sync); wrap it properly instead.
         try {
-            writeFileSync(`./bots/${name}/last_profile.json`, JSON.stringify(this.profile, null, 4));
+            writeFileSync(path.join(bot_dir, 'last_profile.json'), JSON.stringify(this.profile, null, 4));
             console.log("Copy profile saved.");
         } catch (err) {
             throw new Error(`Failed to save profile: ${err && err.message}`);
@@ -281,10 +349,8 @@ export class Prompter {
                 return '';
             }
 
-            if (generation?.includes('</think>')) {
-                const [_, afterThink] = generation.split('</think>')
-                generation = afterThink
-            }
+            // 思考链剥壳统一走 stripThink（原来是手写切片，7 处行为各不相同）
+            generation = stripThink(generation);
 
             return generation;
         }
@@ -305,7 +371,9 @@ export class Prompter {
         let resp = await this.code_model.sendRequest(messages, prompt);
         this.awaiting_coding = false;
         await this._saveLog(prompt, messages, resp, 'coding');
-        return resp;
+        // ★2026-08-07: 这里以前完全没剥思考链。思考链里常带 ``` 代码块示例，
+        //   会被 newAction 的代码提取抢先切走，跑的是模型"想了想又否掉"的那版代码。
+        return stripThink(resp);
     }
 
     async promptMemSaving(to_summarize) {
@@ -314,11 +382,7 @@ export class Prompter {
         prompt = await this.replaceStrings(prompt, null, null, to_summarize);
         let resp = await this.chat_model.sendRequest([], prompt);
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
-        if (resp?.includes('</think>')) {
-            const [_, afterThink] = resp.split('</think>')
-            resp = afterThink;
-        }
-        return resp;
+        return stripThink(resp);
     }
 
     async promptShouldRespondToBot(new_message) {
@@ -328,7 +392,10 @@ export class Prompter {
         messages.push({role: 'user', content: new_message});
         prompt = await this.replaceStrings(prompt, null, null, messages);
         let res = await this.chat_model.sendRequest([], prompt);
-        return res.trim().toLowerCase() === 'respond';
+        // ★2026-08-07: 这里以前完全没剥思考链，而判据是**全等** 'respond' ——
+        //   只要模型吐了思考链就永远判 false，机器人之间的对话直接哑火。
+        const decision = stripThink(res || '').trim().toLowerCase();
+        return decision === 'respond';
     }
 
     async promptVision(messages, imageBuffer) {
@@ -382,11 +449,12 @@ export class Prompter {
 
     async _saveToFile(logFile, logEntry) {
         let task_id = this.agent.task.task_id;
+        // ★2026-08-07: 从 __dirname 相对改成 dataPath()，与上面的 last_profile.json 同源。
         let logDir;
         if (task_id == null) {
-            logDir = path.join(__dirname, `../../bots/${this.agent.name}/logs`);
+            logDir = dataPath('bots', this.agent.name, 'logs');
         } else {
-            logDir = path.join(__dirname, `../../bots/${this.agent.name}/logs/${task_id}`);
+            logDir = dataPath('bots', this.agent.name, 'logs', String(task_id));
         }
 
         await fs.mkdir(logDir, { recursive: true });

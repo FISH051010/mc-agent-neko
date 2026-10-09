@@ -4568,7 +4568,24 @@ const modes_list = [
                     // held ~10s AND the bot barely moved (<3b) — mining moves on, a trap doesn't. (Distinct from
                     // MAROONED's 90s: a true seal must still be escaped fast, just not flapped on every pocket.)
                     const _pp = bot.entity.position;
-                    if (!_sr) { this._sealedSince = 0; this._sealedAnchor = null; }
+                    // ★2026-09-09 (用户实录: "像疯子一样放熔炉、拿起来、挖地板"): 站着不动 ≠ 被困住。
+                    //   上面那条去抖的判据是「有界 + 位移<3格 + 持续>10s」，而**炼铁/合成本来就要
+                    //   站在炉子前不动**（8 个粗铁要 80s+），三个条件全中 → 误判 SEALED → 去凿墙 →
+                    //   炼铁被打断 → 铁永远炼不完 → 15min 无进展 → Pinned kick → kernelDriver 再派
+                    //   smelting → 自激死循环（实录 line 41→130→149→160→370，三轮）。
+                    //   真被困时不会同时有一个正在跑的原地技能；真卡死另有 Pinned 15min 那条独立防线。
+                    const _stationaryTask = (() => {
+                        try {
+                            const lbl = String((agent.actions && agent.actions.currentActionLabel) || '');
+                            const skl = String(agent.supervised_skill || bot._currentSkill || '');
+                            return /smelt|craft|cook|furnace|sleep|standby|brew|enchant/i.test(lbl + ' ' + skl);
+                        } catch (e) { return false; }
+                    })();
+                    if (_sr && _stationaryTask && Date.now() - (bot._sealedSuppressSayAt || 0) > 60000) {
+                        bot._sealedSuppressSayAt = Date.now();
+                        console.log('🔒 SEALED 升级已抑制 — 正在执行原地技能(炼铁/合成等)，站着不动是任务本身，不是被困。');
+                    }
+                    if (!_sr || _stationaryTask) { this._sealedSince = 0; this._sealedAnchor = null; }
                     else if (!this._sealedSince || (this._sealedAnchor && _pp.distanceTo(this._sealedAnchor) > 3)) {
                         this._sealedSince = now; this._sealedAnchor = _pp.clone();   // newly sealed / moved (mining) → (re)start timer
                     } else if (now - this._sealedSince > 10000) {
@@ -5012,7 +5029,10 @@ const modes_list = [
                         return;
                     }
                     say(agent, 'Entombed — digging out!');
-                    let bx = 96, bz = -34;
+                    // 锚点只用来挑「先凿哪个朝向」，不是直线奔向该坐标（下面 bearings 有轮转兜底）。默认值原本
+                    // 写死 (96,-34) —— 那是开发机世界的坐标，对新用户毫无意义。改成自身位置：读不到
+                    // bed/spawn 时退化成一个确定的默认朝向，由轮转逻辑找出真正凿得穿的那面。
+                    let bx = bot.entity.position.x, bz = bot.entity.position.z;
                     try { const bj = JSON.parse(fs.readFileSync('bots/_supervisor/bed.json', 'utf8')); if (typeof bj.x === 'number') { bx = bj.x; bz = bj.z; } } catch (e) {}
                     // ghost-bed guard: 距床>60(缰绳外)=床大概率已无效(死276后 bed.json 还是
                     // 崖壁区老坐标,挖出方向被幽灵床带偏) → spawn_pos 兜底(真锚)
@@ -5093,7 +5113,10 @@ const modes_list = [
                 execute(this, agent, async () => {
                     try { bot.interrupt_code = false; } catch (e) {}
                     if (Date.now() - (bot._lastSealedSayAt || 0) > 20000) { bot._lastSealedSayAt = Date.now(); say(agent, 'Sealed in a room — mining out!'); }
-                    let bx = 96, bz = -34;
+                    // 锚点只用来挑「先凿哪个朝向」，不是直线奔向该坐标（下面 bearings 有轮转兜底）。默认值原本
+                    // 写死 (96,-34) —— 那是开发机世界的坐标，对新用户毫无意义。改成自身位置：读不到
+                    // bed/spawn 时退化成一个确定的默认朝向，由轮转逻辑找出真正凿得穿的那面。
+                    let bx = bot.entity.position.x, bz = bot.entity.position.z;
                     try { const bj = JSON.parse(fs.readFileSync('bots/_supervisor/bed.json', 'utf8')); if (typeof bj.x === 'number') { bx = bj.x; bz = bj.z; } } catch (e) {}
                     try { if (Math.hypot(bx - bot.entity.position.x, bz - bot.entity.position.z) > 60) { const sj = JSON.parse(fs.readFileSync('bots/_supervisor/spawn_pos.json', 'utf8')); if (typeof sj.x === 'number') { bx = sj.x; bz = sj.z; } } } catch (e) {}
                     const me = bot.entity.position;
@@ -5224,7 +5247,10 @@ const modes_list = [
                             }
                         } catch (e) {}
                         if (ux === null) {
-                            let bx = 96, bz = -34;
+                            // 锚点只用来挑「先凿哪个朝向」，不是直线奔向该坐标（下面 bearings 有轮转兜底）。默认值原本
+                    // 写死 (96,-34) —— 那是开发机世界的坐标，对新用户毫无意义。改成自身位置：读不到
+                    // bed/spawn 时退化成一个确定的默认朝向，由轮转逻辑找出真正凿得穿的那面。
+                    let bx = bot.entity.position.x, bz = bot.entity.position.z;
                             try { const bj = JSON.parse(fs.readFileSync('bots/_supervisor/bed.json', 'utf8')); if (typeof bj.x === 'number') { bx = bj.x; bz = bj.z; } } catch (e) {}
                             // ghost-bed guard: 距床>60=床大概率已无效(死276后 bed.json 还是崖壁区
                             // 老坐标,行军被幽灵床带偏朝东远离 spawn 的树) → spawn_pos 兜底

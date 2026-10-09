@@ -1,0 +1,76 @@
+{
+    "_comment": "面向玩家的环境开关清单。只放普通玩家能理解、也确实需要调的项。MC_FRAMEWORK_* / MC_ELOOP_PROBE / MC_ADMIN_* / MC_PF_TICK_MS / NEKO_DISABLE_INPROC_VISION 这类开发调试项**故意不列**——它们改错会直接把 bot 弄瘫，而且没有玩家能从名字看出后果。改动落 <home>/runtime-flags.json，优先级高于随包的 env.defaults.json。",
+
+    "flags": [
+        {
+            "key": "NEKO_AGENT_SCREENSHOT_INTERVAL_MS",
+            "label": "画面刷新间隔（毫秒）",
+            "help": "bot 每隔多久把自己看到的画面发给你一次。数字越小越流畅、越吃电脑。填 0 表示完全关掉画面。",
+            "group": "画面",
+            "type": "number",
+            "min": 0,
+            "max": 10000,
+            "default": "1000",
+            "danger": false
+        },
+        {
+            "key": "NEKO_RENDER_WIDTH",
+            "label": "画面宽度（像素）",
+            "help": "越大越清楚，也越费电脑。建议 640～1280。",
+            "group": "画面",
+            "type": "number",
+            "min": 160,
+            "max": 1920,
+            "default": "800",
+            "danger": false
+        },
+        {
+            "key": "NEKO_RENDER_HEIGHT",
+            "label": "画面高度（像素）",
+            "help": "跟宽度一起决定画质。建议 384～768。",
+            "group": "画面",
+            "type": "number",
+            "min": 120,
+            "max": 1080,
+            "default": "512",
+            "danger": false
+        },
+        {
+            "key": "MC_VIEW_DISTANCE",
+            "label": "视野距离",
+            "help": "bot 能看多远。看得越远越聪明，但内存和 CPU 占用也越高。电脑吃力就调到 short。",
+            "group": "画面",
+            "type": "select",
+            "options": ["tiny", "short", "normal", "far"],
+            "default": "far",
+            "danger": false
+        },
+        {
+            "key": "MC_FOOD_INSTINCTS",
+            "label": "饿了自己去找吃的",
+            "help": "打开后 bot 饿了会主动停下手上的活去找食物。历史上这是它半路乱跑的主要原因，默认关闭。",
+            "group": "本能",
+            "type": "boolean",
+            "default": "0",
+            "danger": false
+        },
+        {
+            "key": "MC_HP_INSTINCTS",
+            "label": "血少了自己躲起来",
+            "help": "打开后 bot 血量低会中断任务去避险。默认关闭，交给你指挥。",
+            "group": "本能",
+            "type": "boolean",
+            "default": "0",
+            "danger": false
+        },
+        {
+            "key": "MC_SELF_PROPOSE",
+            "label": "没事干时自己找活",
+            "help": "打开后 bot 闲着会自己决定去砍树挖矿。关闭时它只听你的指令。刚上手建议先关着。",
+            "group": "本能",
+            "type": "boolean",
+            "default": "0",
+            "danger": false
+        }
+    ]
+}

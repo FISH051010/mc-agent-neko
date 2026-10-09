@@ -4,6 +4,7 @@ import { VisionInterpreter } from './vision/vision_interpreter.js';
 import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
+import { probeForge, resetForgeProbe, isForgeServer } from '../utils/forge.js';
 import { containsCommand, commandExists, executeCommand, truncCommandMessage, truncCommandMessageMulti, parseCommandStrings, isAction, blacklistCommands } from './commands/index.js';
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
@@ -19,13 +20,19 @@ import { handleTranslation, handleEnglishTranslation } from '../utils/translator
 // (its only call site is commented out) and statically importing browser_viewer.js
 // pulls in prismarine-viewer, whose require/import mix crashes Node's ESM/CJS loader
 // (ERR_INTERNAL_ASSERTION) at startup. Re-add after building headless-gl if you want it.
-import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
+import { serverProxy, sendOutputToServer, sendSkinStatusToServer } from './mindserver_proxy.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { wsServer } from '../websocket/ws_server.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import fs from 'fs';
+import { dataPath, expandUserPath } from '../utils/paths.js';
+
+// ★2026-08-07 路径统一: 本文件所有监工状态文件原来都是裸相对 'bots/_supervisor/xxx' (相对 CWD)。
+// 分发包里代码在 <包根>/app/、CWD 在 <包根>, 靠 bootstrap 的 chdir 才勉强对得上 —— 但那是兜底网,
+// 不是契约。这里显式钉到 dataPath(), 开发机上 APP_ROOT === HOME_DIR, 行为与改造前完全一致。
+const SUP = (...segs) => dataPath('bots', '_supervisor', ...segs);
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
@@ -87,6 +94,9 @@ export class Agent {
         blacklistCommands(this.blocked_actions);
 
         console.log(this.name, 'logging into minecraft...');
+        // 连之前 ping 一次，认出 Forge 服务端就自动启用 FML 握手（玩家无需配置）。
+        // 探测失败一律当「不是 Forge」，绝不因此挡住连接。
+        await probeForge({ host: settings.host, port: settings.port });
         await this.initBot();
 
         initModes(this);
@@ -146,7 +156,7 @@ export class Agent {
         // ★2026-07-14 用户令: 游戏内 chat 路由重写 —— 根治 admin 指令风暴 (命令回执/系统消息被当指令:
         //   实录 "Applied effect Night Vision…"/"tp Neko" 漏 ignore_messages 黑名单进 mission, 每条触发
         //   一次 self-prompt LLM 调用 + supersede 前台任务)。反转为【正向白名单】: _routeIngameChat 多重门
-        //   滤掉非真人聊天, 只有前缀(chat_command_prefix, 默认 /neko)或 ! 开头才是指令 → adminMission 高优先级;
+        //   滤掉非真人聊天, 只有前缀(chat_command_prefix, 默认 @neko)或 ! 开头才是指令 → adminMission 高优先级;
         //   其余真人自然语言 → 节流聚合(默认3s)转发外部 admin llm(ws)。前缀设空 = 关门回旧行为。
         this.bot.on('chat', (username, message, _translate, jsonMsg) => {
             if (serverProxy.getNumOtherAgents() > 0) return;
@@ -194,22 +204,32 @@ export class Agent {
             if (username === this.name || (bot && username === bot.username)) return;
             // 门②: 必须在线真玩家 —— 命令回执/系统广播的"发信人"无对应 bot.players 条目 (LAN 玩家名即真名)
             if (!username || !bot.players || !bot.players[username]) return;
-            // 门③: 系统消息正向门 —— 真人聊天 jsonMsg.translate 形如 'chat.type.*'; 命令反馈是 'commands.*'
-            //   等系统键。tr 存在且非 chat.type → 系统消息, 丢弃; tr 缺失(signed chat) → 放行, 靠下游门兜底。
+            // 门③: 系统消息**反向**门 —— 只丢弃已知的系统键, 其余一律放行。
+            //
+            // ★2026-09-09 用户实测根治: 这里原本是**正向**门 `if (tr && !/^chat\.type\./.test(tr)) return;`
+            //   —— 只认原版的 chat.type.*。但 1.21.1 Fabric 服务器发的玩家聊天, translate 是
+            //   **原始格式串 "<%s> %s"**（探针实录: user="Wehos_nya" msg="@neko 砍树" translate="<%s> %s"）,
+            //   不匹配 → 玩家消息在这里被整条丢掉。而且丢在所有日志之前, 症状是"零 chat 痕迹",
+            //   在游戏里怎么喊都没反应且完全无从排查。任何非原版聊天格式(插件/模组/自定义前缀)
+            //   都会踩同一个坑, 所以改成反向门, 而不是往正向门里再加一个 "<%s> %s" 的补丁。
+            //
+            //   安全性不降低: 门②(bot.players[username] 必须是在线真玩家)才是防系统消息的主力 ——
+            //   命令回执/系统广播没有玩家发送者, 到不了这里。
             const tr = jsonMsg && jsonMsg.translate;
-            if (tr && !/^chat\.type\./.test(tr)) return;
+            const SYSTEM_TR = /^(commands?\.|multiplayer\.|death\.|advancements?\.|gameMode\.|effect\.|argument\.|chat\.type\.admin|selectWorld\.|block\.|item\.|entity\.)/;
+            if (tr && SYSTEM_TR.test(tr)) return;
             // 门④: 已知服务器回执前缀兜底 (translate 缺失的畸形回执; "Applied effect"/"Teleported" 等)
             if (Array.isArray(ignore_messages) && ignore_messages.some((m) => message.startsWith(m))) return;
             const prefix = settings.chat_command_prefix || '';
             const trimmed = message.replace(/^\s+/, '');
-            // 门⑤: 斜杠作弊命令 (/tp /give…) 丢弃 —— 但指令前缀(chat_command_prefix, 如 /neko)放行
+            // 门⑤: 斜杠作弊命令 (/tp /give…) 丢弃 —— 但指令前缀(chat_command_prefix)放行 —— 不过前缀本身不该用 / 开头, 见 settings.js 的说明
             if (/^\//.test(trimmed) && !(prefix && trimmed.startsWith(prefix))) return;
             // 门⑥: 白名单 (空=所有真人玩家) —— 指令与聊天转发都受此门
             const wl = Array.isArray(settings.chat_whitelist) ? settings.chat_whitelist : [];
             if (wl.length > 0 && !wl.includes(username)) return;
             // ── 指令 vs 聊天分流 ──
             let body = trimmed, isCmd = false;
-            if (prefix && trimmed.startsWith(prefix)) { body = trimmed.slice(prefix.length).trim(); isCmd = true; }  // /neko … = 指令
+            if (prefix && trimmed.startsWith(prefix)) { body = trimmed.slice(prefix.length).trim(); isCmd = true; }  // @neko … = 指令
             else if (trimmed.startsWith('!')) { isCmd = true; }                                                       // !cmd = 指令
             else if (!prefix) { isCmd = true; }                                                                       // 前缀关闭 → 旧行为: 真人消息都当指令
             if (isCmd) {
@@ -315,10 +335,10 @@ export class Agent {
     _assertKeepInventory() {
         const b = this.bot;
         if (!b) return;
-        const evt = (line) => { try { fs.appendFileSync('bots/_supervisor/events.log', `[${new Date().toISOString()}] ${line}\n`); } catch (_e) {} };
+        const evt = (line) => { try { fs.appendFileSync(SUP('events.log'), `[${new Date().toISOString()}] ${line}\n`); } catch (_e) {} };
         const writeKeepinv = (val, why) => {
             try {
-                fs.writeFileSync('bots/_supervisor/keepinv.json', JSON.stringify({
+                fs.writeFileSync(SUP('keepinv.json'), JSON.stringify({
                     _comment: 'keepInventory verification cache - hard precondition for surviveNow deliberate-death branch. Written by C344v2 read-only in-game query on every spawn (no RCON on user LAN world). Branch self-disables when stale >24h or value!=true.',
                     value: val,
                     verifiedVia: `in-game read-only query /gamerule keepInventory -> ${why}`,
@@ -381,7 +401,6 @@ export class Agent {
     // edits. Pure-additive, swallow all errors — a miss just leaves the old behavior, never worse.
     async _archiveStaleWorldStateOnSwitch() {
         const b = this.bot;
-        const dir = 'bots/_supervisor/';
         const isNaked = () => {
             const items = (b.inventory ? b.inventory.items() : []) || [];
             const armorN = b.inventory ? [5, 6, 7, 8].filter(s => b.inventory.slots[s]).length : 0;
@@ -398,7 +417,7 @@ export class Agent {
         // read newest death to apply guard (b)
         let recent = null;
         try {
-            const lines = fs.readFileSync(dir + 'death_log.jsonl', 'utf8').trim().split('\n').filter(Boolean);
+            const lines = fs.readFileSync(SUP('death_log.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
             if (lines.length) {
                 const last = JSON.parse(lines[lines.length - 1]);
                 const ageMin = (Date.now() - new Date(last.ts).getTime()) / 60000;
@@ -413,10 +432,10 @@ export class Agent {
         const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
         const archived = [];
         for (const f of ['death_log.jsonl', 'landmarks.json', 'bed.json']) {
-            try { if (fs.existsSync(dir + f)) { fs.renameSync(dir + f, `${dir}${f}.${ts}.oldworld`); archived.push(f); } } catch (e) {}
+            try { if (fs.existsSync(SUP(f))) { fs.renameSync(SUP(f), SUP(`${f}.${ts}.oldworld`)); archived.push(f); } } catch (e) {}
         }
         try {
-            fs.appendFileSync(dir + 'progress.txt',
+            fs.appendFileSync(SUP('progress.txt'),
                 `[${new Date().toISOString()}] [world-scope] ★C333 NEW-WORLD detected (naked fresh char, armor=0/tools=0; newest death ${recent.ageMin.toFixed(0)}min ago near=${recent.near}) → archived ${archived.join(',') || 'none'} (phantom-hazard reset)\n`);
         } catch (e) {}
         console.log(`🌍 C333 world-switch: archived stale coordinate state [${archived.join(',')}] — naked fresh character, old log won't poison death-zones`);
@@ -435,6 +454,73 @@ export class Agent {
         this.setupBotEventHandlers();
     }
 
+    /**
+     * 发完 /skin 之后听 5 秒服务器回执，把结果说人话。
+     *
+     * ★2026-09-09 (用户实测「皮肤没生效」): 原来发完就不管了 —— 服务端没装 FabricTailor 时
+     *   `/skin` 是个不存在的命令，被静默丢弃，日志里只有一句"已请求设置皮肤"，用户完全
+     *   无从判断到底是没装模组、路径不对、还是根本没发出去。实测该用户的 1.21.1-Fabric
+     *   服务器装的是 ysm(Yes Steve Model)，没有 FabricTailor，于是皮肤永远不变且毫无提示。
+     *
+     *   命令本身是发对了的 (minecraft-protocol 会把 "/" 开头的走 chat_command 包)，
+     *   所以只要听回执就能分辨。不改任何发送逻辑，纯加一个观测。
+     */
+    _probeSkinResult(target) {
+        const bot = this.bot;
+        if (!bot) return;
+        // 结果同时上报给 mindserver，面板「Bot 设定」页据此显示皮肤到底生效没有
+        const report = (st) => { try { sendSkinStatusToServer(this.name, { ...st, file: target }); } catch (e) {} };
+        let done = false;
+        const finish = (fn) => {
+            if (done) return;
+            done = true;
+            try { bot.removeListener('message', onMsg); } catch (e) {}
+            clearTimeout(timer);
+            try { fn(); } catch (e) {}
+        };
+        const onMsg = (jsonMsg) => {
+            let txt = '';
+            try { txt = jsonMsg.toString(); } catch (e) { return; }
+            const tr = (jsonMsg && jsonMsg.translate) || '';
+            // 未知命令: 原版是 command.unknown.command / "Unknown or incomplete command"
+            if (/^command\.unknown/.test(tr) || /unknown or incomplete command|unknown command/i.test(txt)) {
+                // ★2026-09-12: 建议必须跟着服务端平台走。用户把世界换成 Forge 后，这里还在教他装
+                //   FabricTailor —— 那是 Fabric 专属模组，在 Forge 服上装不了，等于把人往错路上指。
+                // ★2026-09-13 核实后改写。此前这里写的是「Skinrestorer / CustomSkinLoader 的服务端实现」
+                //   —— 两个都不对：SkinRestorer 是 Bukkit/Spigot/Bungee 系的，Forge 上没有；
+                //   CustomSkinLoader 是**客户端**模组，装在服务端没有意义。给错模组名比不给更糟，
+                //   玩家会照着去装然后发现根本没有对应版本。
+                //   Forge 上真正可行的两条路（1.20.1 实测语境）：
+                //     · 服务端：Sinytra Connector + Forgified Fabric API 跑 FabricTailor（所有人可见）
+                //     · 客户端：CustomSkinLoader 的 Forge 版 + LocalSkin 文件夹（只有装的人自己可见）
+                //   后者不需要碰服务端，单人/自己开的 LAN 世界里其实更省事。
+                const _forge = isForgeServer();
+                const _mod = _forge
+                    ? '服务端装 Sinytra Connector + Forgified Fabric API 之后再装 FabricTailor；'
+                      + '或者你自己的客户端装 CustomSkinLoader(Forge 版)，把皮肤放进 '
+                      + '.minecraft/CustomSkinLoader/LocalSkin/skins/<botID>.png（这条只有你自己看得到，但不用动服务端）'
+                    : 'FabricTailor (https://modrinth.com/mod/fabrictailor)';
+                finish(() => { report({ ok: false, reason: 'NO_MOD', detail: `服务端不认识 /skin 命令，没有装换肤模组（${_forge ? 'Forge' : 'Fabric/原版'} 服务端）` }); console.warn(
+                    `⚠️ 皮肤没能设置: 服务端不认识 /skin 命令 —— 说明没装提供该命令的换肤模组。
+` +
+                    `   本服是 ${_forge ? 'Forge' : 'Fabric/原版'} 服务端，需要 ${_mod}，装上并重启服务器后重连即可生效。
+` +
+                    `   不装也完全不影响其他功能，bot 只是顶着默认皮肤。`
+                ); });
+            } else if (/skin/i.test(txt) && /(set|applied|success|已设置|成功)/i.test(txt)) {
+                finish(() => { report({ ok: true, reason: 'OK', detail: '皮肤已生效' }); console.log(`🎨 皮肤已生效（${target}）。`); });
+            } else if (/permission|not allowed|没有权限/i.test(txt) && /skin/i.test(txt)) {
+                finish(() => { report({ ok: false, reason: 'NO_PERMISSION', detail: '服务端拒绝了 /skin（权限不足）' }); console.warn(`⚠️ 皮肤没能设置: 服务端拒绝了 /skin（权限不足）。需要给 bot 账号相应权限，或在服务端放开该命令。`); });
+            }
+        };
+        const timer = setTimeout(() => finish(() => {
+            report({ ok: null, reason: 'NO_REPLY', detail: '服务端 5 秒内没有回执，若游戏里皮肤没变多半是没装换肤模组' });
+            console.log(`🎨 皮肤命令已发出，但服务端 5 秒内没有明确回执（${target}）。若游戏里皮肤没变，多半是服务端没装换肤模组（本服是 ${isForgeServer() ? 'Forge' : 'Fabric/原版'}）。`);
+        }), 5000);
+        if (timer && timer.unref) timer.unref();
+        bot.on('message', onMsg);
+    }
+
     setupBotEventHandlers() {
         this.bot.on('login', () => {
             console.log(this.name, 'logged in!');
@@ -445,12 +531,36 @@ export class Agent {
             //   - 本地 PNG 走 `/skin set upload <variant> <路径>` —— FabricTailor 读取"服务器"
             //     (= 本机 LAN 宿主) 上的文件, 经 MineSkin 生成带签名材质 (实测 ~4s, 免 API key)。
             //   - http(s):// 仍走 `/skin set URL` —— 仅限 fabrictailor.json texture_allowed_domains 白名单域。
-            //   variant(model) 缺省 classic。皮肤文件与路径见 neko.json 的 "skin" 字段。
+            //   variant(model) 缺省 classic。皮肤文件与路径见 profile (bot.json / neko.json) 的 "skin" 字段。
+            // ★2026-08-07 加固 (四个静默坑, 分发给普通玩家前必须堵上):
+            //   1. 相对路径: profile 里写 "skins/neko.png" 时按 CWD 解析, 分发包里必然落空 →
+            //      先用 expandUserPath() 展开到用户层根 (<包根>/skins/neko.png)。
+            //   2. 文件不存在: 以前一句话不吭直接把命令发出去, 用户只看到皮肤没变、毫无线索 →
+            //      existsSync 校验, 缺文件就打中文提示并跳过。
+            //   3. 路径含空格 (如用户名带空格时展开出来的 "...\张 三\skins\x.png"): 不加引号
+            //      会被服务端切成多个参数 →
+            //      只在含空白时加引号 (无空白的路径保持原样发送, 那是实测跑通过的形态,
+            //      万一 FabricTailor 用的是 greedyString 参数, 无条件加引号反而会把引号当路径的一部分)。
+            //   4. 重连风暴反复上传: 这个 handler 挂在 login 上, 断线重连每次都会重发, 每发一次
+            //      服务端就走一遍 MineSkin 上传 (~4s) → 同一进程内同一 (variant, 路径) 只发一次。
             const skin = this.prompter.profile.skin;
             if (skin && skin.path) {
                 const variant = skin.model || 'classic';
-                const verb = /^https?:\/\//i.test(skin.path) ? 'URL' : 'upload';
-                this.bot.chat(`/skin set ${verb} ${variant} ${skin.path}`);
+                const isUrl = /^https?:\/\//i.test(skin.path);
+                const target = isUrl ? skin.path : expandUserPath(skin.path);
+                if (!this._skinSent) this._skinSent = new Set();
+                const once = `${variant}|${target}`;
+                if (this._skinSent.has(once)) {
+                    // 重连: 皮肤本进程已经请求过, 不再劳烦服务端重新上传一次
+                } else if (!isUrl && !fs.existsSync(target)) {
+                    console.warn(`⚠️ 皮肤文件找不到: ${target}（配置里写的是 "${skin.path}"）。皮肤这次跳过，其他一切照常运行。把 PNG 放到这个位置再重启就会生效。`);
+                } else {
+                    const arg = isUrl || !/\s/.test(target) ? target : `"${target}"`;
+                    this.bot.chat(`/skin set ${isUrl ? 'URL' : 'upload'} ${variant} ${arg}`);
+                    this._skinSent.add(once);
+                    console.log(`🎨 已请求设置皮肤（${target}）…`);
+                    this._probeSkinResult(target);
+                }
             } else {
                 this.bot.chat(`/skin clear`);
             }
@@ -616,6 +726,31 @@ export class Agent {
                 console.warn('death alert broadcast failed:', e);
             }
 
+            // ★2026-09-10 用户实观 (「刚才他被打死了都没说话」): 死亡时 bot 在游戏里一声不吭。
+            //   根因: 唯一能让她开口的是下方 messagestr 里的 handleMessage('system', 'You died at ...'),
+            //   而 handleMessage 头上的 SUPERVISED LOCK 把 source==='system' 的帧直接 return false ——
+            //   死亡几乎总是发生在 supervised skill (chopWood/挖矿...) 运行中, 所以几乎总是被吞。
+            //   那道锁本身是对的 (防 LLM 发 !command 抢脚本技能的身体导致抽搐), 不能为了报个死拆。
+            //   改为直接走 openChat —— 它不经 handleMessage, 不受锁影响 (旁证: modes 的
+            //   'Under attack — sprinting away!' 就是 chopWood 运行中发出去的), 且同时覆盖公屏/WS log/
+            //   sendOutputToServer 三路。不走 LLM → 不会发命令 → 不会打断在跑的技能。
+            //   3s 去重: messagestr 死亡帧在本服会双发 (日志里 'Agent died' 每次打两行)。
+            try {
+                const now = Date.now();
+                if (!this._lastDeathSpokeAt || now - this._lastDeathSpokeAt > 3000) {
+                    this._lastDeathSpokeAt = now;
+                    const cause = (() => {
+                        try { return this._deathCauseText(this._inferDamageCause()); } catch (e) { return ''; }
+                    })();
+                    // 只报死因，不断言掉落状态：本服 keepInventory 查询实测回 OFF，
+                    // 而上面那帧 ws alert 是按 2026-07-08 用户令硬编码"保留"的 —— 那条不动，
+                    // 但游戏内这句不能跟着断言，说错了比不说更糟。
+                    this.openChat(cause ? `我死了……${cause}。这就重生。` : '我死了……这就重生。');
+                }
+            } catch (e) {
+                console.warn('death chat announce failed:', e);
+            }
+
             // ★2026-07-07 ADMIN MISSION: death is a survival interrupt, not a task end. Keep the
             //   mission live and resume after respawn (monitorRespawn suppresses the sticky grind);
             //   only when the death budget is exhausted does the mission fire ONE terminal frame.
@@ -665,10 +800,10 @@ export class Agent {
                             || i.name === 'shield' || i.name === 'diamond' || i.name === 'obsidian' || i.name === 'flint_and_steel'
                             || /_bed$/.test(i.name) || i.name === 'white_wool'   // 床/羊毛=重生锚级资产,值得跑
                             || (i.name === 'iron_ingot' && i.count >= 2) || (i.name === 'raw_iron' && i.count >= 4));
-                        fs.writeFileSync('bots/_supervisor/death_pos.json',
+                        fs.writeFileSync(SUP('death_pos.json'),
                             JSON.stringify({ x: death_pos.x, y: death_pos.y, z: death_pos.z, t: Date.now(), v, inWater: inWaterAtDeath }));
                     } catch (e2) {
-                        fs.writeFileSync('bots/_supervisor/death_pos.json',
+                        fs.writeFileSync(SUP('death_pos.json'),
                             JSON.stringify({ x: death_pos.x, y: death_pos.y, z: death_pos.z, t: Date.now() }));
                     }
                 } catch (e) { console.warn('death_pos write failed:', e); }
@@ -724,7 +859,7 @@ export class Agent {
                         skill: (b && b._deathLayers && b._deathLayers.skill) || (b && b._currentSkill) || null,
                         supervised: (b && b._deathLayers && b._deathLayers.supervised) || this.supervised_skill || null,
                     };
-                    fs.appendFileSync('bots/_supervisor/death_log.jsonl', JSON.stringify(rec) + '\n');
+                    fs.appendFileSync(SUP('death_log.jsonl'), JSON.stringify(rec) + '\n');
                     console.log('💀 death snapshot recorded:', cause, `y=${y}`, `mobs=${hostiles.length}`, `gear=${rec.gear.sword ? 'sword' : 'no-sword'}/${shield ? 'shield' : 'no-shield'}`);
                 } catch (e) { console.warn('death snapshot failed:', e.message); }
                 // ADAPTIVE: if we FELL to death, leave a flag so the grind preps a water
@@ -733,7 +868,7 @@ export class Agent {
                 try {
                     if (/hit the ground|fell|doomed to fall|fly into a wall/i.test(message) ||
                         (jsonMsg.translate && /fell|fall|flyIntoWall/i.test(jsonMsg.translate))) {
-                        fs.writeFileSync('bots/_supervisor/prep_water.json', JSON.stringify({ t: Date.now(), reason: 'fall_death' }));
+                        fs.writeFileSync(SUP('prep_water.json'), JSON.stringify({ t: Date.now(), reason: 'fall_death' }));
                     }
                 } catch (e) {}
             }
@@ -785,7 +920,7 @@ export class Agent {
                 pos: pos ? [Math.round(pos.x), Math.round(pos.y), Math.round(pos.z)] : null,
             };
             console.log(`🧾 disconnect classified: initiator=${initiator} code=${code || '-'}`);
-            fs.appendFileSync('bots/_supervisor/disconnects.jsonl', JSON.stringify(rec) + '\n');
+            fs.appendFileSync(SUP('disconnects.jsonl'), JSON.stringify(rec) + '\n');
         } catch (e) {}
         
         // Always send task_finished message when bot disconnects
@@ -833,6 +968,9 @@ export class Agent {
             try {
                 // Create new bot instance
                 const deadBot = this.bot;
+                // 重探：用户中途把世界从 Fabric 换成 Forge（或反过来）时缓存会过期。
+                resetForgeProbe();
+                await probeForge({ host: settings.host, port: settings.port });
                 this.bot = initBot(this.name);
                 this._stampBotEpoch();
                 this._disconnectHandled = false;
@@ -907,7 +1045,7 @@ export class Agent {
             if (logged.has(method)) return;
             logged.add(method);
             try {
-                fs.appendFileSync('bots/_supervisor/progress.txt',
+                fs.appendFileSync(SUP('progress.txt'),
                     `[${new Date().toISOString()}] ★STALE-BOT epoch=${epoch} (now ${this._botEpoch}): ghost loop called ${method}() on a superseded bot instance — refused\n`);
             } catch (e) {}
         };
@@ -1607,7 +1745,7 @@ export class Agent {
                 // bedless; if a bed ever sets the spawn, the bankGear chain prefers bed.json
                 // anyway and this file is harmless). Pure-additive, swallow all errors.
                 try {
-                    fs.writeFileSync('bots/_supervisor/spawn_pos.json',
+                    fs.writeFileSync(SUP('spawn_pos.json'),
                         JSON.stringify({ x: pos.x, y: pos.y, z: pos.z, t: Date.now() }));
                 } catch (e) { console.warn('respawn spawn_pos write failed:', e); }
                 // Reset reconnect attempts on successful respawn
@@ -1627,8 +1765,8 @@ export class Agent {
                         //   self_prompter.update() / adminMission.tick() after the in-place respawn.
                         console.log('[adminMission] respawn: mission active — suppressing sticky_skill re-arm');
                         try { this.adminMission.resumeAfterSupervised(); } catch (e) {}
-                    } else if (fs.existsSync('bots/_supervisor/sticky_skill.json')) {
-                        const sticky = JSON.parse(fs.readFileSync('bots/_supervisor/sticky_skill.json', 'utf8'));
+                    } else if (fs.existsSync(SUP('sticky_skill.json'))) {
+                        const sticky = JSON.parse(fs.readFileSync(SUP('sticky_skill.json'), 'utf8'));
                         if (sticky && sticky.skill) {
                             // Single-shot re-arm: if a supervised skill is still running it'll
                             // be rejected as "busy" and simply keep running (that survives the
@@ -1792,6 +1930,37 @@ export class Agent {
 
         if (Object.keys(hints).length === 0) return null;
         return hints;
+    }
+
+    // 把 _inferDamageCause() 的 hints 翻成一句人话死因，给死亡播报用。
+    // 只做最粗的归因（环境 > 摔落 > 攻击者），拿不准就返回空串——宁可不说，不能胡说。
+    _deathCauseText(hints) {
+        if (!hints) return '';
+        const ENV = {
+            lava: '掉岩浆里了', fire: '被烧死了', drowning: '淹死了',
+            magma_block: '踩到岩浆块了', cactus: '扎到仙人掌了',
+            sweet_berry_bush: '卡在甜浆果丛里了',
+        };
+        if (hints.environment && ENV[hints.environment]) return ENV[hints.environment];
+        const MOB = {
+            zombie: '僵尸', husk: '尸壳', drowned: '溺尸', zombie_villager: '僵尸村民',
+            zombified_piglin: '僵尸猪灵', skeleton: '骷髅', stray: '流浪者',
+            wither_skeleton: '凋零骷髅', bogged: '沼骸', creeper: '苦力怕',
+            spider: '蜘蛛', cave_spider: '洞穴蜘蛛', witch: '女巫', enderman: '末影人',
+            silverfish: '蠹虫', pillager: '掠夺者', vindicator: '卫道士', evoker: '唤魔者',
+            vex: '恼鬼', ravager: '劫掠兽', piglin: '猪灵', piglin_brute: '猪灵蛮兵',
+            hoglin: '疣猪兽', zoglin: '僵尸疣猪兽', blaze: '烈焰人', ghast: '恶魂',
+            magma_cube: '岩浆怪', slime: '史莱姆', phantom: '幻翼', guardian: '守卫者',
+            elder_guardian: '远古守卫者', shulker: '潜影贝', warden: '监守者', breeze: '旋风人',
+        };
+        const a = hints.attacker;
+        if (a) {
+            if (a.kind === 'player') return `被 ${a.name || '玩家'} 打死了`;
+            const cn = MOB[a.kind];
+            if (cn) return hints.fall ? `被${cn}逼下去摔死了` : `被${cn}打死了`;
+        }
+        if (hints.fall) return '摔死了';
+        return '';
     }
 
     cleanKill(msg='Killing agent process...', code=1) {

@@ -6,6 +6,7 @@ import { itemSatisfied, rotateXZ } from './utils.js';
 import * as skills from '../library/skills.js';
 import * as world from '../library/world.js';
 import * as mc from '../../utils/mcdata.js';
+import { appPath } from '../../utils/paths.js';
 
 
 export class NPCContoller {
@@ -39,10 +40,14 @@ export class NPCContoller {
     }
 
     init() {
+        // ★2026-08-07 路径统一: 建筑蓝图是**代码资产** (随 app 发行), 原来却按 CWD 相对读
+        // 'src/agent/npc/construction' —— bootstrap 把进程 chdir 到用户层之后必然读不到,
+        // 而这里失败只 console.log 一句, 会静默退化成"一个蓝图都没有"。改 appPath()。
+        const CONSTRUCTION_DIR = appPath('src', 'agent', 'npc', 'construction');
         try {
-            for (let file of readdirSync('src/agent/npc/construction')) {
+            for (let file of readdirSync(CONSTRUCTION_DIR)) {
                 if (file.endsWith('.json')) {
-                    this.constructions[file.slice(0, -5)] = JSON.parse(readFileSync('src/agent/npc/construction/' + file, 'utf8'));
+                    this.constructions[file.slice(0, -5)] = JSON.parse(readFileSync(appPath('src', 'agent', 'npc', 'construction', file), 'utf8'));
                 }
             }
         } catch (e) {

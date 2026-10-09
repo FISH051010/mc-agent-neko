@@ -3,6 +3,7 @@ import path from 'path';
 import { cosineSimilarity } from '../../utils/math.js';
 import { getSkillDocs } from './index.js';
 import { wordOverlapScore } from '../../utils/text.js';
+import { skillDirs } from '../../utils/paths.js';
 
 // Directory of hot-reloadable custom skills the supervisor drops in at runtime.
 // getSkillDocs()/getRelevantSkillDocs only surface the `skills.*`/`world.*` PRIMITIVES,
@@ -11,7 +12,13 @@ import { wordOverlapScore } from '../../utils/text.js';
 // a "build nether portal" admin mission re-derived realNetherPortal's temp-support +
 // top-face-light idioms over ~48 min instead of just calling it). This manifest is
 // appended to $CODE_DOCS so the model prefers `skills.customSkill(bot,'<name>')`.
-const _CUSTOM_SKILLS_DIR = path.resolve(process.cwd(), 'bots', '_supervisor', 'skills');
+// ★2026-08-07 路径统一 (v0.1.2 事故根因): 这里原来是
+//   path.resolve(process.cwd(), 'bots', '_supervisor', 'skills')
+// —— 相对 CWD 的单目录。分发 zip 里代码在 `<包根>/app/`、CWD 在 `<包根>`, 于是这个目录
+// 是空的, 63 个热加载技能一个都扫不到 (customSkill 只 log 不抛 → 静默残废, 顶层自主派发
+// 链等于没装)。现在改成遍历 skillDirs() 的**多目录**: app 内随包发行的那份 + home 内用户/
+// 监工自己加的那份。开发机上两者重合、去重后只剩一个, 行为与改造前完全一致。
+// 同名冲突: skillDirs() 里 appPath 那份排第一, _mergeSkillFiles 用 "先到先得", 即随包版优先。
 // Kept out of the catalog AND out of the !runSkill allowlist (the two share this filter):
 //   • pure diagnostics/tests, cheat helpers, and prepNether — the user RETIRED prepNether
 //     (docs/…, memory) but its file carries no RETIRED banner to auto-detect.
@@ -41,6 +48,24 @@ const _CUSTOM_SKILLS_BLOCKLIST = new Set([
     'mockSeal', 'installMotionAudit', 'verifyMove', 'verifyWalk', 'freeBot',
 ]);
 const _CUSTOM_SKILLS_TTL_MS = 300000;   // re-scan at most every 5 min (files are added rarely; hot-reload-friendly)
+
+// 把多个技能目录的 readdir 结果合并成一张 name → 绝对路径 的表。先到先得 = skillDirs() 的
+// 排序即优先级 (app 内随包版 > home 内用户版), 与 resolveSkillFile()/skills.customSkill 的候选
+// 顺序一致 —— "目录里扫到的" 和 "customSkill 真正加载的" 必须是同一个文件, 否则催化出的目录说明
+// 会跟真正跑的代码对不上。参数是 [{dir, files}] (同步/异步两条扫描路径各自拿到 files 后共用本函数,
+// 避免合并语义分叉)。
+function _mergeSkillFiles(listings) {
+    const found = new Map();   // name → 绝对路径
+    for (const { dir, files } of listings) {
+        for (const f of files) {
+            if (!f.endsWith('.js')) continue;
+            const name = f.slice(0, -3);
+            if (found.has(name)) continue;                      // 先到先得
+            found.set(name, path.join(dir, f));
+        }
+    }
+    return found;
+}
 
 // Split a function's raw parameter string on TOP-LEVEL commas only, so a default value that
 // itself contains commas (e.g. `opts = { a, b }`) stays in one piece. String-aware like its
@@ -237,7 +262,7 @@ export class SkillLibrary {
     }
 
     // Single source of truth for "which custom skills exist and what they do". Scans
-    // _CUSTOM_SKILLS_DIR, applies the shared allowlist (blocklist + RETIRED/DISABLED/退役/
+    // every dir in skillDirs() (merged, app-first), applies the shared allowlist (blocklist + RETIRED/DISABLED/退役/
     // cheat-give marker via _parseSkillEntry), and returns the survivors sorted by name.
     // getCustomSkillManifest() (the LLM-facing catalog) and getRunnableSkillNames()/
     // getRunnableSkillEntry() (the !runSkill allowlist) ALL derive from this, so "what the
@@ -267,12 +292,16 @@ export class SkillLibrary {
         // First scan (no cache yet): synchronous, one-time, on the startup path.
         let entries = [];
         try {
-            const files = fs.readdirSync(_CUSTOM_SKILLS_DIR).filter(f => f.endsWith('.js'));
-            for (const f of files) {
-                const name = f.slice(0, -3);
+            const listings = [];
+            for (const dir of skillDirs()) {
+                // 单个目录不存在 = 正常态 (开发机上只有一份; 分发包里 home 那份等用户自己加),
+                // 跳过它而不是让整次扫描失败 —— 否则漏一个目录 = 全部技能不可见。
+                try { listings.push({ dir, files: fs.readdirSync(dir) }); } catch (e) { continue; }
+            }
+            for (const [name, abs] of _mergeSkillFiles(listings)) {
                 if (_CUSTOM_SKILLS_BLOCKLIST.has(name)) continue;
                 let head = '';
-                try { head = fs.readFileSync(path.join(_CUSTOM_SKILLS_DIR, f), 'utf8'); } catch (e) { continue; }
+                try { head = fs.readFileSync(abs, 'utf8'); } catch (e) { continue; }
                 const entry = _parseSkillEntry(name, head);
                 if (entry) entries.push(entry);
             }
@@ -293,13 +322,18 @@ export class SkillLibrary {
         this._customSkillRefreshing = true;
         (async () => {
             try {
-                const files = (await fs.promises.readdir(_CUSTOM_SKILLS_DIR)).filter(f => f.endsWith('.js'));
+                const listings = [];
+                for (const dir of skillDirs()) {
+                    try { listings.push({ dir, files: await fs.promises.readdir(dir) }); } catch (e) { continue; }
+                }
+                // 一个目录都读不到 = 瞬时 IO 故障 (或全被删了)。保留上一次的好结果, 别让
+                // 一次抖动把已建好的目录清空 —— 与改造前 "readdir 抛 → keep last good" 等价。
+                if (!listings.length) return;
                 const entries = [];
-                for (const f of files) {
-                    const name = f.slice(0, -3);
+                for (const [name, abs] of _mergeSkillFiles(listings)) {
                     if (_CUSTOM_SKILLS_BLOCKLIST.has(name)) continue;
                     let head = '';
-                    try { head = await fs.promises.readFile(path.join(_CUSTOM_SKILLS_DIR, f), 'utf8'); } catch (e) { continue; }
+                    try { head = await fs.promises.readFile(abs, 'utf8'); } catch (e) { continue; }
                     const entry = _parseSkillEntry(name, head);
                     if (entry) entries.push(entry);
                 }

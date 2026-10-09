@@ -321,8 +321,13 @@ class MindServerProxy {
             // Create a compact hash of critical fields for change detection
             const stateHash = `${state.isDead}|${state.gameplay?.health}|${state.gameplay?.hunger}|${Math.floor(state.gameplay?.position?.x)}|${Math.floor(state.gameplay?.position?.y)}|${Math.floor(state.gameplay?.position?.z)}|${state.action?.current}|${state.inventory?.stacksUsed}`;
             
+            // ★2026-09-07：加一条心跳。原来只在哈希变化时推，bot 完全静止（等指令、
+            //   被卡住、夜间待命）时哈希永不变 → 一次都不推 → 服务端那边的状态越来越旧。
+            //   而"她怎么不动了"恰恰是最需要看状态的时候。每 30 秒无条件推一帧兜底。
+            const heartbeatDue = (now - this.lastPushTime) > 30000;
+
             // Only push if changed or forced
-            if (forcePush || stateHash !== this.lastStateHash) {
+            if (forcePush || heartbeatDue || stateHash !== this.lastStateHash) {
                 this.cachedState = state;
                 this.lastStateHash = stateHash;
                 this.lastPushTime = now;
@@ -436,4 +441,11 @@ export function sendBotChatToServer(agentName, json) {
 // for sending general output to server for display
 export function sendOutputToServer(agentName, message) {
     serverProxy.getSocket().emit('bot-output', agentName, message);
+}
+
+// 皮肤设置结果上报给 mindserver，让控制面板能显示"生效了没 / 为什么没生效"。
+// 之前这个结果只进黑窗口日志，玩家在面板上看不到任何线索（实录: 服务端没装
+// FabricTailor，皮肤永远不变，而面板的皮肤页看着一切正常）。
+export function sendSkinStatusToServer(agentName, status) {
+    try { serverProxy.getSocket().emit('agent-skin-status', agentName, status); } catch (e) { /* 上报失败绝不影响 agent */ }
 }

@@ -3,8 +3,11 @@ import { getKey } from '../utils/keys.js';
 
 export class GLHF {
     static prefix = 'glhf';
-    constructor(model_name, url) {
+    // ★2026-08-07: 补上 params 形参。此前构造函数根本不收 params，profile 里写的
+    //   温度/max_tokens/关思考开关全被静默丢弃，用户以为生效了其实没有。
+    constructor(model_name, url, params) {
         this.model_name = model_name;
+        this.params = params ? { ...params } : {};
         const apiKey = getKey('GHLF_API_KEY');
         if (!apiKey) {
             throw new Error('API key not found. Please check keys.json and ensure GHLF_API_KEY is defined.');
@@ -21,7 +24,8 @@ export class GLHF {
         const pack = {
             model: this.model_name || "hf:meta-llama/Llama-3.3-70B-Instruct",
             messages,
-            stop: [stop_seq]
+            stop: [stop_seq],
+            ...(this.params || {})
         };
 
         const maxAttempts = 5;

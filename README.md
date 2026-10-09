@@ -38,7 +38,7 @@ Do not connect this bot to public servers with coding enabled. This project allo
 
 2. Download the [latest release](https://github.com/mindcraft-bots/mindcraft/releases/latest) and unzip it, or clone the repository.
 
-3. Rename `keys.example.json` to `keys.json` and fill in your API keys (you only need one). The desired model is set in `andy.json` or other profiles. For other models refer to the table below.
+3. API keys are configured through the built-in control panel, not by editing files. Start the app first (step 5), then open <http://localhost:8765> and fill in a provider key on the **AI 配置** page. `keys.json` is created for you on first launch; you never need to open it by hand. (This fork replaced upstream's `keys.example.json` workflow — see `使用说明.txt` in the Windows release for the player-facing walkthrough.)
 
 4. In terminal/command prompt, run `npm install` from the installed directory
 

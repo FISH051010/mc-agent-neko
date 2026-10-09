@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { healThinkingParams } from './providers.js';
 
 export class GPT {
     static prefix = 'openai';
@@ -80,6 +81,21 @@ export class GPT {
                 console.log(err);
                 res = 'Vision is only supported by certain models.';
             } else {
+                // ★2026-09-07: 思考档位被模型拒（OpenAI 的 reasoning.effort 档位按模型分裂,
+                //   gpt-5.6-* 不吃 'minimal'、gpt-5-nano 不吃 'none'）→ 从报错里解析出它
+                //   支持的档位, 就地改掉并重试一次。不修的话每次调用都 400, 全被下面那句
+                //   'My brain disconnected' 吞掉, 表现成"bot 没脑子 + I'm stuck"空转。
+                const healed = healThinkingParams(this.params, err);
+                if (healed && !this._thinkingHealed) {
+                    this._thinkingHealed = true;
+                    this.params = healed.params;
+                    console.warn(`⚙️ ${healed.note}。正在用新档位重试…`);
+                    return await this.sendRequest(turns, systemMessage, stop_seq);
+                }
+                // 兜底失败时把真实原因打出来 —— 'My brain disconnected' 对排查毫无信息量,
+                // 用户看到的是 bot 变傻, 而真正的 400 报文被埋在这里。
+                const why = err?.error?.message || err?.message || String(err);
+                console.error(`❌ LLM 调用失败（模型 ${this.model_name}）: ${why}`);
                 console.log(err);
                 res = 'My brain disconnected, try again.';
             }

@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { logoutAgent } from '../mindcraft/mindserver.js';
+import * as logbus from '../mindcraft/panel/logbus.js';
 
 const init_agent_path = fileURLToPath(new URL('./init_agent.js', import.meta.url));
 
@@ -27,11 +28,31 @@ export class AgentProcess {
             args.push('-m', init_message);
         args.push('-p', this.port);
 
+        // ★2026-08-07 面板日志: 原来是 stdio:'inherit' —— 子进程直接写父进程的终端,
+        //   控制面板一个字也拿不到, 这就是老面板没有日志区的根因。改成管道后
+        //   **两路都要**: 一路原样写回终端(用户/watchdog 的 agent.log 靠它), 一路
+        //   进 logbus 环形缓冲给面板。任何一路都不能吞掉另一路。
+        //   stdin 保持 inherit —— 子进程从不读 stdin, 但断开它会让某些库的 TTY 探测抽风。
         const agentProcess = spawn(process.execPath, args, {
-            stdio: 'inherit',
-            stderr: 'inherit',
+            stdio: ['inherit', 'pipe', 'pipe'],
         });
-        
+
+        const pipeToBoth = (stream, sink, tag) => {
+            if (!stream) return;
+            const toBus = logbus.lineWriter(tag);
+            stream.setEncoding('utf8');
+            stream.on('data', (chunk) => {
+                try { sink.write(chunk); } catch { /* 终端没了也不能影响 agent */ }
+                try { toBus(chunk); } catch { /* 日志缓冲绝不能反过来伤 agent */ }
+            });
+            stream.on('error', (err) => {
+                console.error(`Agent ${this.name} ${tag} 流出错:`, err?.message || err);
+            });
+        };
+        pipeToBoth(agentProcess.stdout, process.stdout, this.name);
+        pipeToBoth(agentProcess.stderr, process.stderr, `${this.name}!`);
+
+
         let last_restart = Date.now();
         agentProcess.on('exit', (code, signal) => {
             console.log(`Agent process exited with code ${code} and signal ${signal}`);

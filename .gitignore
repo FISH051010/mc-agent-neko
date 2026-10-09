@@ -56,6 +56,22 @@ bots/_supervisor/*
 bots/_supervisor/test/*
 !bots/_supervisor/test/*.test.mjs
 
+# ── 用户层文件（分发包里在包根，开发机上就落在仓库根）────────────────────────
+# settings.js / env.defaults.json 是**随代码发行的默认值**，要提交；
+# 下面这两个是**用户/控制面板写出来的覆盖层**，每台机器都不一样，绝不能提交。
+# 分发包里它们由 tools/build-win-zip.ps1 现生成（settings.json）或由程序首启自建
+# （runtime-flags.json），仓库里出现的那份只是开发机的本地状态。
+/settings.json
+/runtime-flags.json
+
+# 分发包的默认产出目录（-OutDir 指到仓库内时用）
+/dist/
+
+# skins/ 里只有 neko-skin.png 是随包资产（build 脚本会把它搬到包根的 skins/）。
+# 其余 png 是开发机上试皮肤时丢进来的，不提交。
+/skins/*.png
+!/skins/neko-skin.png
+
 # hot-load skills are SOURCE, not runtime junk — world_model 提案端硬接线技能名(死契约),
 # 丢文件 = customSkill 找不到 → 3-strike → 5min 冷却的永久空转风暴。历史上 skills/*.js 全靠
 # git add -f 强加进库; replenishKit.js (2026-07-04) 差点被常规 git add 静默漏掉。三段式同上:
@@ -63,3 +79,8 @@ bots/_supervisor/test/*
 !bots/_supervisor/skills/
 bots/_supervisor/skills/*
 !bots/_supervisor/skills/*.js
+
+# 并行开发用的 git worktree 检出目录。它们是 11 份完整的分支副本(~90MB)，永远不该进库。
+# 2026-08-07 补：打包脚本用「临时索引 + git add -A + write-tree」从工作区取源码做白名单，
+# 不忽略这个目录会让 11 份分支副本一起被 add 进临时索引(慢且脏)。
+/.worktrees/

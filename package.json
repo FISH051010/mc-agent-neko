@@ -16,6 +16,7 @@
         "globals": "^15.11.0",
         "google-translate-api-x": "^10.7.1",
         "groq-sdk": "^0.15.0",
+        "minecraft-assets": "^1.11.0",
         "minecraft-data": "^3.97.0",
         "mineflayer": "^4.33.0",
         "mineflayer-armor-manager": "^2.0.1",
@@ -50,5 +51,6 @@
     },
     "devDependencies": {
         "patch-package": "^8.0.0"
-    }
+    },
+    "_comment_eslint": "eslint / @eslint/js / globals / eslint-plugin-no-floating-promise 必须留在 dependencies：src/agent/coder.js 是顶层静态 import {ESLint}，ESLint 又会在运行时加载仓库根的 eslint.config.js，而那个文件 import 了另外三个。挪进 devDependencies 会让 --omit=dev 的安装在第一次 !newAction 时直接崩。"
 }

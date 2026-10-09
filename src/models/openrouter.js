@@ -4,8 +4,11 @@ import { strictFormat } from '../utils/text.js';
 
 export class OpenRouter {
     static prefix = 'openrouter';
-    constructor(model_name, url) {
+    // ★2026-08-07: 补上 params 形参。此前构造函数根本不收 params，profile 里写的
+    //   温度/max_tokens/关思考开关全被静默丢弃，用户以为生效了其实没有。
+    constructor(model_name, url, params) {
         this.model_name = model_name;
+        this.params = params ? { ...params } : {};
 
         let config = {};
         config.baseURL = url || 'https://openrouter.ai/api/v1';
@@ -29,7 +32,8 @@ export class OpenRouter {
         const pack = {
             model: this.model_name,
             messages,
-            stop: stop_seq
+            stop: stop_seq,
+            ...(this.params || {})
         };
 
         let res = null;

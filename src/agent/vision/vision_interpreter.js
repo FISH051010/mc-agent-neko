@@ -1,5 +1,6 @@
 import { Vec3 } from 'vec3';
 import fs from 'fs';
+import { dataPath } from '../../utils/paths.js';
 
 // NOTE (local deploy): `Camera` (./camera.js) is LAZY-loaded via dynamic import() in
 // _ensureCamera() below, NOT statically imported. camera.js pulls in
@@ -17,7 +18,10 @@ export class VisionInterpreter {
         // Vision RE-ENABLED (headless-gl built). The Camera is created lazily on first
         // use via _ensureCamera() so the renderer chain isn't imported at startup.
         this.allow_vision = allow_vision;
-        this.fp = './bots/'+agent.name+'/screenshots/';
+        // ★2026-08-07 路径统一: 截图是运行时产物, 原来是裸相对 './bots/<name>/screenshots/'。
+        // 改绝对路径后 camera.js 的 `${this.fp}/${filename}.jpg` 拼接照常成立 (末尾不再带斜杠,
+        // 多一个分隔符也无害), 渲染逻辑本身一行没动。
+        this.fp = dataPath('bots', agent.name, 'screenshots');
         this.camera = null;
         this._cameraInit = null;
     }

@@ -178,7 +178,17 @@ class WSMessageServer {
     //   入口=收到的外部指令 task/run_skill/cancel(handleMessage 调用)。不再周期性刷原始字段。
     //   env DEBUG_CHAT=0 整体关闭。MC chat 单条上限 256, 超长截断; 全 try/catch, 聊天镜像绝不伤 agent。
     _chatToMC(text) {
-        if (String(process.env.DEBUG_CHAT || '1') === '0') return;
+        // ★2026-09-09: 这是**开发用**的协议镜像 —— 把 ws 往来(◀入站指令 / ▶skill_result /
+        //   task_finished / 15s 人话状态)打进游戏公屏, 方便开发时在游戏里直接看交互。
+        //   但对玩家而言就是刷屏: 实录截图里公屏被
+        //     <Neko> ▶{"type":"skill_result","skill":"kernelDriver","ok":true,...}
+        //   这类 JSON 灌满, 把真正想看的对话顶没了。
+        //   原来它和 agent.js 里那两条**玩家有用**的提示(🎯开始执行指令 / ✅指令完成)共用
+        //   DEBUG_CHAT 一个开关, 关了就两样都没。拆成独立开关: 分发包默认关镜像(见
+        //   env.defaults.json), 开发时置 NEKO_CHAT_MIRROR=1 即可恢复原行为。
+        const mirror = process.env.NEKO_CHAT_MIRROR;
+        if (mirror !== undefined && mirror !== '') { if (mirror === '0') return; }
+        else if (String(process.env.DEBUG_CHAT || '1') === '0') return;   // 未设新开关时沿用旧语义
         try {
             const bot = this.agent && this.agent.bot;
             if (!bot || typeof bot.chat !== 'function' || !bot.entity) return;
@@ -1357,6 +1367,17 @@ class WSMessageServer {
                 image: base64Image,
                 encoding: 'jpeg-base64'
             });
+
+            // ★2026-08-07 控制面板: 同一帧额外发一份给 mindserver, 供面板
+            //   GET /api/screenshot/latest.jpg 读取。**只是多发一份, 不碰截图管线本身** ——
+            //   全 try/catch 且不 await, mindserver 断线/未连时静默跳过。截图链路很脆
+            //   (headless-gl 崩了只能靠子进程隔离扛), 这里绝不允许引入任何新的失败路径。
+            try {
+                const sock = serverProxy?.getSocket?.();
+                if (sock && serverProxy.connected) {
+                    sock.emit('agent-screenshot', this.agent?.name, base64Image);
+                }
+            } catch (e) { /* 面板画面是锦上添花, 永远不能影响 agent */ }
 
         } catch (error) {
             console.warn('Failed to capture screenshot:', error);

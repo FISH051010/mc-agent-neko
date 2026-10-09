@@ -1,172 +1,236 @@
-# 构建并分发 mc-agent Windows zip
+# 构建并分发 mc-agent Windows 绿色包
 
-> 给打包 / 分发任务的接手人：本文档是一个**自包含的指令**。读完按步骤跑，最后产出一个 zip 文件，上传到三个网盘。除了本目录的源码外不依赖其它仓库或外部知识。
+> 给打包 / 分发任务的接手人。整个流程已经脚本化，本文档只讲**怎么调用、怎么验收、怎么上传**，
+> 以及几条不看就会重蹈覆辙的教训。
 
-## 背景（必读）
+mc-agent 是 Node.js 写的独立程序，跟 N.E.K.O. 主程序通过 WebSocket 通信（`ws://localhost:48909`）。
+两者解耦分发 —— N.E.K.O. 安装包不带 mc-agent，玩 Minecraft 的用户从网盘下载本 zip 自己运行。
 
-mc-agent 是 Node.js 写的独立程序，跟 N.E.K.O. 主程序通过 WebSocket 通信（默认 `ws://localhost:48909`）。**两者解耦分发**——N.E.K.O. 安装包不带 mc-agent，玩 Minecraft 的用户从网盘下载本 zip 自己运行。
+最终产物：`mc-agent-win-vX.Y.Z.zip`，解压后用户**双击「启动.bat」即可**，
+不需要装 Node / npm / Visual Studio Build Tools，也不需要手动编辑任何文件。
 
-最终产物：一个 `mc-agent-win-vX.Y.Z.zip`，解压后用户**双击 `启动mc-agent.bat` 即可运行**，不需要装 Node / npm / Visual Studio Build Tools。
+---
 
-## 产出布局
+## 一、怎么打
 
-```
-mc-agent-win-vX.Y.Z/
-├── node/
-│   └── node-v20.11.1-win-x64/
-│       ├── node.exe
-│       ├── npm.cmd
-│       └── ...
-├── src/
-│   ├── main.js
-│   ├── settings.js
-│   ├── neko.json
-│   ├── package.json
-│   ├── node_modules/        ← 已预装，arch 对的上 win-x64
-│   └── ...
-├── keys.example.json        ← 外层副本，见下方"为什么放外层"
-├── neko.json                ← 外层副本，见下方"为什么放外层"
-└── 启动mc-agent.bat
-```
-
-### 为什么 keys.json / 配置 profile 要放外层（与 src 同级）
-
-bat 用 `"%~dp0src\main.js"` 启动，但**双击 bat 时进程的工作目录是 bat 所在目录（zip 根，src 的上一层）**。而：
-
-- `src/utils/keys.js` 用 `readFileSync('./keys.json')`（CWD 相对）→ 读的是 **zip 根** 的 `keys.json`
-- `main.js` 用 `readFileSync(profile)`，profile 来自 `settings.js` 的 `"./neko.json"`（CWD 相对）→ 读的是 **zip 根** 的 `neko.json`
-
-所以这两个文件**必须放在 zip 根**，放进 src/ 里运行时根本读不到。下面构建步骤 5b 会把它们从 src/ 复制一份到外层。（src/ 里的副本留着无害，只是不被读取。）
-
-## 构建步骤
-
-**前提**：在 Windows 上构建（不能 cross-compile，mineflayer / canvas / prismarine-viewer 有 win-x64 prebuilt native binary，wrong arch 就跑不起来）。
-
-打开 PowerShell，cd 到一个空目录（不要在源 repo 内），跑：
+**必须在 Windows x64 上构建**（canvas / gl / prismarine-viewer 的 native prebuilt 是 win-x64 专用的，
+跨平台产出的包用户跑不起来，截图管线会直接崩）。
 
 ```powershell
-$ErrorActionPreference = "Stop"
-
-$VERSION   = "0.1.1"                                          # ← 调
-$SRC_REPO  = "C:\Users\wehos\Project\mc-agent-upstream-sync"  # ← 调
-$OUT_NAME  = "mc-agent-win-v$VERSION"
-$NODE_VER  = "v22.13.0"   # mineflayer 4.37 + minecraft-protocol 1.66 require Node >=22
-$NODE_DIST = "node-$NODE_VER-win-x64"
-
-# 1. 清空 + 建目录
-if (Test-Path $OUT_NAME) { Remove-Item -Recurse -Force $OUT_NAME }
-New-Item -ItemType Directory -Path "$OUT_NAME/node", "$OUT_NAME/src" | Out-Null
-
-# 2. portable Node
-$nodeZip = "$NODE_DIST.zip"
-curl.exe -L "https://nodejs.org/dist/$NODE_VER/$nodeZip" -o $nodeZip
-Expand-Archive $nodeZip -DestinationPath "$OUT_NAME/node" -Force
-Remove-Item $nodeZip
-
-# 3. 复制源码。
-# /XD 排除目录（.git / node_modules / 评估 harness 等大件）。
-# /XF 排除文件 —— **特别注意 keys.json**（gitignored 的本地密钥），还有
-# andy_*.json / jill_*.json（运行时生成的 profile 副本），漏一个就把
-# 你的 API key 一起打进 zip 分发出去。BUILD-WIN-ZIP.md 是本文档自身，
-# 给维护者看的，不需要进 zip。
-$EXCLUDE_DIRS = @('.git', '.github', 'node_modules', 'tests', 'tasks', 'experiments',
-                  'wandb', 'code_records', 'logs', '.claude', '.codex', '__pycache__')
-$EXCLUDE_FILES = @('keys.json', 'BUILD-WIN-ZIP.md', 'andy_*.json', 'jill_*.json', '*.pyc')
-$srcDest = "$OUT_NAME/src"
-robocopy $SRC_REPO $srcDest /E `
-    /XD ($EXCLUDE_DIRS | %{ Join-Path $SRC_REPO $_ }) `
-    /XF $EXCLUDE_FILES `
-    /NFL /NDL /NJH /NJS | Out-Null
-
-# 4. npm ci（用刚下的 portable Node）。**不能加 --omit=dev**：mc-agent 的
-# postinstall 会跑 patch-package 把 patches/*.patch 打上去（修
-# mineflayer / minecraft-data 的已知 bug），而 patch-package 是 devDep；
-# --omit=dev 之后 patch-package 不在 node_modules 里，postinstall 仍然触发，
-# 报 "patch-package is not recognized" 然后 npm ci exit 1。代价：node_modules
-# 多 ~30-50 MB devDep，可接受。
-$env:PATH = "$PWD\$OUT_NAME\node\$NODE_DIST;" + $env:PATH
-Push-Location $srcDest
-& "$PWD\..\node\$NODE_DIST\npm.cmd" ci
-Pop-Location
-
-# 5. 写启动 bat（UTF-8 with BOM 避免中文文件名乱码）
-$BAT_BODY = @"
-@echo off
-chcp 65001 >nul 2>&1
-echo Starting mc-agent...
-echo (close this window or Ctrl+C to stop)
-echo.
-"%~dp0node\$NODE_DIST\node.exe" "%~dp0src\main.js"
-pause
-"@
-[System.IO.File]::WriteAllText("$PWD\$OUT_NAME\启动mc-agent.bat", $BAT_BODY, (New-Object System.Text.UTF8Encoding $true))
-
-# 5b. 把 keys 模板 + profile 复制一份到 zip 根（外层）。
-# 双击 bat 时 CWD = zip 根，而 keys.js / main.js 用 './keys.json' './neko.json'
-# 这种 CWD 相对路径读取，所以这俩文件必须在外层才会被读到（见上方"为什么放外层"）。
-Copy-Item "$srcDest\keys.example.json" "$OUT_NAME\keys.example.json" -Force
-Copy-Item "$srcDest\neko.json"         "$OUT_NAME\neko.json"         -Force
-
-# 6. 打包成 zip
-Compress-Archive -Path $OUT_NAME -DestinationPath "$OUT_NAME.zip" -CompressionLevel Optimal -Force
-
-Write-Host ""
-Write-Host "==> Built: $OUT_NAME.zip"
-Write-Host "Size: $((Get-Item "$OUT_NAME.zip").Length / 1MB) MB"
+# 在仓库根目录下
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build-win-zip.ps1 -Version 0.1.3
 ```
 
-整个过程预计 **5-10 分钟**（npm ci 拖 prebuilt 占大头）。
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `-OutDir` | `D:\Downloads\mc-agent` | 包根目录，**会被清空重建**。zip 落在它的上一级 |
+| `-Version` | 当天日期 | 不带 `v`。正式发版一定要显式传 |
+| `-NodeVersion` | `v22.13.0` | 便携 Node 版本。mineflayer 4.37 + minecraft-protocol 1.66 要求 >= 22 |
+| `-SkipNode` | 关 | 不下载 Node（用缓存，没缓存就退回系统 node 并**强制跳过打 zip**）。只用于本地迭代 |
+| `-NoZip` | 关 | 只产目录不打包 |
 
-预期 zip 大小 **~200 MB**（portable Node ~50MB + node_modules ~150MB + src ~10MB）。
+全程约 **5–10 分钟**（`npm ci` 拉 prebuilt 占大头）。便携 Node 的 zip 会缓存到
+`%LOCALAPPDATA%\mc-agent-build\node-cache\`，第二次起不再重复下载。
 
-## 验证产物
+脚本会在中途自己把关，任何一项不过就 `exit 1` 且**不产出半成品**：
 
-解压到一个干净目录，双击 `启动mc-agent.bat`：
+1. HEAD 里必须有全部必需文件（缺了当场报，不用等 `npm ci` 白跑五分钟）
+2. 导出后断言：`main.js` / `settings.js` / `env.defaults.json` / `profiles/defaults/_default.json`
+   / `bots/execTemplate.js` 等必须在；`bots/_supervisor/skills/*.js` 必须 > 50 个；`patches/*.patch` 必须有
+3. 边界断言：`docs/` `test/` `tasks/` `watchdog.ps1` `keys.json` 等一律不许出现在产物里
+4. `require('canvas')` + `require('gl')` 必须过（截图管线地基）
+5. `node app/main.js --doctor` 必须 exit 0（**唯一能挡住"打出一个残废包"的机制手段**）
+6. 兜底扫描：产物里出现 `sk-…` / `AIza…` / 开发机绝对路径 / 任何叫 `keys.json` 的文件 → 拒绝出包
 
-1. 应该开一个黑色 console 窗口
-2. 打出 `MindServer running on port 8765 on host localhost`
-3. 打出 `MC server found. (Host: localhost, Port: 55916, Version: 1.21.x)`（前提你机器上 MC 在 55916 跑着；没跑也没关系，agent 进程仍会启动等待）
-4. **首次启动一定会**报 `API key "OPENAI_API_KEY" not found in keys.json or environment variables!` 然后 agent 进程退出 —— 这是预期：zip 里**故意没带 keys.json**（gitignored，避免打包者把自己的 key 泄露给最终用户）
+> ⚠️ 打的是 **HEAD**，不是工作区。`git archive` 只输出已提交的内容，所以
+> **未提交的改动不会进包**。脚本会把工作区脏文件列出来提醒你。
+> 例外只有两个，它们从工作区直接取：`package-lock.json`（被 gitignore 了，进不了 archive）
+> 和 `tools/dist/` 下的模板（启动.bat / 使用说明.txt / 中文提示文案）。
 
-## 最终用户首次设置 LLM key
+---
 
-打完包后告诉用户：解压后**先做这一步再点 bat**。
+## 二、产出布局
 
-1. 留在**解压后的最外层目录**（就是 `启动mc-agent.bat` 和 `keys.example.json` 所在的那一层，**不要进 src/**）
-2. 把这一层的 `keys.example.json` 复制一份命名为 `keys.json`
-3. 用记事本打开 `keys.json`，把 `"OPENAI_API_KEY": ""` 填成 `"OPENAI_API_KEY": "sk-..."`（或他用的其他 LLM 提供商的 key，参考 mc-agent 主 README 的支持列表：openai / google / anthropic / deepseek / qwen / ollama 等）
-4. 双击 `启动mc-agent.bat`，这次 agent 能正常起来连进 MC bot
+```
+<包根>/
+├── 启动.bat            ← 用户双击这个
+├── 使用说明.txt         ← 面向普通玩家的三步上手 + 常见问题
+├── bot.json            ← 角色配置（名字 / 人设 / 模型）
+├── settings.json       ← 连哪个游戏、控制面板端口
+├── skins/
+│   └── neko-skin.png
+├── node/               ← 便携 Node（已拍平，node\node.exe）
+└── app/                ← 代码，用户不需要碰
+    ├── main.js  settings.js  env.defaults.json
+    ├── src/  profiles/  patches/  bots/
+    ├── dist-msg/       ← 启动.bat 用 type 打出来的中文提示
+    └── node_modules/
+```
 
-> ⚠️ 一定是放在**外层**（与 bat 同级）的 `keys.json`，不是 `src/keys.json`。双击 bat 时工作目录是外层，程序按 CWD 相对路径读 `./keys.json`，放进 src/ 里读不到。改 bot 名字 / 模型同理：编辑外层的 `neko.json`。
+**用户层的文件只在包根有一份，`app/` 里绝不留副本。** 这是历史投诉
+"内外各一份、改了一份不生效"的根治点：运行时 `src/utils/paths.js` 把 `APP_ROOT`（= `app/`）
+和 `HOME_DIR`（= 包根）分开，`src/utils/bootstrap.js` 会 `chdir` 到包根，两层各读各的。
+`启动.bat` 里的 `cd /d "%~dp0"` 是这套布局的地基。
 
-mindserver UI（启动后浏览器开 <http://localhost:8765>）也能编辑这些字段，但 mindserver UI 需要 agent 进程先起来，所以**首次填 key 只能改文件**。
+**不生成 `keys.json`。** 密钥一律走控制面板 GUI，首次启动 `bootstrap.js` 会自建空壳。
+打包机器上的 `keys.json` 是真密钥，任何"顺手复制一份模板"的写法都是泄密路径。
 
-## 排错
+---
 
-bat 启动后窗口闪退（不是 keys 报错那种"打完信息再退"）：
-- 把 `node ... main.js` 那行末尾的 `pause` 临时改成 `cmd /k` 跑一次抓错
-- 常见原因：node_modules 没装全（重新 `npm ci`）、Node 版本过老（v22+ 才稳，v20 会触发 mineflayer EBADENGINE）
+## 三、验收清单
 
-## 上传
+在**一台干净机器**（或至少一个干净目录）上解压后逐条过。少一条都不要上传。
 
-把生成的 `mc-agent-win-vX.Y.Z.zip` 上传到三个网盘的对应目录：
+- [ ] 双击「启动.bat」，弹出黑窗，**不闪退**
+- [ ] 几秒后浏览器自动打开 `http://localhost:8765` 控制面板
+- [ ] 控制面板「AI 配置」页能看到供应商列表，填入密钥后测试连接返回成功
+- [ ] Minecraft 里「对局域网开放」，把端口填进面板「游戏连接」页，点启动 Bot
+- [ ] **十几秒内游戏里出现机器人**，`!goToPlayer` 之类的指令有反应
+- [ ] N.E.K.O. 主程序能连上 `ws://localhost:48909`，并且**能收到 bot 视角的截图**
+      （截图管线是核心功能，不是可选项 —— 这一条挂了等于包废了）
+- [ ] 把整个文件夹改名成带空格和中文的名字（例如 `我的 机器人`），再双击一次，仍然正常
+- [ ] 关掉黑窗 → 进程干净退出，没有残留的 node.exe
+- [ ] 全文搜一遍产物：没有 `keys.json`、没有 `C:\Users\`、没有 `.git`
+
+`--doctor` 已经在构建时跑过一遍，但换机器后可以再跑一次确认：
+
+```powershell
+.\node\node.exe .\app\main.js --doctor
+```
+
+---
+
+## 四、上传
+
+传到三个网盘的对应目录：
 
 - 夸克网盘：<https://pan.quark.cn/s/b662424f7f34>
 - Google Drive：<https://drive.google.com/drive/folders/1DSx_y1MsTEvc5ljsjURNJ0aP1ax3RoN-?usp=drive_link>
 - 百度网盘（提取码 `kuro`）：<https://pan.baidu.com/s/1i_a6IUQDz-GpEaWGvIcnqw?pwd=kuro>
 
-文件名建议：`mc-agent-win-v0.1.0.zip`（或带日期：`mc-agent-win-20260517.zip`）。
+文件名用脚本产出的 `mc-agent-win-vX.Y.Z.zip`。
+**旧版本不要立刻删** —— 至少留 1–2 个，新版有问题好回滚。
+把脚本打印的 SHA256 一并贴到发布说明里，方便用户校验下载完整性。
 
-旧版本不要立刻删——保留至少 1-2 个旧版本以防新版有 bug 需要 rollback。
+---
 
-## N.E.K.O. 侧的契合点
+## 五、教训：为什么从黑名单改成白名单
 
-用户从网盘下载 zip → 解压到任意位置 → 双击 `启动mc-agent.bat`。N.E.K.O. 主程序里 `game_agent_minecraft` 插件的快速开始页（plugin/plugins/game_agent_minecraft/surfaces/quickstart.tsx）会探测 `ws://localhost:48909` 自动显示连接状态、给用户跳转 mindserver 管理面板（默认 `:8765`）的入口。
+旧流程用 `robocopy` + `/XD` **黑名单**复制整个工作区。它有三个结构性缺陷，
+而且**都是静默失效**，不报错、看不出来：
 
-**默认端口不要改**——主程序写死 48909 作为 plugin ws_url，改了用户连不上。如果将来要改，要同步改 plugin/plugins/game_agent_minecraft/plugin.toml 的 `ws_url` 字段。
+1. `/XD` 拼绝对路径只排顶层同名目录 —— `.worktrees/*/node_modules` 全部逃逸；
+2. 排除列表里写的是 `tests`，而仓库里的目录实际叫 `test` —— 打错一个字母就等于没写；
+3. 仓库根的 `.git` 在 worktree 里是个 **78 字节的文本指针文件**（不是目录），
+   `/XD` 对它根本不生效，`gitdir: …` 会原样进包。
 
-## 后续维护
+**决定性的一点**：v0.1.2 之所以看着干净，不是黑名单起了作用，而是打包者当时恰好站在一个
+零未跟踪文件的干净 worktree 里执行。旧文档正文写的源路径指向的是脏的主工作区
+（4898 个未跟踪文件 / 2.8 GB / 含真实 `keys.json`）—— **照旧文档字面执行一次就会泄密**。
 
-- mc-agent 源代码改了 → 重跑整个 build 流程产新 zip → 替换网盘里的旧版本
-- Node 版本升级（v20.11.1 → 新 LTS）→ 改 `$NODE_VER` 后重跑
-- 加新 native 依赖 → 验证 prebuilt binary 在 win-x64 上有，npm ci 不报错
+所以改成白名单：`git archive HEAD` 只输出被 git 跟踪且已提交的文件，
+未跟踪的东西（日志 / `keys.json` / `.worktrees` / `node_modules`）在**物理上**进不了包。
+再用仓库根的 `.gitattributes` 的 `export-ignore` 把"跟踪了但不该分发"的开发资产切掉。
+
+改 `.gitattributes` 时注意两条铁律（细节写在文件顶部）：
+
+- `git archive` 默认只读**被归档那棵树里**的 `.gitattributes`，文件没提交时一条规则都不生效。
+  构建脚本因此固定带 `--worktree-attributes`。
+- 给目录标 `export-ignore` 会让 archive **整棵剪掉、不再下钻**，之后没法再把子文件捞回来。
+  所以 `bots/_supervisor` 是逐类排除的，`skills/` 目录本身故意不碰。
+
+改完可以不产包只验清单：
+
+```powershell
+git archive --worktree-attributes --format=zip -o "$env:TEMP\chk.zip" HEAD
+Expand-Archive "$env:TEMP\chk.zip" "$env:TEMP\chk" -Force
+Get-ChildItem "$env:TEMP\chk"
+```
+
+---
+
+## 六、教训：启动.bat 为什么必须是纯 ASCII
+
+**cmd.exe 的批处理解析器在多字节字符上会把文件偏移算错**，从行中间继续解析，
+把后半句当成命令去执行，报 `'xxxx' 不是内部或外部命令`。
+
+2026-08-07 在 Win11 上实测了 18 种组合：
+
+| 文件编码 | `chcp` | 控制台代码页 | 结果 |
+| --- | --- | --- | --- |
+| UTF-8 带 BOM / UTF-8 无 BOM / GBK | `chcp 65001` / `chcp 936` / 不 chcp | 936 / 65001 | **18/18 全部解析错位** |
+
+**加 BOM 不解决问题**（旧文档写的 `UTF8Encoding $true` 只是让文件"看起来对"）。
+唯一可行的组合是：
+
+- `启动.bat` **纯 ASCII**（连注释都不能有中文）+ `chcp 65001`
+- 所有中文提示放在 `app/dist-msg/*.txt`（**UTF-8 无 BOM**），用 `type` 打出来 ——
+  `type` 直接吐字节，不过批处理解析器，所以不会错位
+
+还有一条独立的坑：**`.bat` 必须是 CRLF 换行**。LF 换行时 `goto :label` 会报
+`The system cannot find the batch label specified`（实测四个分支里坏掉一个）。
+`.gitattributes` 已经给 `tools/dist/**` 声明了 `text eol=crlf`。
+
+构建脚本对这两条都有断言（非 ASCII 字节数 / 孤立 LF 数），
+所以**如果有人好心把中文"补"回 .bat 里，构建会直接拒绝出包**。
+
+模板在 `tools/dist/`：`启动.bat`、`使用说明.txt`、`msg/{startup,stopped,crashed,incomplete}.txt`。
+
+---
+
+## 七、教训：`npm ci` 不能加 `--omit=dev`
+
+`package.json` 的 `postinstall` 是 `patch-package`，而 `patch-package` 是 **devDependency**。
+加了 `--omit=dev` 之后它不在 `node_modules` 里，postinstall 照样触发，
+报 `patch-package is not recognized` 然后 `npm ci` exit 1。
+
+代价是多几十 MB devDep，可接受 —— 瘦身阶段会把最大的两坨（`typescript` / `npm`）删掉。
+`patches/*.patch` 必须进包，它修的是 mineflayer / minecraft-data / prismarine-viewer 的已知 bug，
+补丁没进包等于把修过的老 bug 全放回来。
+
+> ⚠️ 还有第二个更隐蔽的原因：**`eslint` 现在声明在 `devDependencies`，但它是运行时硬依赖。**
+> `src/agent/coder.js` 第 9 行是顶层静态 `import {ESLint} from "eslint"`，
+> 缺了它 `newAction` 整条"写代码 / 跑代码"的路径在 import 阶段就崩。
+> 现在完全靠"不加 `--omit=dev`"兜着。构建脚本对此加了 `require.resolve('eslint')` 断言，
+> 不管它声明在哪儿，装不上就不出包。**更彻底的修法是把 `eslint` 挪回 `dependencies`。**
+
+---
+
+## 八、瘦身的边界
+
+脚本会删这些（每项都打印省了多少）：
+
+- `node_modules/minecraft-data/minecraft-data/data/bedrock/` 下的各版本目录（约 320 MB，Java 版 bot 用不到）
+  —— ★ **必须保留 `bedrock/common/`**：`minecraft-data/index.js` 顶部 eager `require` 了
+  `bedrock/common/{protocolVersions,versions,legacy}.json`，删了 import 阶段就崩
+- `node_modules/typescript`、`node_modules/npm`（删的是 `app/node_modules/npm`，
+  **不是**便携 Node 自带的 `node/node_modules/npm` —— 后者是 `npm.cmd` 的本体）
+- `node_modules` 里的 `*.md` / `*.map` / `test|tests|__tests__|docs|doc` 目录
+
+★ **绝对不许碰的包**：`prismarine-viewer` / `three` / `gl` / `canvas` / `node-canvas-webgl`。
+它们是截图管线的必需依赖，截图经 ws 48909 推给 N.E.K.O. 主 agent，是核心功能。
+脚本把这几个包整片跳过，任何"这个看着没用"的判断都是错的。
+
+---
+
+## 九、N.E.K.O. 侧的契合点
+
+用户下载 zip → 解压到任意位置 → 双击「启动.bat」。
+N.E.K.O. 主程序里 `game_agent_minecraft` 插件的快速开始页会探测 `ws://localhost:48909`，
+自动显示连接状态并给出跳转控制面板（`:8765`）的入口。
+
+**默认端口不要改** —— 主程序写死 `48909` 作为 plugin `ws_url`。
+真要改就得同步改插件的 `plugin.toml`。这个值在 `env.defaults.json` 的
+`NEKO_PLUGIN_WS_PORT` 里，随包发行。
+
+---
+
+## 十、后续维护
+
+- 源码改了 → 先 **commit**，再重跑脚本产新 zip
+- Node 版本升级 → 改 `-NodeVersion` 重跑（旧缓存不用清，按版本号分文件）
+- 加新 native 依赖 → 确认 win-x64 有 prebuilt，`npm ci` 和 `--doctor` 都要过
+- 面向玩家的文案改动 → 改 `tools/dist/使用说明.txt` / `tools/dist/msg/*.txt`，
+  注意保持 UTF-8 无 BOM（msg）与 CRLF
+- 新增了必须随包发行的文件 → 同时更新 `.gitattributes`（别让它被 export-ignore 掉）
+  和 `tools/build-win-zip.ps1` 里的 `$requiredInHead` / `$mustExist` 断言列表

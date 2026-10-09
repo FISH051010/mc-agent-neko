@@ -1,0 +1,193 @@
+/* tokens.css — 设计变量（配色 / 圆角 / 间距 / 字号 / 动效）。
+ *
+ * 主题策略：暗色是默认，跟随系统；用户手动切换时在 <html> 上打 data-theme。
+ * 顺序有讲究 —— [data-theme] 是属性选择器 (0,2,0)，天然压过 :root (0,1,0)
+ * 和媒体查询里的 :root，所以手动选择在两个方向上都能赢过系统偏好。
+ */
+
+:root {
+    color-scheme: dark light;
+
+    /* ── 圆角 ── */
+    --r-xs: 4px;
+    --r-sm: 8px;
+    --r-md: 12px;   /* 卡片统一 12px */
+    --r-lg: 16px;
+    --r-xl: 22px;
+    --r-pill: 999px;
+
+    /* ── 间距 ── */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-7: 32px;
+    --sp-8: 44px;
+
+    /* ── 字号 ── */
+    --fs-xs: 11px;
+    --fs-sm: 12.5px;
+    --fs-md: 14px;
+    --fs-lg: 16px;
+    --fs-xl: 20px;
+    --fs-2xl: 26px;
+    --fs-3xl: 34px;
+
+    /* ── 字体：中文栈必须含雅黑/苹方，否则 Windows 上会掉到宋体 ── */
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+        "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC",
+        Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "SF Mono", Menlo,
+        "Microsoft YaHei Mono", monospace;
+
+    /* ── 动效档位 ── */
+    --dur-1: 120ms;
+    --dur-2: 200ms;
+    --dur-3: 340ms;
+    --ease: cubic-bezier(.4, 0, .2, 1);
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
+
+    /* ── 暗色配色（默认） ── */
+    --bg: #0e1014;
+    --bg-grad: radial-gradient(1200px 600px at 12% -10%, #172a24 0%, transparent 60%),
+               radial-gradient(900px 500px at 96% 0%, #16202f 0%, transparent 55%);
+    --surface: #161a21;
+    --surface-2: #1d222b;
+    --surface-3: #242b36;
+    --border: #2a323e;
+    --border-soft: #212832;
+    --text: #e8ecf3;
+    --text-2: #b7c0cd;
+    --muted: #8b96a6;
+    --faint: #626d7d;
+
+    --accent: #2fbf7f;
+    --accent-2: #26a86e;
+    --accent-ink: #06120c;
+    --accent-soft: rgba(47, 191, 127, .15);
+    --accent-line: rgba(47, 191, 127, .38);
+
+    --info: #5aa2ff;
+    --info-soft: rgba(90, 162, 255, .15);
+    --warn: #f0ad4a;
+    --warn-soft: rgba(240, 173, 74, .16);
+    --danger: #f4566a;
+    --danger-soft: rgba(244, 86, 106, .16);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-2: 0 8px 24px -10px rgba(0, 0, 0, .6);
+    --shadow-3: 0 22px 48px -18px rgba(0, 0, 0, .7);
+    --ring: 0 0 0 3px var(--accent-soft);
+
+    --topbar-h: 58px;
+    --page-w: 1180px;
+}
+
+/* ── 亮色：跟随系统 ── */
+@media (prefers-color-scheme: light) {
+    :root {
+        color-scheme: light dark;
+        --bg: #f3f5f8;
+        --bg-grad: radial-gradient(1100px 560px at 10% -12%, #dff3e9 0%, transparent 62%),
+                   radial-gradient(820px 460px at 98% -4%, #e2ecfb 0%, transparent 58%);
+        --surface: #ffffff;
+        --surface-2: #f6f8fa;
+        --surface-3: #eef1f5;
+        --border: #dfe4ec;
+        --border-soft: #e9edf3;
+        --text: #131820;
+        --text-2: #3d4756;
+        --muted: #66717f;
+        --faint: #8b95a3;
+
+        --accent: #19a568;
+        --accent-2: #148a57;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(25, 165, 104, .12);
+        --accent-line: rgba(25, 165, 104, .34);
+
+        --info: #2f74d0;
+        --info-soft: rgba(47, 116, 208, .12);
+        --warn: #b7791f;
+        --warn-soft: rgba(183, 121, 31, .14);
+        --danger: #d33a4e;
+        --danger-soft: rgba(211, 58, 78, .12);
+
+        --shadow-1: 0 1px 2px rgba(16, 24, 40, .06);
+        --shadow-2: 0 8px 24px -12px rgba(16, 24, 40, .18);
+        --shadow-3: 0 22px 48px -20px rgba(16, 24, 40, .24);
+    }
+}
+
+/* ── 手动选亮色（压过系统偏好） ── */
+:root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f5f8;
+    --bg-grad: radial-gradient(1100px 560px at 10% -12%, #dff3e9 0%, transparent 62%),
+               radial-gradient(820px 460px at 98% -4%, #e2ecfb 0%, transparent 58%);
+    --surface: #ffffff;
+    --surface-2: #f6f8fa;
+    --surface-3: #eef1f5;
+    --border: #dfe4ec;
+    --border-soft: #e9edf3;
+    --text: #131820;
+    --text-2: #3d4756;
+    --muted: #66717f;
+    --faint: #8b95a3;
+    --accent: #19a568;
+    --accent-2: #148a57;
+    --accent-ink: #ffffff;
+    --accent-soft: rgba(25, 165, 104, .12);
+    --accent-line: rgba(25, 165, 104, .34);
+    --info: #2f74d0;
+    --info-soft: rgba(47, 116, 208, .12);
+    --warn: #b7791f;
+    --warn-soft: rgba(183, 121, 31, .14);
+    --danger: #d33a4e;
+    --danger-soft: rgba(211, 58, 78, .12);
+    --shadow-1: 0 1px 2px rgba(16, 24, 40, .06);
+    --shadow-2: 0 8px 24px -12px rgba(16, 24, 40, .18);
+    --shadow-3: 0 22px 48px -20px rgba(16, 24, 40, .24);
+}
+
+/* ── 手动选暗色（压过系统偏好） ── */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e1014;
+    --bg-grad: radial-gradient(1200px 600px at 12% -10%, #172a24 0%, transparent 60%),
+               radial-gradient(900px 500px at 96% 0%, #16202f 0%, transparent 55%);
+    --surface: #161a21;
+    --surface-2: #1d222b;
+    --surface-3: #242b36;
+    --border: #2a323e;
+    --border-soft: #212832;
+    --text: #e8ecf3;
+    --text-2: #b7c0cd;
+    --muted: #8b96a6;
+    --faint: #626d7d;
+    --accent: #2fbf7f;
+    --accent-2: #26a86e;
+    --accent-ink: #06120c;
+    --accent-soft: rgba(47, 191, 127, .15);
+    --accent-line: rgba(47, 191, 127, .38);
+    --info: #5aa2ff;
+    --info-soft: rgba(90, 162, 255, .15);
+    --warn: #f0ad4a;
+    --warn-soft: rgba(240, 173, 74, .16);
+    --danger: #f4566a;
+    --danger-soft: rgba(244, 86, 106, .16);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-2: 0 8px 24px -10px rgba(0, 0, 0, .6);
+    --shadow-3: 0 22px 48px -18px rgba(0, 0, 0, .7);
+}
+
+/* 尊重系统的「减少动效」偏好 */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --dur-1: 0ms;
+        --dur-2: 0ms;
+        --dur-3: 0ms;
+    }
+}

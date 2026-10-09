@@ -59,6 +59,17 @@ export class AdminMission {
         this._maxMs = (Number.isFinite(ms) && ms > 0) ? ms : 1800000;   // 30 min default
         const db = parseInt(process.env.MC_ADMIN_MISSION_DEATH_BUDGET, 10);
         this._deathBudget = Number.isFinite(db) ? db : 3;               // deaths tolerated before abort (0 = death aborts)
+
+        // ★2026-09-13 用户实测「我又发了一遍挖钻石，她说已运行318秒 —— 可她根本没在挖」。
+        //   重发节流(_throttleExact)只看 state===RUNNING + 文本相同，**完全不看任务是不是真的在动**。
+        //   于是任务一旦活着但空转(自提示循环被 kernelDriver 的 run_skill 停掉、技能静默返回空、
+        //   夜里停在原地)，玩家唯一的自救手段——把指令再发一遍——就被这句"已在执行中"堵死，
+        //   越发越堵，而计时器还在一秒秒往上涨，观感上就是"她在骗我"。
+        //   这里记录任务**最后一次真正在干活**的时刻(判据复用 tick 里那条现成的)，
+        //   停滞超过阈值就放行重发 → 走 supersede 重起。
+        const st = parseInt(process.env.MC_ADMIN_MISSION_STALL_MS, 10);
+        this._stallMs = (Number.isFinite(st) && st > 0) ? st : 45000;
+        this._lastWorkAt = 0;
     }
 
     // ── public state ──────────────────────────────────────────────────────────
@@ -196,7 +207,18 @@ export class AdminMission {
             if (this.state !== RUNNING || !this.mission) return false;
             const mKey = this._normText(this.mission.text);
             if (this._normText(text) !== mKey) return false;
-            const sec = Math.max(1, Math.round((Date.now() - this.mission.startedAt) / 1000));
+            const now = Date.now();
+            const sec = Math.max(1, Math.round((now - this.mission.startedAt) / 1000));
+
+            // 任务活着不等于任务在动。停滞超过 _stallMs 就别拦重发 —— 让它 supersede 重起，
+            // 这是玩家眼里唯一的自救手段，堵死它等于把人锁在一个不动的任务里干等。
+            const idleMs = now - (this._lastWorkAt || this.mission.startedAt);
+            if (idleMs > this._stallMs) {
+                console.log(`[adminMission] 重发放行：任务已 ${Math.round(idleMs / 1000)}s 没有任何动作`
+                    + `（自提示循环/监管技能/当前技能全空），按停滞处理，重起任务。`);
+                return false;
+            }
+
             this._registerDrop(mKey, text, taskId, origin,
                 `收到。相同指令已在执行中（已运行${sec}秒），继续当前任务、不重新开始；完成或失败会另行报告，请勿重发。`);
             return true;
@@ -333,6 +355,7 @@ export class AdminMission {
 
         this.mission = mine;
         this.state = RUNNING;
+        this._lastWorkAt = now;   // 刚起的任务不算停滞
         // 新任务上位 → 上一任务的重复计数/判官缓存全部作废 (节流是无状态的, 只保护"正在执行的这一个")。
         this._dupKey = ''; this._dupCount = 0;
         this._judgeCache = { mKey: '', nKey: '', verdict: '' };
@@ -401,6 +424,7 @@ export class AdminMission {
         // running is still (rightly) NOT refreshed — paused-chat ≠ working, survival un-muzzles.
         if (this.agent.self_prompter.isActive() || this.agent.supervised_skill || bot._currentSkill) {
             try { bot._extIntentUntil = now + MISSION_EXTINTENT_MS; } catch (e) {}
+            this._lastWorkAt = now;     // 重发节流的存活依据，见构造函数里 _stallMs 的说明
         }
 
         // Re-arm if an external stop() left the loop STOPPED (recover from run_skill's stop(false),

@@ -8,6 +8,17 @@ import settings from "../../../settings.js";
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { safeToDigBlock } from '../framework/tools/lava_guard.js';   // 岩浆/水裁判 (试装 into safeDig)
+import { dataPath, resolveSkillFile } from '../../utils/paths.js';
+
+// ★2026-08-07 路径统一: 本文件历史上混用两族写法 —— 裸相对 'bots/_supervisor/xxx' (相对 CWD)
+// 和 path.resolve(process.cwd(), ...)。分发包里代码在 <包根>/app/、CWD 在 <包根>, 两者会分家,
+// v0.1.2 就是这么把 63 个热加载技能全部丢掉的。现在全部收口到 dataPath() 一个基准上
+// (开发机 APP_ROOT === HOME_DIR, 行为不变)。
+const SUP = (...segs) => dataPath('bots', '_supervisor', ...segs);
+const ADVISORY_FILE  = SUP('advisory.json');
+const MINE_DBG_FILE  = SUP('mine_dbg.log');
+const DEATH_LOG_FILE = SUP('death_log.jsonl');
+const PROGRESS_FILE  = SUP('progress.txt');
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -43,7 +54,7 @@ function _pathDangerZone() {
     if (Date.now() - _dzPath.t < 5000) return _dzPath.z;
     _dzPath.t = Date.now();
     try {
-        const a = JSON.parse(fs_dz.readFileSync('bots/_supervisor/advisory.json', 'utf8'));
+        const a = JSON.parse(fs_dz.readFileSync(ADVISORY_FILE, 'utf8'));
         _dzPath.z = (a && a.dzone) ? a.dzone : null;
     } catch (e) { _dzPath.z = null; }
     return _dzPath.z;
@@ -220,9 +231,34 @@ function motionPathLen(pathResult) {
     return null;
 }
 
+// ★2026-08-07 体积封顶: mine_motion.jsonl 是无上限 append 的动作审计流, 开发机上已经涨到
+// 1.9 GB —— 长跑几天就能把用户硬盘吃光, 分发给普通玩家更不能这样。超过 32 MB 就把当前文件
+// 改名成 .1 再重开 (只留一代, 排障要的永远是"最近发生了什么"), 等价于最小版 logrotate。
+// 尺寸用内存计数器维护而不是每次 statSync: motionAudit 在寻路热路径上每拍都可能打点,
+// 每次都摸盘会把磁盘 IO 拖进物理 tick (sync-fs 收口那一轮拆掉的正是这种东西)。
+const MOTION_FILE = SUP('mine_motion.jsonl');
+const MOTION_MAX_BYTES = 32 * 1024 * 1024;
+let _motionBytes = null;        // null = 未知, 下一次写入前 stat 一次
+
+function motionRoll(addBytes) {
+    if (_motionBytes === null) {
+        try { _motionBytes = fs_dz.statSync(MOTION_FILE).size; }
+        catch (e) { _motionBytes = 0; }                  // 文件还不存在 = 0
+    }
+    if (_motionBytes + addBytes <= MOTION_MAX_BYTES) { _motionBytes += addBytes; return; }
+    try {
+        const bak = MOTION_FILE + '.1';
+        try { fs_dz.unlinkSync(bak); } catch (e) {}      // Windows 上目标已存在时 rename 不保证覆盖, 先删
+        fs_dz.renameSync(MOTION_FILE, bak);
+        _motionBytes = addBytes;                          // 新文件从这条记录起算
+    } catch (e) {
+        _motionBytes = null;                              // 滚动失败(文件被占用等) → 下次重新 stat, 别硬撑计数
+    }
+}
+
 function motionAudit(bot, event, data = {}) {
     try {
-        fs_dz.appendFileSync('bots/_supervisor/mine_motion.jsonl', JSON.stringify({
+        const line = JSON.stringify({
             ts: new Date().toISOString(),
             event,
             pos: motionPos(bot),
@@ -232,7 +268,9 @@ function motionAudit(bot, event, data = {}) {
             skill: bot ? (bot._currentSkill || null) : null,
             mob: bot && bot._mobility ? bot._mobility.state : null,
             data,
-        }) + '\n');
+        }) + '\n';
+        motionRoll(Buffer.byteLength(line));
+        fs_dz.appendFileSync(MOTION_FILE, line);
     } catch (e) {}
 }
 
@@ -1254,7 +1292,7 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
                 const _losNow = (() => { try { return bot.canSeeBlock(cur); } catch (e) { return true; } })();
                 if (!_losNow && reachOf() < 2.2 && bot.entity.onGround) {
                     if (await _stepBackForDig(bot, cur)) {
-                        try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★STEP-BACK dig ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — 贴墙太近, 本格内后退取视角\n`); } catch (e) {}
+                        try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★STEP-BACK dig ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — 贴墙太近, 本格内后退取视角\n`); } catch (e) {}
                     }
                 }
             }
@@ -1286,7 +1324,7 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
                 if (process.env.MC_DIG_FLUID_GUARD !== '0') {
                     const _og = safeToDigBlock(bot, _ob);
                     if (_og && _og.ok === false) {
-                        try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★FLUIDGUARD skip occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} — ${_og.reason}\n`); } catch (e) {}
+                        try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★FLUIDGUARD skip occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} — ${_og.reason}\n`); } catch (e) {}
                         return 'fluidguard';
                     }
                 }
@@ -1295,7 +1333,7 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
                         gazeHold(bot, _ob, bot.dig(_ob)),
                         new Promise((_, rej) => setTimeout(() => rej(new Error('occluder-dig-timeout')), 6000)),
                     ]);
-                    try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★C337-C carved occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} → expose ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z}\n`); } catch (e) {}
+                    try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★C337-C carved occluder ${_ob.name}@${_ob.position.x},${_ob.position.y},${_ob.position.z} → expose ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z}\n`); } catch (e) {}
                 } catch (e) { return 'occluded'; }
             }
             const _losF = (() => { try { return bot.canSeeBlock(cur); } catch (e) { return true; } })();
@@ -1312,7 +1350,7 @@ async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = tru
         if (process.env.MC_DIG_FLUID_GUARD !== '0') {
             const _fg = safeToDigBlock(bot, cur);
             if (_fg && _fg.ok === false) {
-                try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★FLUIDGUARD skip ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — ${_fg.reason}\n`); } catch (e) {}
+                try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★FLUIDGUARD skip ${cur.name}@${cur.position.x},${cur.position.y},${cur.position.z} — ${_fg.reason}\n`); } catch (e) {}
                 return 'fluidguard';
             }
         }
@@ -1379,7 +1417,7 @@ async function tunnelToOre(bot, oreBlock, { maxSteps = 30, budgetMs = 25000, max
         const isOreName = (n) => /_ore$/.test(n || '');
         const solidAt = (p) => { const b = bot.blockAt(p); return !!(b && b.boundingBox === 'block'); };
         const eyeReach = () => bot.entity.position.offset(0, 1.62, 0).distanceTo(oreCtr);
-        const _dbg = (m) => { try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} };
+        const _dbg = (m) => { try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} };
         if (eyeReach() > maxD3 + 1.5) return false;             // 太远, 不承诺(与 C304 同上限)
         const t0 = Date.now();
         let stuck = 0, carved = 0;
@@ -1462,7 +1500,7 @@ function _deathLinesCached(bot) {
         const m = bot && bot._deathLinesMemo;
         if (m && now - m.t < 15000) return m.lines;
         let lines = [];
-        try { lines = fs_dz.readFileSync('bots/_supervisor/death_log.jsonl', 'utf8').trim().split('\n').slice(-64); } catch (e) {}
+        try { lines = fs_dz.readFileSync(DEATH_LOG_FILE, 'utf8').trim().split('\n').slice(-64); } catch (e) {}
         if (bot) bot._deathLinesMemo = { t: now, lines };
         return lines;
     } catch (e) { return []; }
@@ -1610,7 +1648,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     reachMoves.maxDropDown = 3;
     // ★C304 DBG: persistent one-liner per ore reach-decision so the gate is observable in-game
     // (mirrors chopDBG — bot.output only reaches the LLM, never a file). Cheap: ore-only.
-    const _mineDBG = (m) => { try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} };
+    const _mineDBG = (m) => { try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} };
     // ★C304-V (2026-07-08 途径铁不挖根治): the partial/no-path REJECTs below are the false-reject
     // engine — a buried-through-stone vein makes the 2000ms canDig A* time out as 'partial' with
     // little progress (or occasionally noPath), so the timed-A* verdict is a coin-flip on server
@@ -2237,7 +2275,7 @@ export async function ensurePickupAt(bot, pos, opts = {}) {
     const HAZARD = /lava|fire|magma|cactus|campfire|wither_rose|sweet_berry|powder_snow/;
     // ★T-0004 DBG: persistent one-liner per ensure-pickup outcome (bot.output never reaches a
     // file, so the in-game effect was unobservable). Shares mine_dbg.log; ★PICKUP prefix.
-    const _pkDBG = (m) => { try { fs_dz.appendFileSync('bots/_supervisor/mine_dbg.log', `[${new Date().toISOString()}] ★PICKUP ${m}\n`); } catch (e) {} };
+    const _pkDBG = (m) => { try { fs_dz.appendFileSync(MINE_DBG_FILE, `[${new Date().toISOString()}] ★PICKUP ${m}\n`); } catch (e) {} };
     const totalItems = () => { try { return Object.values(world.getInventoryCounts(bot)).reduce((a, b) => a + b, 0); } catch (e) { return 0; } };
     try {
         if (!bot || !bot.entity || !bot.entity.position || !pos) return false;
@@ -3574,7 +3612,7 @@ async function _consumeOnce(bot, itemName="") {
                     + ` using=${!!bot.usingHeldItem} held=${bot.heldItem ? bot.heldItem.name : 'none'}`
                     + ` offhand=${(bot.inventory.slots[45] && bot.inventory.slots[45].name) || 'none'}`;
             } catch (e) {}
-            fs_dz.appendFileSync('bots/_supervisor/progress.txt',
+            fs_dz.appendFileSync(PROGRESS_FILE,
                 `[${new Date().toISOString()}] ★EAT-VOID x${bot._eatVoidStreak} item=${item.name} food=${bot.food} hp=${Math.round(bot.health || 0)} err=${consumeErr ? consumeErr.message : 'silent-void'}${_diag}\n`);
         } catch (e) {}
     }
@@ -5572,8 +5610,9 @@ export async function digDown(bot, distance = 10) {
         }
 
         if (targetBlock.name === 'air' || targetBlock.name === 'cave_air') {
-            log(bot, 'Skipping air block');
-            console.log(targetBlock.position);
+            // 上游遗留的裸 console.log(targetBlock.position) 已并进这行 ——
+            // digDown 每跳过一格空气就刷一行 "Vec3 { x, y, z }"，玩家日志被灌满。
+            log(bot, `Skipping air block at (${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z})`);
             continue;
         }
 
@@ -6073,7 +6112,17 @@ export async function customSkill(bot, skillName, ...args) {
         log(bot, `Invalid custom skill name: ${skillName}`);
         return false;
     }
-    const abs = path.resolve(process.cwd(), 'bots', '_supervisor', 'skills', `${skillName}.js`);
+    // ★2026-08-07 路径统一 (v0.1.2 事故根因): 原来只在 process.cwd()/bots/_supervisor/skills
+    // 一个目录里找。分发包里代码在 <包根>/app/、CWD 在 <包根>, 那个目录是空的 —— 63 个技能
+    // 一个都加载不了, 而这里失败只 log 不抛, 于是顶层自主派发链静默残废。
+    // 现在按 resolveSkillFile() 给的候选顺序 (app 内随包版 > home 内用户版) 逐个探测,
+    // 与 skill_library 扫描目录时的 "先到先得" 优先级严格一致。
+    const cands = resolveSkillFile(skillName) || [];
+    const abs = cands.find(p => { try { return fs_dz.existsSync(p); } catch (e) { return false; } });
+    if (!abs) {
+        log(bot, `Custom skill '${skillName}' not found. Searched: ${cands.join(' | ') || '(no candidate paths)'}`);
+        return false;
+    }
     let mod;
     try {
         mod = await import(pathToFileURL(abs).href + `?t=${Date.now()}`);
@@ -6111,7 +6160,7 @@ export async function customSkill(bot, skillName, ...args) {
 // Contract: egPatch re-reads the FILE every call and merges file ∪ bot cache ∪
 // patch, then writes atomically (tmp+rename) so a watchdog kill mid-write can
 // never leave torn JSON that erases the irreversible milestones on next parse.
-const EG_FILE = path.resolve(process.cwd(), 'bots', '_supervisor', 'endgame.json');
+const EG_FILE = SUP('endgame.json');   // ★2026-08-07: 原 process.cwd() 相对 → dataPath(), 与 world_model 读的那份对齐
 export function egRead(bot) {
     try {
         let s = fs_dz.readFileSync(EG_FILE, 'utf8');
@@ -6259,7 +6308,7 @@ async function _boatRecover(bot, trace) {
 }
 export async function boatEscape(bot, tx, tz, opts = {}) {
     const tag = opts.tag || '-';
-    const trace = (s) => { try { fs_dz.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [boat] (${tag}) ${s}\n`); } catch (e) {} };
+    const trace = (s) => { try { fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] [boat] (${tag}) ${s}\n`); } catch (e) {} };
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     tx = Number(tx); tz = Number(tz);
     if (!Number.isFinite(tx) || !Number.isFinite(tz) || !bot.entity || !bot.entity.position) return false;

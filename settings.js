@@ -31,12 +31,28 @@ const settings = {
         // individual profiles override values from the base profile
     ],
 
+    // 模型的「思考模式」总开关。"off" 关掉思考、"low" 少想一点、"auto" 随模型自己的默认。
+    // 默认关：游戏机器人要的是快速动作，不是长篇推理；而且不少模型会把思考过程直接
+    // 倒进正文里，混进 !command 解析会把动作解析坏掉。
+    // 角色配置（profile）里写了同名字段的话，以角色配置为准。
+    "thinking": "off",
+
     "load_memory": false, // load memory from previous session
     "init_message": "", // sends to all on spawn
-    "only_chat_with": ["admin"], // users that the bots listen to and send general messages to. if empty it will chat publicly
+    // ★2026-09-09 用户实测「在游戏里 @neko 她不理我」的根因：这里原本是 ["admin"]。
+    //   agent.js:121 的入站闸是 `only_chat_with.length > 0 && !includes(username) → return`，
+    //   也就是**只听一个叫 admin 的玩家**；而玩家的真实 ID 当然不叫 admin，于是他在游戏里
+    //   说的每一句话都在所有闸门之前被丢掉，连日志都不留（查起来极难：零 chat 痕迹）。
+    //   出站同理 —— agent.js:1343 会把回复 whisper 给 "admin" 这个不存在的人，等于石沉大海。
+    //   这是开发机的遗留配置，分发给玩家必然是死的。空数组 = 听所有人、公开发言；
+    //   真要限制听谁，用 chat_whitelist（面板「游戏连接」页暴露的就是它，语义不重叠）。
+    "only_chat_with": [], // 空 = 听所有真人玩家并公开发言; 非空 = 只听这些人且只私聊他们
     // ★2026-07-14 用户令: 游戏内 chat 指令前缀 + 白名单 (根治 admin 指令风暴)。带 chat_command_prefix 或
     //   ! 开头 = 指令 (adminMission 高优先级); 其余真人聊天节流聚合转发外部 admin llm。前缀设空 = 关闭前缀门。
-    "chat_command_prefix": "/neko", // 指令前缀; "" = 关闭 (回旧行为: 所有真人消息都当指令)
+    "chat_command_prefix": "@neko", // 指令前缀; "" = 关闭 (回旧行为: 所有真人消息都当指令)
+    // ★2026-09-09 用户实测: 前缀**绝不能用 "/" 开头** —— Minecraft 客户端会把 / 开头的输入
+    //   当成游戏内置命令拦下来, 消息根本不会进聊天频道, bot 一个字都收不到(表现: 在游戏里
+    //   怎么喊都没反应, 且日志里连一条 chat 事件都没有)。历史默认值是 "/neko", 全程失效。
     "chat_whitelist": [],           // 允许其消息被处理的玩家名单; [] = 所有真人玩家
 
     "speak": false,
@@ -45,7 +61,9 @@ const settings = {
     // if set to "system" it will use basic system text-to-speech. 
     // Works on windows and mac, but linux requires you to install the espeak package through your package manager eg: `apt install espeak` `pacman -S espeak`.
 
-    "chat_ingame": false, // bot responses are shown in minecraft chat
+    // 配套改 true：只有它开着 bot 的回复才会出现在游戏聊天里。默认 false 时玩家在游戏里
+    //   跟她说话，她会照做但一声不吭 —— 对"AI 伙伴"这个产品形态来说体验是断的。
+    "chat_ingame": true, // bot 的回复显示在 Minecraft 聊天框里
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
 

@@ -30,12 +30,15 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import { withTimeout } from '../../utils/timeout.js';
 import { hpInstinctsEnabled } from './contracts.js';
+import { dataPath } from '../../utils/paths.js';
 
-const ARB_FILE = path.resolve(process.cwd(), 'bots', '_supervisor', 'arbitration.json');
-const PROGRESS_FILE = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
+// ★2026-08-07 路径统一: 原来 process.cwd() 相对 —— 与 world_model.js 的 import.meta.url
+// 相对是分裂的两半, 分发包里会各自解析到不同目录 (仲裁矩阵写一处、世界模型读另一处)。
+// 现在两边都走 dataPath()。
+const ARB_FILE = dataPath('bots', '_supervisor', 'arbitration.json');
+const PROGRESS_FILE = dataPath('bots', '_supervisor', 'progress.txt');
 
 const LLM_TIMEOUT_MS = 4000;      // 终裁超时 — 超时回退 holder (最小惊讶)
 const LLM_VERDICT_TTL_MS = 120000; // 非 persist 裁决的短期缓存 (一次冲突事件的量级)

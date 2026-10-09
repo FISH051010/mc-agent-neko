@@ -1,14 +1,20 @@
 // This code uses Dashscope and HTTP to ensure the latest support for the Qwen model.
 // Qwen is also compatible with the OpenAI API format;
 
+import { promises as fs } from 'fs';
+import path from 'path';
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { dataPath } from '../utils/paths.js';
 
 export class VLLM {
     static prefix = 'vllm';
-    constructor(model_name, url) {
+    // ★2026-08-07: 补上 params 形参。此前构造函数不收 params，pack 里也完全不含 params，
+    //   profile 里写的温度/max_tokens/关思考开关全被静默丢弃。
+    constructor(model_name, url, params) {
         this.model_name = model_name;
+        this.params = params ? { ...params } : {};
 
         // Currently use self-hosted SGLang API for text generation; use OpenAI text-embedding-3-small model for simple embedding.
         let vllm_config = {};
@@ -34,6 +40,7 @@ export class VLLM {
             model: model,
             messages,
             stop: stop_seq,
+            ...(this.params || {})
         };
 
         let res = null;
@@ -62,11 +69,13 @@ export class VLLM {
     async saveToFile(logFile, logEntry) {
         let task_id = this.agent.task.task_id;
         console.log(task_id)
+        // ★2026-08-07: 原来这里用 __dirname 拼 ../../bots，而 __dirname/fs/path 在本文件里
+        //   压根没 import —— 一调用就 ReferenceError。改走 dataPath()，与 prompter 的日志目录同源。
         let logDir;
         if (this.task_id === null) {
-            logDir = path.join(__dirname, `../../bots/${this.agent.name}/logs`);
+            logDir = dataPath('bots', this.agent.name, 'logs');
         } else {
-            logDir = path.join(__dirname, `../../bots/${this.agent.name}/logs/${task_id}`);
+            logDir = dataPath('bots', this.agent.name, 'logs', String(task_id));
         }
 
         await fs.mkdir(logDir, { recursive: true });

@@ -19,11 +19,21 @@
 
 import { EMPTY_WORLD, PROPOSAL_KIND, foodInstinctsEnabled, hpInstinctsEnabled } from './contracts.js';
 import { readFileSync, appendFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
+import { dataPath } from '../../utils/paths.js';
+
+// ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
+// '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
+// **CWD**, 两半在分发包里 (代码在 <包根>/app/, 数据在 <包根>/) 会各自解析到不同目录:
+// 世界模型读 app 里那份不存在的 decision-config.json, 仲裁器写包根那份, 永远对不上。
+// 现在统一走 dataPath() —— 开发机上 APP_ROOT === HOME_DIR, 行为与改造前完全一致。
+const SUP           = (...segs) => dataPath('bots', '_supervisor', ...segs);
+const PROGRESS_FILE = SUP('progress.txt');
+const DECISION_CFG  = SUP('decision-config.json');
+const ENDGAME_FILE  = SUP('endgame.json');
+const BED_FILE      = SUP('bed.json');
 
 /**
  * Read the single source of truth. Returns the safe EMPTY_WORLD if the
@@ -127,7 +137,7 @@ const BANK_GEAR_ENABLED = false;
 (function loadDecisionConfig() {
     let cfgPath;
     try {
-        cfgPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/decision-config.json');
+        cfgPath = DECISION_CFG;
     } catch (e) { return; }
     let raw;
     try {
@@ -153,7 +163,7 @@ const BANK_GEAR_ENABLED = false;
         // Do NOT swallow: record the parse failure so a bad config is visible, not a silent death.
         try {
             const line = `[${new Date().toISOString()}] world_model.js decision-config.json parse FAILED: ${e && e.message}\n`;
-            appendFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/progress.txt'), line);
+            appendFileSync(PROGRESS_FILE, line);
         } catch (e2) {}
     }
 })();
@@ -275,7 +285,7 @@ function progressLogThrottled(bot, key, ms, line) {
         if (!bot._wmLogAt) bot._wmLogAt = {};
         if (bot._wmLogAt[key] && Date.now() - bot._wmLogAt[key] < ms) return;
         bot._wmLogAt[key] = Date.now();
-        appendFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/progress.txt'),
+        appendFileSync(PROGRESS_FILE,
             `[${new Date().toISOString()}] ${line}\n`);
     } catch (e) {}
 }
@@ -354,12 +364,12 @@ export function endgameState(bot) {
         try {
             if (bot._egReadWarnAt && Date.now() - bot._egReadWarnAt < 60000) return;   // throttle: uncached state retries every ~2s tick
             bot._egReadWarnAt = Date.now();
-            appendFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/progress.txt'),
+            appendFileSync(PROGRESS_FILE,
                 `[${new Date().toISOString()}] world_model.js endgame.json ${msg}\n`);
         } catch (e2) {}
     };
     try {
-        const p = resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/endgame.json');
+        const p = ENDGAME_FILE;
         let raw = null;
         try { raw = readFileSync(p, 'utf8'); }
         catch (e) {
@@ -667,7 +677,7 @@ export function proposeTasks(world, bot) {
     } else if (famineStall) {
         // 饥饿僵局: 不 HOLD,记录决策让 worker 取证可见。GET_FOOD@88 在下方 push,
         //   isEmergency(food<=4 但 villageClose 否决)的 villageClose 例外也在下面破除。
-        try { appendFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/progress.txt'),
+        try { appendFileSync(PROGRESS_FILE,
             `[${new Date().toISOString()}] [proposeTasks] ★famine-forage-unlock: food=${vitals.food} hp=${vitals.hp} canRegen=${vitals.canRegen} creeperD=${threat.creeperDist} closest=${threat.closest} swarm=${threat.hostiles} — NOT HOLD, 让 GET_FOOD 接管去觅食(无 LETHAL 急症)\n`); } catch (e) {}
     }
 
@@ -1956,13 +1966,15 @@ function bedKnown(bot) {
     // caught earlier+in-memory by the landmarks check above (modes.js C328), so 10s is plenty fresh.
     // Path resolved via import.meta.url (matching endgameState above) instead of the old cwd-relative
     // 'bots/_supervisor/bed.json' — robust if cwd ever isn't the project root.
+    // ★2026-08-07 起改走 dataPath()(见文件头注释): import.meta.url 相对在分发包里会指到
+    // 代码目录, 与仲裁器/监工写入的那份 bed.json 分家。
     try {
         const now = Date.now();
         const memo = bot && bot._bedFileMemo;
         if (memo && (now - memo.t) < 10000) return memo.v;
         let v = false;
         try {
-            const p = resolve(dirname(fileURLToPath(import.meta.url)), '../../../bots/_supervisor/bed.json');
+            const p = BED_FILE;
             const bj = JSON.parse(readFileSync(p, 'utf8'));
             if (bj && typeof bj.x === 'number' && !bj.src) v = true;   // spawn anchored by a real placed bed
         } catch (e) {}

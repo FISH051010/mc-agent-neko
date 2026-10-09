@@ -7,6 +7,7 @@ import * as world from './library/world.js';
 import * as tick_confirm from './library/tick_confirm.js';
 import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
+import { APP_ROOT, appPath, dataPath } from '../utils/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,19 +15,22 @@ export class Coder {
     constructor(agent) {
         this.agent = agent;
         this.file_counter = 0;
-        this.fp = '/bots/'+agent.name+'/action-code/';
+        // ★2026-08-07 路径统一: action-code 是**运行时产物** (每次 !newAction 出的码), 走 dataPath();
+        // execTemplate/lintTemplate 是**代码资产** (随 app 发行, 只读), 走 appPath()。
+        // 这两类以前都靠相对路径拼, 分发包里 CWD 与代码目录分家后必然有一边落空。
+        this.fp = dataPath('bots', agent.name, 'action-code');
         this.code_template = '';
         this.code_lint_template = '';
 
-        readFile(path.join(__dirname, '../../bots/execTemplate.js'), 'utf8', (err, data) => {
+        readFile(appPath('bots', 'execTemplate.js'), 'utf8', (err, data) => {
             if (err) throw err;
             this.code_template = data;
         });
-        readFile(path.join(__dirname, '../../bots/lintTemplate.js'), 'utf8', (err, data) => {
+        readFile(appPath('bots', 'lintTemplate.js'), 'utf8', (err, data) => {
             if (err) throw err;
             this.code_lint_template = data;
         });
-        mkdirSync('.' + this.fp, { recursive: true });
+        mkdirSync(this.fp, { recursive: true });
     }
 
     // ★2026-07-09 用户令 (newAction 期间铁律): 代码【编写(LLM 调用)+执行】的整个窗口标记
@@ -165,7 +169,10 @@ export class Coder {
             return result;
         }
 
-        const eslint = new ESLint();
+        // ★2026-08-07: 必须显式给 cwd。ESLint 9 的 flat config 是从 cwd 往上找 eslint.config.js 的,
+        // bootstrap 已经把进程 chdir 到用户层 (HOME_DIR), 分发包里那儿根本没有配置文件 → 直接抛,
+        // 把整条 !newAction 代码生成链带崩。配置随 app 走, 所以钉在 APP_ROOT。
+        const eslint = new ESLint({ cwd: APP_ROOT });
         const results = await eslint.lintText(code);
         const codeLines = code.split('\n');
         const exceptions = results.map(r => r.messages).flat();
@@ -207,7 +214,7 @@ export class Coder {
 
         let filename = this.file_counter + '.js';
         // if (this.file_counter > 0) {
-        //     let prev_filename = this.fp + (this.file_counter-1) + '.js';
+        //     let prev_filename = path.join(this.fp, (this.file_counter-1) + '.js');
         //     unlink(prev_filename, (err) => {
         //         console.log("deleted file " + prev_filename);
         //         if (err) console.error(err);
@@ -215,7 +222,7 @@ export class Coder {
         // } commented for now, useful to keep files for debugging
         this.file_counter++;
         
-        let write_result = await this._writeFilePromise('.' + this.fp + filename, src);
+        let write_result = await this._writeFilePromise(path.join(this.fp, filename), src);
         // This is where we determine the environment the agent's code should be exposed to.
         // It will only have access to these things, (in addition to basic javascript objects like Array, Object, etc.)
         // Note that the code may be able to modify the exposed objects.

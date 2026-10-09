@@ -1,0 +1,118 @@
+# .gitattributes — 分发包的边界声明
+#
+# ★ 为什么存在这个文件（2026-08-07，v0.1.2 打包事故的根治）
+#
+# 旧的 BUILD-WIN-ZIP.md 用 robocopy + `/XD` **黑名单**复制整个工作区，有三个结构性缺陷：
+#   1. `/XD` 拼绝对路径只排顶层同名目录 —— `.worktrees/*/node_modules` 全部逃逸；
+#   2. 排除列表写的是 `tests`，而仓库里的目录实际叫 `test` —— 打错一个字母就静默失效；
+#   3. 仓库根的 `.git` 在 worktree 里是一个 **78 字节的文本指针文件**（不是目录），
+#      `/XD` 对它根本不生效，`gitdir: C:/Users/...` 会原样进包。
+# v0.1.2 之所以看着干净，纯属打包者当时恰好站在一个零未跟踪文件的干净 worktree 里；
+# 照文档字面在主工作区执行会把 4898 个未跟踪文件（含真实 keys.json）一起打出去。
+#
+# 所以打包改成 **白名单**：`git archive HEAD` 只输出被 git 跟踪的文件，未跟踪的东西
+# （日志、keys.json、.worktrees、.claude、node_modules）在物理上就进不了包；本文件
+# 用 `export-ignore` 再把「跟踪了但不该分发」的开发资产切掉。
+#
+# ★ 两条使用铁律
+#   1. `git archive` 默认只读 **被归档的那棵树里** 的 .gitattributes。本文件如果还没提交，
+#      export-ignore 一条都不会生效。tools/build-win-zip.ps1 因此固定带 `--worktree-attributes`
+#      （让工作区这份也生效），并且会检查本文件是否已提交。
+#   2. `export-ignore` 标在目录上会让 git archive **整棵剪掉、不再下钻**，所以目录级
+#      排除之后没法再把子文件"捞回来"。下面 bots/_supervisor 的写法是逐类排除、
+#      故意不碰 skills/ 目录本身，就是为了这个限制。
+#
+# 改动本文件后请跑一次校验（不产包，只列清单）：
+#   git archive --worktree-attributes --format=zip -o "$env:TEMP\chk.zip" HEAD
+#   Expand-Archive "$env:TEMP\chk.zip" "$env:TEMP\chk" -Force; Get-ChildItem "$env:TEMP\chk"
+
+# ── 本文件自身与 git/容器/编辑器的元数据 ──────────────────────────────────────
+/.gitattributes         export-ignore
+/.gitignore             export-ignore
+/.dockerignore          export-ignore
+/.github                export-ignore
+
+# ── 代理工具与并行开发的私有目录（当前全是未跟踪的，这里是纵深防御：
+#    万一哪天有人 `git add -f` 了，也不会跟着分发出去）────────────────────────
+/.worktrees             export-ignore
+/.claude                export-ignore
+/.codex                 export-ignore
+/.agents                export-ignore
+
+# ── 开发文档 / 评测 harness / 单元测试 / 构建脚本自身 ─────────────────────────
+/docs                   export-ignore
+/test                   export-ignore
+/tasks                  export-ignore
+/services               export-ignore
+/tools                  export-ignore
+/BUILD-WIN-ZIP.md       export-ignore
+/minecollab.md          export-ignore
+
+# tools/dist/ 是分发包的模板（启动.bat、使用说明.txt、启动提示文案）。它们不进 archive，
+# 但最终要落到 Windows 用户手里，所以 checkout 出来必须是 CRLF：
+#   · 启动.bat 用 LF 换行时 `goto :label` 会报 "cannot find the batch label specified"
+#     —— 实测四个分支里直接坏掉一个；
+#   · .txt 用 LF 换行在老版记事本里会挤成一整行。
+# 这条与上面的 export-ignore 互不冲突：export-ignore 管"进不进 git archive"，
+# eol 管"checkout 出来长什么样"。
+tools/dist/** text eol=crlf
+
+# ── 容器化与 Python 侧的开发资产（分发包是纯 Node 绿色包，用不到）────────────
+/Dockerfile             export-ignore
+/Tasks.Dockerfile       export-ignore
+/docker-compose.yml     export-ignore
+/requirements.txt       export-ignore
+/agent_ws_server.py     export-ignore
+/test_websocket_client.js export-ignore
+
+# ── 开发机专用脚本：内含本机绝对路径（C:\Users\...）、本机 LAN 端口、
+#    以及只有监工用得上的运维逻辑。这些是 `C:\Users\` 泄漏的主要来源。────────
+/watchdog.ps1           export-ignore
+/start-neko.ps1         export-ignore
+/start-neko-direct.bat  export-ignore
+/ticket-server.err.log  export-ignore
+/ticket-server.out.log  export-ignore
+
+# ── keys.example.json：密钥现在一律走控制面板 GUI 配置（bootstrap.js 首启会建空壳）。
+#    留一个"复制我然后手填"的模板只会把用户带回旧流程，反而制造支持成本。────────
+/keys.example.json      export-ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# bots/ —— 只留代码资产
+#
+#   保留：bots/execTemplate.js、bots/lintTemplate.js（coder.js 运行时读，见
+#         src/agent/coder.js:21/25）
+#   保留：bots/_supervisor/skills/*.js（63 个热加载技能。world_model 提案端**硬接线**
+#         技能名，丢一个文件就是 customSkill 找不到 → 3-strike → 5min 冷却的永久空转
+#         风暴。这是必须进包的代码资产，绝不能一并排掉）
+#   保留：bots/_supervisor/oracle_shared.mjs —— 见下方例外说明
+#   排掉：其余全部（监工运维脚本 / 设计文档 / 运行时状态 JSON）
+#
+# 注意写法：这里逐类（*.md / *.json / *.mjs / core / test）排除，而**不是**直接写
+# `bots/_supervisor export-ignore`。因为目录被标记后 git archive 会整棵剪掉、不再下钻，
+# skills/ 就再也捞不回来了。gitattributes 里 `*` 不跨 `/`，所以下面几条不会误伤 skills/。
+# ─────────────────────────────────────────────────────────────────────────────
+bots/_supervisor/*.md   export-ignore
+bots/_supervisor/*.json export-ignore
+bots/_supervisor/*.mjs  export-ignore
+bots/_supervisor/core   export-ignore
+bots/_supervisor/test   export-ignore
+
+# ★ 例外：oracle_shared.mjs 必须进包。
+#   bots/_supervisor/skills/oracleGuard.js 第 8 行是**静态** import '../oracle_shared.mjs'；
+#   删掉它 → oracleGuard 加载即抛 → 连带 mineDiamonds / mineOres / scoutResources /
+#   wheatFarm 四个技能一起废掉（矿脉相关的整条链）。上一行的 `*.mjs` 把它扫进去了，
+#   靠后写的这条把它摘出来（gitattributes 里后面的规则覆盖前面的）。
+bots/_supervisor/oracle_shared.mjs -export-ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 刻意 **不** 排除、但打包脚本会把它们从 app/ 里搬到包根的两项：
+#
+#   neko.json  → 搬成 <包根>/bot.json，同时把 skin.path 从开发机绝对路径
+#                （C:/Users/Administrator/...）改写成相对写法 skins/neko-skin.png。
+#   skins/     → 搬成 <包根>/skins/。
+#
+# 它们必须先随 git archive 进 app/，脚本才有东西可搬；搬完 app/ 里不留副本
+# （历史上"内外各一份"造成过用户改了一份没生效的投诉，这是根治点）。
+# 详见 tools/build-win-zip.ps1 的「铺开用户层」一节。
+# ─────────────────────────────────────────────────────────────────────────────

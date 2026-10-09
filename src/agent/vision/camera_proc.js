@@ -21,6 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { Vec3 } from 'vec3';
+import { dataPath } from '../../utils/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_PATH = path.join(__dirname, 'render_worker.mjs');
@@ -50,7 +51,9 @@ export class CameraProc extends EventEmitter {
 
         // Truncate render.err once per agent process — the worker's stdout/stderr is
         // redirected here (see _spawnWorker) instead of inherited into agent.err.
-        this._renderLog = path.join(process.cwd(), 'render.err');
+        // ★2026-08-07 路径统一: 原 process.cwd() 相对 → dataPath()。渲染日志是运行时产物,
+        // 必须落在用户层根, 不能跟着 CWD 漂 (渲染逻辑本身未动)。
+        this._renderLog = dataPath('render.err');
         try { fs.writeFileSync(this._renderLog, ''); } catch (e) { /* ignore */ }
 
         this._init();

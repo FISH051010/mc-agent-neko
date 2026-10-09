@@ -1,3 +1,7 @@
+// ★2026-08-07 路径统一: agent 是独立 spawn 的子进程, 必须自己走一遍 bootstrap
+// (建目录 / 装 env 默认值 / chdir 到 HOME_DIR), 否则它的 CWD 跟主进程不一致,
+// 所有运行时状态会落到分发包的代码目录里。必须是**第一条 import**。
+import '../utils/bootstrap.js';
 import { Agent } from '../agent/agent.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
 import yargs from 'yargs';
