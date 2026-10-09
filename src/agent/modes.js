@@ -1,5 +1,5 @@
 import * as skills from './library/skills.js';
-import { undergroundKitGate, digOneCapViable } from './framework/kit_gate.js';
+import { undergroundKitGate, digOneCapViable, smeltableUnits } from './framework/kit_gate.js';
 import { readJsonCached } from '../utils/json_io.js';
 import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
@@ -6291,9 +6291,10 @@ const modes_list = [
                 const _hasIronPickDec = ((counts.iron_pickaxe || 0) + (counts.diamond_pickaxe || 0) + (counts.netherite_pickaxe || 0)) > 0;
                 const _ironIngotsDec = counts.iron_ingot || 0;
                 const _rawIronDec = counts.raw_iron || 0;
-                const _fuelDec = (counts.coal || 0) + (counts.charcoal || 0);
+                // ★T-0150: 燃料与 smeltItem 同口径 (木头也是燃料, 1.5 件/个, 扣 2 原木留棍/台) — 旧口径只数煤, 无煤有木的
+                //   bot 夜间永不冶炼 (19:49Z: raw_iron 10 + 原木 17 + 0 煤 → 粗铁锁在包里)。
                 const _canSmeltHere = (counts.furnace || 0) >= 1 || cobble >= 8;   // smeltSafe places a carried furnace, else craft one from cobble
-                const _ironConvAchievable = _ironIngotsDec >= 3 || (_rawIronDec >= 3 && _fuelDec >= 1 && _canSmeltHere);
+                const _ironConvAchievable = _ironIngotsDec >= 3 || (_rawIronDec >= 3 && smeltableUnits(counts) >= 3 && _canSmeltHere);
                 const _stuckMob = /ENTOMBED|POCKET/.test(mob || '');
                 // an iron pickaxe needs 2 sticks for the handle — require sticks on hand OR a plank/log
                 // source to craft them, else we'd smelt the ore then stall stickless at the craft step.

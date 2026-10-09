@@ -80,3 +80,16 @@ export function needsToolUpkeep({ sufficientForUnderground, pickTier, counts }) 
     const escortMissing = IRON_PLUS_RE.test(pickTier || '') && (counts['stone_pickaxe'] || 0) === 0 && cobble >= 3;
     return !sufficientForUnderground || (!PICK_DURABLE_RE.test(pickTier || '') && cobble >= 3) || escortMissing;
 }
+
+// ★T-0150 (19:49Z 实录: y21 夜挖, raw_iron 10 + 原木 17 + 0 煤, 无铁镐): 夜间冶炼判据燃料只数 coal/charcoal →
+//   木头不算 → SMELT_IRON 永不触发, 10 粗铁锁在包里。而 smeltItem (mcdata.getSmeltingFuel) 本就认原木/木板 (1.5 件/个)。
+//   与执行端同口径: 可冶炼件数 = 煤×8 + 木料×1.5, 木料先扣 2 原木留给棍/台 (铁镐柄 + 熔炉 3×3 要台)。
+export const WOOD_FUEL_RESERVE_LOGS = 2;
+export function smeltableUnits(counts) {
+    counts = counts || {};
+    const coal = (counts['coal'] || 0) + (counts['charcoal'] || 0);
+    const logs = Object.keys(counts).filter(k => k.endsWith('_log')).reduce((s, k) => s + (counts[k] || 0), 0);
+    const planks = Object.keys(counts).filter(k => k.endsWith('_planks')).reduce((s, k) => s + (counts[k] || 0), 0);
+    const woodItems = Math.max(0, logs - WOOD_FUEL_RESERVE_LOGS) + planks;
+    return coal * 8 + Math.floor(woodItems * 1.5);
+}
