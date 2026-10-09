@@ -4,6 +4,19 @@
  * regression-tested without a live Minecraft client.
  */
 
+// ★T-0155: 生鸡肉 (30% 饥饿 debuff, 饿到掉血时反而更快掉) 两档都排除 — 旧正则 /chicken/ 把生鸡肉当正常食物。
+const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|carrot|potato|^beef$|^porkchop$|^mutton$|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
+const EMERGENCY_FOOD_RE = /^rotten_flesh$|^beef$|^porkchop$|^mutton$|^rabbit$|^cod$|^salmon$/;
+const RAW_RE = /^(beef|porkchop|mutton|rabbit|cod|salmon)$/;
+/** auto_eat 挑背包食物: 正常食物 (熟食先于生肉); 都没有且 food≤6 或 (hp≤12 且 food<18) → 应急档 (腐肉/生肉)。绝不挑生鸡肉。 */
+export function pickAutoEatFood(items, { health = 20, food = 20 } = {}) {
+    const list = (items || []).filter(i => i && i.name && i.name !== 'chicken');
+    let pick = list.find(i => NORMAL_FOOD_RE.test(i.name) && !RAW_RE.test(i.name))
+        || list.find(i => NORMAL_FOOD_RE.test(i.name));
+    if (!pick && (food <= 6 || (health <= 12 && food < 18))) pick = list.find(i => EMERGENCY_FOOD_RE.test(i.name));
+    return pick || null;
+}
+
 export function shouldAutoEat({ health = 20, food = 20, foodInstincts = false } = {}) {
     if (!Number.isFinite(health) || health <= 0 || !Number.isFinite(food)) return false;
     if (health < 20 && food < 18) return true; // unblock vanilla regeneration

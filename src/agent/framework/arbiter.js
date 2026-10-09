@@ -73,6 +73,24 @@ export function dispatchYieldFloor(bot, holder, claimant) {
     } catch (e) { return false; }
 }
 
+/**
+ * ★T-0155 进食地板 — 实录 2026-10-10 y16 hp=1 food=0, 背包 rotten_flesh×2 一直没吃:
+ * auto_eat 走 execute() → 仲裁 holder=ws:* (kernelDriver 派发的受监督技能) vs mode:auto_eat,
+ * 矩阵无行 → LLM 4s 超时回退 holder → 永远不吃。就地吃背包已有食物是 ~1.6s 原地动作, 对任何
+ * 受监督技能都无害; 饿到掉血时压它等于制度性饿死。判据同 auto_eat 应急档:
+ * food≤6, 或 hp≤12 且 food<18 (回血被饥饿条卡住)。holder 是 mode 时不在此地板 (照旧矩阵)。
+ */
+export function eatFloor(bot, holder, claimant) {
+    try {
+        if (!bot || !holder || !claimant) return false;
+        if (holder.kind === 'mode') return false;
+        if (claimant.name !== 'mode:auto_eat') return false;
+        const food = Number(bot.food), hp = Number(bot.health);
+        if (!Number.isFinite(food)) return false;
+        return food <= 6 || (Number.isFinite(hp) && hp <= 12 && food < 18);
+    } catch (e) { return false; }
+}
+
 /** bot 挂载的仲裁器状态 (红线: 无模块级可变状态)。 */
 function st(bot) {
     if (!bot) return null;
@@ -262,6 +280,9 @@ export function resolve(holder, claimant, ctx = {}) {
 
         // 1. 生死地板 — 秒抢: 不等 LLM, 不查矩阵 (唯一硬编码规则)
         if (claimant.vital) return logVerdict(bot, holder, claimant, 'claimant', 'floor', 'vital', ctx);
+        // 1.5 进食地板 (T-0155) — 矩阵之前: 一条坏的 persist 'holder' 规则也不能把饿到掉血的进食压死
+        if (eatFloor(bot, holder, claimant))
+            return logVerdict(bot, holder, claimant, 'claimant', 'floor', 'eat', ctx);
 
         // 2. 矩阵直查 (永久规则: 种子 + LLM persist 沉淀)
         const hit = lookupMatrix(doc.matrix, holder.name, claimant.name);

@@ -93,3 +93,26 @@ export function smeltableUnits(counts) {
     const woodItems = Math.max(0, logs - WOOD_FUEL_RESERVE_LOGS) + planks;
     return coal * 8 + Math.floor(woodItems * 1.5);
 }
+
+// ★T-0157 (监工加急 10-10; 19:57:04→20:00:06 实录: GET_ARMOR→craftArmor ×3 秒败 → 5min 冷却): 背包 11 粗铁, 但
+//   0 原木/0 煤/无台 → smeltSafe "no carried/nearby table and no wood to make one", 后来 4 木板也只够拍台 → consumed=0。
+//   决策层提了技能层必拒的 craftArmor (铁律 2)。造一件甲 = 台 (合成) + 熔炉 (缺锭时) + 燃料 (缺锭件数), 缺一不可。
+//   口径同 smeltSafe/smeltItem: 台 = 带着/4 格内有/4 木板/1 原木; 熔炉 = 带着/4 格内有/8 圆石类; 燃料 = 煤×8 + 木料×1.5 (扣掉拍台的木)。
+const FURNACE_STONE_RE = /^(cobblestone|cobbled_deepslate|blackstone)$/;
+export function armorCraftFeasible(counts, cost, { tableNear = false, furnaceNear = false } = {}) {
+    counts = counts || {};
+    const sum = (re) => Object.keys(counts).filter(k => re.test(k)).reduce((s, k) => s + (counts[k] || 0), 0);
+    let logs = sum(/_log$/), planks = sum(/_planks$/);
+    if (!tableNear && !(counts['crafting_table'] > 0)) {
+        if (planks >= 4) planks -= 4;
+        else if (logs >= 1) logs -= 1;   // 1 原木 → 4 木板 → 台, 不剩
+        else return { ok: false, why: 'no-table' };
+    }
+    const needSmelt = Math.max(0, (cost || 0) - (counts['iron_ingot'] || 0));
+    if (needSmelt > 0) {
+        if (!furnaceNear && !(counts['furnace'] > 0) && sum(FURNACE_STONE_RE) < 8) return { ok: false, why: 'no-furnace' };
+        const fuel = ((counts['coal'] || 0) + (counts['charcoal'] || 0)) * 8 + Math.floor((logs + planks) * 1.5);
+        if (fuel < needSmelt) return { ok: false, why: `no-fuel ${fuel}<${needSmelt}` };
+    }
+    return { ok: true, why: '' };
+}

@@ -92,7 +92,11 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
     const animalOk = animalInRange(animal, botPos, botY);
     // 饿着还在矿里 → 先上浮再在地面找 (监工拍板: 在矿里的要先回地面去觅食)
     const starving = starvingNoFood({ food, counts });
-    const surfaceFirst = starving && depthBand && depthBand !== 'surface';
+    // ★T-0156 (监工加急 10-10): 19:56:59 y18 food 4-6 (未到 starving≤3) → 只带 scout 不带 surfaceFirst →
+    //   矿道里侦察 0.4s 就"found nothing" ×3 → 冷却。地下要侦察就必须先上浮; 地下判据也认 botY<62 (不只 depthBand)。
+    const underground = (Number.isFinite(botY) && botY < 62) || !!(depthBand && depthBand !== 'surface');
+    const needScout = food <= FOOD_FLOOR && !animalOk && rawMeat === 0;
+    const surfaceFirst = underground && (starving || needScout);
     // ★监工加急 #2 + 拍板: 侦察只在 food≤6 时做 (锁存期间 food 已回 7-17 且附近没动物 → 不提, 不为存粮侦察)。
     const scout = food <= FOOD_FLOOR && !surfaceFirst && !animalOk && rawMeat === 0;
     if (rawMeat === 0 && !animalOk && !surfaceFirst && !scout) return null;
@@ -109,7 +113,7 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
             ? `food ${food}≤${FOOD_FLOOR}, no edible, ${rawMeat} raw meat — cook/eat in place (bounded, food instincts off)`
             : (animalOk
                 ? `food ${food}≤${FOOD_FLOOR}, no edible — one short hunt of ${animal.meta || 'animal'} (≤${HUNT_RADIUS}b, bounded, food instincts off)`
-                : `food ${food}≤${STARVING_FOOD} starving underground (${depthBand}) — surface first, then one hunt ≤${HUNT_RADIUS}b (bounded)`),
+                : `food ${food}≤${FOOD_FLOOR} underground (${depthBand || `y${Math.round(botY)}`}), no animal — surface first, then bounded scout/hunt ≤${HUNT_RADIUS}b`),
     };
 }
 

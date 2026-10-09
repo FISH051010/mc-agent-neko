@@ -23,7 +23,7 @@ import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
-import { toolUpkeepPlan, needsToolUpkeep } from './kit_gate.js';
+import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE } from './food_floor.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
@@ -221,6 +221,26 @@ export function ironArmorBudget(bot) {
     return ironForArmor(bot) - (hasIronPlusPick ? 0 : IRON_PICK_RESERVE);
 }
 function armorItemNames(bot) { try { return bot.inventory.items().map(i => i.name).filter(n => /_(helmet|chestplate|leggings|boots)$/.test(n)); } catch (e) { return []; } }
+// ★T-0157: craftArmor 本轮要造的那件的成本 (与技能端同序: keepInv 关 → 防护序挑造得起的; 否则 cheapest-first)。
+function nextArmorCost(world, bot) {
+    if (keepInventoryOff() === true) {
+        const nx = nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot));
+        return nx ? nx[1] : null;
+    }
+    return ARMOR_PIECE_COST[Math.min(3, (world.vitals && world.vitals.armor) || 0)];
+}
+function blockNear(bot, name, r = 4) {
+    try {
+        const b = bot.registry && bot.registry.blocksByName && bot.registry.blocksByName[name];
+        return !!(b && typeof bot.findBlock === 'function' && bot.findBlock({ matching: b.id, maxDistance: r }));
+    } catch (e) { return false; }
+}
+/** ★T-0157 台/熔炉/燃料齐不齐 — 提案门与 isGoalDone 同一谓词 (缺料时技能必拒, 不提也不粘)。 */
+export function armorCraftBlocked(world, bot) {
+    const cost = nextArmorCost(world, bot);
+    if (cost == null) return false;   // 无可造件 — ironArmorGoalDone 管
+    return !armorCraftFeasible(invCounts(bot), cost, { tableNear: blockNear(bot, 'crafting_table'), furnaceNear: blockNear(bot, 'furnace') }).ok;
+}
 function ironArmorGoalDone(world, bot) {
     const pieces = Math.min(4, (world.vitals && world.vitals.armor) || 0);
     if (pieces >= 4) return true;
@@ -847,8 +867,11 @@ export function proposeTasks(world, bot) {
     // ★2026-07-05 无镐让位 (实录 05:04: 全镐耗尽时 GET_ARMOR@68 一分压过 REPLENISH@67,
     // craftArmor 抢走白天窗口徒手 7.5s/块凿石找炉位反复失败, 补镐链被压制到 3-strike 冷却
     // 才轮上)。无镐=补给紧急态: picks>0 才许提甲件。
+    // ★T-0157 (监工加急): ① 台/熔炉/燃料不齐不提 (19:57 实录 0 木 0 煤 → craftArmor×3 秒败冷却);
+    //   ② hp<10 或 food≤6 让位 (先吃/先回血, 甲不急这几十秒; FOOD_FLOOR@70 本就更高, 这里防它不提时甲抢身)。
     if (overworld && time.phase === 'day' && !(threat.actionable > 0) && !ironArmorGoalDone(w, bot)
-        && (kit.picks || 0) > 0) {
+        && (kit.picks || 0) > 0 && !armorCraftBlocked(w, bot)
+        && !((vitals.hp ?? 20) < 10 || (vitals.food ?? 20) <= 6)) {
         push({ kind: PROPOSAL_KIND.GET_ARMOR, priority: 58, skill: 'craftArmor', args: keepInventoryOff() === true ? [{ order: 'protection' }] : [],
                rationale: `unarmored (${vitals.armor || 0}/4 pieces) + ${ironForArmor(bot)} iron banked — smelt+craft+equip iron armor (creeper/stray insurance, save diamonds)` });
     }
@@ -1498,7 +1521,7 @@ export function isGoalDone(kind, world, bot) {
         case PROPOSAL_KIND.GET_FOOD:      return (w.vitals.food >= FOOD_STOCK) && carriedRations(bot) >= 2;
         // Done when fully armored OR banked iron can't afford the cheapest MISSING piece (see
         // ironArmorGoalDone — a flat `<4` livelocked at e.g. boots owned + 4 iron, helmet costs 5).
-        case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot);
+        case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot) || armorCraftBlocked(w, bot);   // ★T-0157 缺台/炉/燃料即释放
         case PROPOSAL_KIND.GET_BED:       return bedKnown(bot);
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment

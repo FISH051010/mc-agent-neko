@@ -24,7 +24,7 @@ import {
 import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as arbiterCurrentOwner, vitalNow as arbiterVitalNow } from './framework/arbiter.js';
 // ★2026-07-08 用户令: auto_eat 的「补血 vs 补体力」开关 (临时禁用饥饿/食物本能)。见 contracts.foodInstinctsEnabled。
 import { foodInstinctsEnabled } from './framework/contracts.js';
-import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
+import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
@@ -6855,7 +6855,8 @@ const modes_list = [
             // It never forages, shelters, relocates, or interrupts for an alternate survival plan.
             const shouldEat = shouldAutoEat({ health: bot.health, food: bot.food, foodInstincts: foodInstinctsEnabled() });
             if (shouldEat && Date.now() - this.last_eat > 8000) {
-                let food = bot.inventory.items().find(i => /cooked_|_bread|^bread$|apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/.test(i.name));
+                // ★T-0155: 挑食收口到 pickAutoEatFood (纯函数可测; 两档语义同下注释, 另排除生鸡肉)。
+                const food = pickAutoEatFood(bot.inventory.items(), { health: bot.health, food: bot.food });
                 // EMERGENCY TIER — rotten flesh / raw meats / spider eye. The hp3/food0
                 // deadlock (post-#267): feedUp found no animals all day, but the bot HAD
                 // killed zombies whose flesh it refused to eat because the regex above
@@ -6868,9 +6869,6 @@ const modes_list = [
                 // the famine food (food>6) → hp frozen (live: hp4/food16 deadlock, rotten_flesh in bag,
                 // stuck 12min). When hp is low AND food<18 (regen-blocked) AND no normal food, eat the
                 // emergency food to reach the regen threshold — a brief hunger effect beats bleeding out.
-                if (!food && (bot.food <= 6 || (bot.health <= 12 && bot.food < 18))) {
-                    food = bot.inventory.items().find(i => /rotten_flesh|^beef$|^porkchop$|^chicken$|^mutton$|^rabbit$|^cod$|^salmon$/.test(i.name));
-                }
                 if (food) {
                     this.last_eat = Date.now();
                     execute(this, agent, async () => { try { await skills.consume(bot, food); } catch (e) {} });

@@ -18,7 +18,7 @@ test('T-0140: 无铁镐 + 4 粗铁 (19:02 现场) → 不提 GET_ARMOR (铁先�
 });
 
 test('T-0140: 有铁镐后无预留 → 4 铁即提 GET_ARMOR (造靴)', () => {
-    const inv = { iron_ingot: 4, iron_pickaxe: 1, stone_pickaxe: 2 };
+    const inv = { iron_ingot: 4, iron_pickaxe: 1, stone_pickaxe: 2, crafting_table: 1 };   // T-0157: 造甲要台 (无台无木 → armorCraftBlocked 正确不提)
     assert.equal(ironArmorBudget(fakeBot(inv)), 4);
     assert.ok(proposeTasks(w0(), fakeBot(inv)).find(p => p.kind === 'GET_ARMOR'));
 });

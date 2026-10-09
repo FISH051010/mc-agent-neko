@@ -101,8 +101,19 @@ test('T-0069 跟进: 饿着在矿里 (无可见动物) → FOOD_FLOOR 先上浮 
     assert.equal(p.args[0].surfaceFirst, true);
     const surf = foodFloorProposal({ ...base, depthBand: 'surface', botY: 70 });
     assert.ok(surf && surf.args[0].scout && !surf.args[0].surfaceFirst, 'on the surface with no animal → bounded scout (监工加急#2), not surfaceFirst');
+    // T-0156 改口径 (监工加急 10-10): food 5 未到 starving, 但地下要侦察 → 必须先上浮 (旧断言"只侦察"正是缺陷)
     const f5 = foodFloorProposal({ ...base, food: 5, depthBand: 'mid' });
-    assert.ok(f5 && !f5.args[0].surfaceFirst, 'not starving (food 5) → no forced surfacing (scout only)');
+    assert.ok(f5 && f5.args[0].surfaceFirst && f5.args[0].scout, 'food 5 underground, no animal → surfaceFirst+scout');
+});
+
+test('T-0156: 19:56:59 y18 food5 零动物 → 提案必须带 surfaceFirst (矿道侦察 0.4s 秒败×3→冷却); depthBand 缺失也按 botY<62 判地下', () => {
+    const base = { foodInstincts: false, overworld: true, phase: 'day', food: 5, actionable: 0, counts: LIVE, botY: 18, animal: null };
+    const p = foodFloorProposal({ ...base, depthBand: 'mid' });
+    assert.ok(p && p.args[0].surfaceFirst && p.args[0].scout, JSON.stringify(p && p.args[0]));
+    const noBand = foodFloorProposal({ ...base, depthBand: undefined });
+    assert.ok(noBand && noBand.args[0].surfaceFirst, 'botY 18 alone → underground');
+    const raw = foodFloorProposal({ ...base, depthBand: 'mid', counts: { ...LIVE, beef: 2 } });
+    assert.ok(raw && !raw.args[0].surfaceFirst, 'has raw meat → cook in place, no surfacing');
 });
 
 test('监工加急#2: 饿着在地面且 48 格内零动物 → FOOD_FLOOR 有界侦察 (≤96 格/≤90s), 不饿则不侦察', () => {
