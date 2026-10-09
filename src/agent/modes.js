@@ -3569,6 +3569,29 @@ const modes_list = [
                             fs.appendFileSync('bots/_supervisor/progress.txt',
                                 `[${new Date().toISOString()}] [reflex_watchdog] ★SUFFOCATION self-rescue: head=${headB.name} hp=${Math.round(bot.health)} pos=${Math.floor(sp0.x)},${Math.floor(sp0.y)},${Math.floor(sp0.z)} — dig out NOW (always-on, bunker dwell can't gate this)\n`);
                         } catch (e) {}
+                        // ★T-0172 ②: under a gravity COLUMN digging the head block just drops the next one in
+                        // (death #9: 6 digs, hp13→1). Step sideways out from under it instead; only a single
+                        // gravity block / no usable side column falls back to the old head dig.
+                        let _escDir = null;
+                        try { _escDir = skills.suffocationEscapeDir((q) => bot.blockAt(q), sp0.floored()); } catch (e) {}
+                        if (_escDir) {
+                            const f0 = sp0.floored();
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [reflex_watchdog] ★SUFFOCATION under a gravity column — sidestep ${_escDir.join(',')} instead of digging up (T-0172)\n`); } catch (e) {}
+                            for (const q of [f0.offset(_escDir[0], 1, _escDir[1]), f0.offset(_escDir[0], 0, _escDir[1])]) {
+                                const b = bot.blockAt(q);
+                                if (b && b.boundingBox === 'block') {
+                                    try { await bot.tool.equipForBlock(b); } catch (e) {}
+                                    try { await Promise.race([bot.dig(b, true), new Promise((_, rej) => setTimeout(() => rej(new Error('suffoc-side-timeout')), 3000))]); }
+                                    catch (e) { try { bot.stopDigging(); } catch (_) {} }
+                                }
+                            }
+                            try {
+                                await bot.lookAt(f0.offset(_escDir[0] + 0.5, 0.5, _escDir[1] + 0.5), true);
+                                bot.setControlState('forward', true);
+                                await new Promise(r => setTimeout(r, 600));
+                            } catch (e) {} finally { try { bot.setControlState('forward', false); } catch (e) {} }
+                            return;
+                        }
                         try { await bot.tool.equipForBlock(headB); } catch (e) {}
                         try {
                             await Promise.race([

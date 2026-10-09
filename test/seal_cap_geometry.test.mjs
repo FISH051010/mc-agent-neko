@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon, suffocationEscapeDir } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -214,4 +214,19 @@ test('T-0168: no sword → swing back with the best pick, but never wear out the
     assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 12, hasFallbackPick: true }), true);
     assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 8, hasFallbackPick: true }), false, 'low hp → flee / dig in');
     assert.equal(unarmedSoloMeleeExempt({ ...base, hp: 12, hasFallbackPick: false }), false);
+});
+
+test('T-0172②: suffocating under a gravel COLUMN → step sideways, not dig the head block (death #9: 6 head digs, hp13→1)', () => {
+    // feet y45 at (0,0): head y46 gravel, y47 gravel above; side (1,0) open at y45/46 on stone; (−1,0) stone
+    const blockAt = (p) => {
+        if (p.x === 0 && p.z === 0 && p.y === 45) return { name: 'air', boundingBox: 'empty' };
+        if (p.x === 0 && p.z === 0 && (p.y === 46 || p.y === 47)) return { name: 'gravel', boundingBox: 'block' };
+        if (p.x === 1 && p.z === 0 && (p.y === 45 || p.y === 46)) return { name: 'air', boundingBox: 'empty' };
+        if (p.y > 47) return { name: 'air', boundingBox: 'empty' };
+        return { name: 'stone', boundingBox: 'block' };
+    };
+    assert.deepEqual(suffocationEscapeDir(blockAt, new Vec3(0, 45, 0)), [1, 0]);
+    // a single gravel block on the head (nothing above) → null: digging it once clears it
+    const single = (p) => (p.x === 0 && p.z === 0 && p.y === 47) ? { name: 'air', boundingBox: 'empty' } : blockAt(p);
+    assert.equal(suffocationEscapeDir(single, new Vec3(0, 45, 0)), null);
 });

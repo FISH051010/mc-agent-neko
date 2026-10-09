@@ -6449,6 +6449,30 @@ export function breakWouldFlood(blockAt, pos) {
 }
 
 /**
+ * ★T-0172 ② (death #9 窒息自救: reflex_watchdog 'SUFFOCATION self-rescue: head=gravel' 每 1.5s 原地挖头顶
+ * 砂砾 ×6, 每挖一块上面又落一块, hp13→1→死)。头格是重力块且其上还压着重力块 = 原地挖永远挖不完;
+ * 人类横跨一步离开柱子底下。选相邻列: 脚/头非液体非重力、脚下有实心、该列上方 3 格无重力块; 空格优先。
+ * @returns {[number,number]|null} 没有合适邻列 → null (调用方回退原地挖)
+ */
+export function suffocationEscapeDir(blockAt, feet) {
+    const isGrav = (p) => GRAVITY_BLOCK_RE.test(((blockAt(p) || {}).name) || '');
+    const head = feet.offset(0, 1, 0);
+    if (!isGrav(head) || !isGrav(head.offset(0, 1, 0))) return null;   // single block — digging it once clears it
+    let best = null;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const f = feet.offset(dx, 0, dz), h = feet.offset(dx, 1, dz);
+        const nf = ((blockAt(f) || {}).name) || 'air', nh = ((blockAt(h) || {}).name) || 'air';
+        if (FLUID_RE.test(nf) || FLUID_RE.test(nh) || GRAVITY_BLOCK_RE.test(nf) || GRAVITY_BLOCK_RE.test(nh) || /bedrock/.test(nf + nh)) continue;
+        const ub = blockAt(f.offset(0, -1, 0));
+        if (!(ub && ub.boundingBox === 'block')) continue;
+        if (gravityOverColumn(blockAt, f.x, f.y, f.z, 3)) continue;
+        const open = !_capSolid(blockAt(f)) && !_capSolid(blockAt(h));
+        if (!best || (open && !best.open)) best = { d: [dx, dz], open };
+    }
+    return best ? best.d : null;
+}
+
+/**
  * ★T-0168 (death #8 10-09 21:17:59, 僵尸 d=1.7, hp14→0, 7s 内零反射): shouldFlee 的"健康无武器开局豁免"
  * (无武器 + 恰 1 只近战怪 → 不逃, 理由"一只怪杀不死满血 bot, 让它去造剑") 不看是否已在挨打;
  * self_defense 无武器又不出手 → 两边都不接, 站着被打死。人类: 满血被挠一下可以继续干活;

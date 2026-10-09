@@ -12,6 +12,14 @@
 
 ---
 
+## C371. ★窒息自救不在砂砾柱下原地挖头: 头格+上方仍是重力块 → 横跨一步出柱（modes.js reflex_watchdog + skills.suffocationEscapeDir 需重启,T-0172②,worker-death,⏳待重启）
+
+**证据**(监工): death #9 10-09 21:46:04-15Z `reflex_watchdog ★SUFFOCATION self-rescue: head=gravel` 约每 1.5s ×6, hp13→10→7→4→1→0; 每挖掉头顶一块砂砾上面又落一块。
+**机理**: C287 窒息自救只会原地挖头格; 头格之上还压着砂砾柱时, 挖一块落一块, 永远挖不完。
+**改动**: skills.js `suffocationEscapeDir(blockAt, feet)`: 头格与其上一格都是重力块才启用; 选相邻列(脚/头非液体非重力非基岩、脚下实心、上方 3 格无重力块, 空格优先)。reflex_watchdog 自救: 有方向 → 挖开侧列两格(各 ≤3s) + forward 600ms 横跨出柱; 无方向或单块重力 → 回退原地挖头格(原行为)。
+**可证伪预测**: 砂砾柱窒息时出 `★SUFFOCATION under a gravity column — sidestep x,z instead of digging up (T-0172)`, 窒息掉血 ≤2 次即止; 不再出现连续 ≥3 次 `self-rescue: head=gravel` 的死亡。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0172②: …'。
+
 ## C370. ★surfaceUp 不在砂砾柱下竖直上挖: 头顶有重力块 → 横挪到无重力列再上（③surfaceUp.js 热加载即生效,T-0172,worker-death,🟡已生效待观测）
 
 **证据**: death #9 10-09 21:46:15Z `suffocation` @111,46,91 skill=surfaceUp(replenishKit ① 上浮); events hp 16(21:46:02)→6(21:46:07)→0 = 持续窒息 2/s。surfaceUp.log: `fallback clear failed at h=2 name=gravel` → `fallback iter 0: pillarUp rose 45->46` → 再 `clear failed … gravel` → EXIT; `modes frozen: mobility,self_preservation,self_defense,…`(surfaceUp 冻结全部反射, 无人救)。
