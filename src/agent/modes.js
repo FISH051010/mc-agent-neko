@@ -5512,6 +5512,7 @@ const modes_list = [
             };
             const originalEquip = bot.equip.bind(bot);
             bot.equip = async (item, destination, ...args) => {
+                try { if (skills.closeStrayContainerWindow(bot)) write('equip.closed_stray_window', { item: itemName(item) }); } catch (e) {}   // ★T-0179
                 const name = itemName(item);
                 const hand = !destination || destination === 'hand';
                 if (hand && name && !/_pickaxe$/.test(name) && activeStonyDig()) {

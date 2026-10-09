@@ -2965,6 +2965,8 @@
 
 - **★C400-S breakBlockAt 工具切换失败不再让挖掘失败(T-0179)**（2026-10-10，worker-stuck，T-0179；worker-tier 报）: 实录 10-09 22:26:50-53 @-10,20,33 mineDown 楼梯头格是 replenishKit 离场台回收失败遗留的 crafting_table, 3 次派发 START 后 2ms 'dig threw: invalid operation' (prismarine-windows Window.acceptClick 槽位断言, 来自 bot.tool.equipForBlock; mine_motion 无 dig.begin) → DUSK_MINE_NIGHT 冷却 5min。修: equipForBlock 包 try/catch — 失败记 log + motionAudit 'equip_for_block.fail' (含堆栈前 6 行, 供追查是哪个失效槽位), 用手上物品继续挖; 矿保护闸与 9s 上限照旧作用于手上物品。测试 test/break_block_equip_fail.test.mjs。
 
+- **★C401-S equip 前关掉遗留容器窗口 — 'invalid operation' 的真根(T-0179 续)**（2026-10-10，worker-stuck，T-0179）: 续查 22:26→22:32 'invalid operation' 不止 mineDown: mine_motion equip-failed ×50+ (place_underfoot/surfaceUp/reclaimTable 全中), 起点 = 22:26:11 smeltSafe 收尾被打断 (无 'furnace picked up', 随后 3 次 smeltSafe 1s 内 consumed=0)。mineflayer clickWindow 用 `bot.currentWindow || bot.inventory` — 熔炉窗口没关时按背包槽号点击越界 → acceptClick 断言。修: skills.closeStrayContainerWindow (非 minecraft:inventory 的 currentWindow → closeWindow); mine_motion 全局 bot.equip 包装器每次 equip 前调用并记 'equip.closed_stray_window'。C400 的 equip 失败不致命保留为纵深防御。测试 test/stray_window_equip.test.mjs。
+
 ---
 
 ---

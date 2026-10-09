@@ -7277,6 +7277,20 @@ export function pickRunway(bot) {
 // behind its back" (user-reported, 2026-07-02). Purely cosmetic held gaze: re-look
 // every 250ms until the dig promise settles. Returns a promise that settles exactly
 // like the passed dig promise (safe inside Promise.race).
+/**
+ * ★T-0179: close a container window that was left open (interrupted smelt/chest wrap-up). mineflayer's clickWindow
+ * targets `bot.currentWindow || bot.inventory`, so while a furnace window lingers every equip clicks an inventory
+ * slot number that is out of the furnace window's range → prismarine-windows 'invalid operation' (live 22:26→22:32:
+ * all equips failed, mineDown could not dig). The player inventory window itself is never closed.
+ * @returns {boolean} true when a stray window was closed.
+ */
+export function closeStrayContainerWindow(bot) {
+    const w = bot && bot.currentWindow;
+    if (!w || w.type === 'minecraft:inventory') return false;
+    try { bot.closeWindow(w); } catch (e) {}
+    return true;
+}
+
 export function gazeHold(bot, block, digPromise) {
     const at = block && block.position && block.position.offset(0.5, 0.5, 0.5);
     if (!at) return digPromise;
