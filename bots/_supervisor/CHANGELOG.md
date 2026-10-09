@@ -2887,6 +2887,8 @@
 
 - **C389-S mineDown 'Digging aborted' 记录打断者(T-0148 诊断, 监工建议)**（2026-10-10，worker-stuck）: mineDown `dig threw: Digging aborted` 时在 DONE 的 abort 后附 `[by owner=<_bodyOwner> digSlot=<_bodyDigLockOwner> digging=<targetDigBlock> chopGen=<_chopGen>]`(新导出 `digInterrupter`),下次能直接看出是孤儿 chopWood、反射 mode 还是寻路打断。只诊断,不改 strike 计数(与监工议定: 打断真根已由 C388-S 修,保留 3-strike 冷却兜底未知打断源)。测试 `test/minedown_dig_interrupter.test.mjs`。子 skill 热加载。
 
+- **★C390-S 残血移动档 lowHpMovementProfile: 残血不跳、落差≤1、行军 hold(T-0154, 监工规格)**（2026-10-10，worker-stuck，T-0154）: 证据: 死 #6 20:03:31 fall @50,70,25: hp=1(饥饿)时 MAROONED 行军在树冠 y73 挖原木 → y74 挖叶 → 20:03:29 y76.2 g=0 ctrl=forward,jump → 踩空落回 ~y73(跳跃顶点起 >3 格=1 点摔伤=致命);ledge veto 20:03:30 才触发。行军原有的饥饿门要求"背包无可食物",bot 携腐肉 → 未拦。与 #3(残血挖砂砾窒息,C383-S)同族:残血时做满血才扛得住的动作。**改**: ① `framework/mobility_signals.js` 纯函数 `lowHpMovementProfile(hp)`(hp≤6: allowJump=false, maxDropDown=1, allowParkour=false);② mineflayer 层 `library/skills.js` 新 `installLowHpClamp`,在全局 Movements 子类构造末尾把 `maxDropDown`/`allowParkour` 变成按**当前血量读取时钳制**的访问器——调用方构造后自行放宽(如 mineDown)也照样被钳,回血后自动恢复其原值,所有寻路一处覆盖;③ `modes.js` MAROONED 行军入口残血 hold(不爬台阶/不跳跃前进/不过崖边,节流记 `★T-0154 MAROONED low-hp hold`)。**回归测试**: `test/low_hp_movement.test.mjs`(3 条 `T-0154:`);另用 1.21.1 真 registry 冒烟构造 pf.Movements 验证访问器(满血 3/true,hp2 → 1/false,hp15 → 恢复调用方的 6)。**可证伪预测**: hp≤6 期间不再有 mobility forward+jump 与 >1 格落差的寻路;不再有残血 fall 死亡。需重启 main.js。
+
 ---
 
 ---

@@ -91,3 +91,14 @@ export function mobilityDigTimeoutMs(bot, block) {
     if (!Number.isFinite(dt) || dt <= 0) return 5000;
     return Math.min(MOBILITY_DIG_TIMEOUT_CAP_MS, Math.round(dt * 1.4) + 1500);
 }
+
+// ★T-0154 残血移动档 (监工规格): 死 #6 20:03:31 fall — hp=1(饥饿)时 MAROONED 行军在树冠里 forward+jump 爬到 y76.2,
+//   随即踩空落回 ~y73: 从跳跃顶点算 >3 格 = 1 点摔伤 = 致命。与 #3(残血挖砂砾窒息)同族: 残血时做了满血才扛得住的动作。
+//   统一原语: hp<=LOW_HP 时 不跳跃前进、落差<=1、不 parkour(跳弧下方深坑)。所有移动路径过它
+//   (pathfinder: Movements 访问器按血量实时钳制; mobility: MAROONED 行军残血 hold)。
+export const LOW_HP_MOVE = 6;
+export function lowHpMovementProfile(hp) {
+    const h = Number.isFinite(hp) ? hp : 20;
+    const low = h <= LOW_HP_MOVE;
+    return { low, allowJump: !low, maxDropDown: low ? 1 : null, allowParkour: !low };
+}

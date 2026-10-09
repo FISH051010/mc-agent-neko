@@ -5,6 +5,7 @@ import * as tickConfirm from "./tick_confirm.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
+import { lowHpMovementProfile } from '../framework/mobility_signals.js';
 import settings from "../../../settings.js";
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -122,6 +123,22 @@ export function hardenMovements(bot, movements) {
     } catch (e) { /* fail-open: unhardened Movements still pathfinds */ }
     return movements;
 }
+/** ★T-0154: make movements.maxDropDown / allowParkour hp-aware at read time (see lowHpMovementProfile). */
+export function installLowHpClamp(movements, bot) {
+    let mdd = movements.maxDropDown, park = movements.allowParkour;
+    const hp = () => { try { return bot && Number.isFinite(bot.health) ? bot.health : 20; } catch (e) { return 20; } };
+    Object.defineProperty(movements, 'maxDropDown', {
+        configurable: true, enumerable: true,
+        get() { const p = lowHpMovementProfile(hp()); return p.low ? Math.min(mdd, p.maxDropDown) : mdd; },
+        set(v) { mdd = v; },
+    });
+    Object.defineProperty(movements, 'allowParkour', {
+        configurable: true, enumerable: true,
+        get() { return lowHpMovementProfile(hp()).allowParkour ? park : false; },
+        set(v) { park = v; },
+    });
+    return movements;
+}
 class _NoScaffoldMovements extends _PFMovements {
     constructor(...args) {
         super(...args);
@@ -195,6 +212,11 @@ class _NoScaffoldMovements extends _PFMovements {
         // (they hot-import after this rebinding, so they get this subclass too) — same
         // one-hook-covers-all pattern as the scaffold/vine/kill-box guards above.
         try { hardenMovements(args[0], this); } catch (e) {}
+        // ★T-0154 LOW-HP MOVEMENT PROFILE (mineflayer layer): callers routinely override maxDropDown /
+        //   allowParkour after construction (mineDown widens drops), so a constructor-time clamp would be
+        //   undone. Turn both into accessors that the planner re-reads on EVERY plan: at hp<=6 drops are
+        //   capped at 1 and parkour (jump arcs over pits) is off; above that the caller's own value stands.
+        try { installLowHpClamp(this, args[0]); } catch (e) {}
     }
 
     safeToBreak(block) {

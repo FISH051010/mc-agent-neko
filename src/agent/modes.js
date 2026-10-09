@@ -30,7 +30,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs } from './framework/mobility_signals.js';
+import { purposefulDigActive, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining } from './framework/night_owner.js';
@@ -4775,6 +4775,18 @@ const modes_list = [
                     // digs/moves nothing → the 25min body-freeze. Clear once here; new interrupts
                     // (death/real stop) set AFTER this still break the loop promptly.
                     try { bot.interrupt_code = false; } catch (e) {}
+                    // ★T-0154 残血 hold: the march climbs (forward+jump) and steps over ledges — at hp<=6 one
+                    //   missed landing is lethal (death #6: canopy climb to y76.2 at hp1, fell ~3.5). A trapped-but-
+                    //   safe bot loses nothing by waiting for food/regen; a falling one loses the whole kit.
+                    if (!lowHpMovementProfile(bot.health).allowJump) {
+                        try { bot.clearControlStates(); } catch (e) {}
+                        if (Date.now() - (bot._lowHpMarchHoldLogAt || 0) > 30000) {
+                            bot._lowHpMarchHoldLogAt = Date.now();
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0154 MAROONED low-hp hold hp=${Math.round(bot.health || 0)} food=${bot.food} — no climb/jump/ledge march until hp>6
+`); } catch (e) {}
+                        }
+                        return;
+                    }
                     const noEdible = !bot.inventory.items().some(i => FAMINE_FOOD_RE.test(i.name || ''));
                     if (bot.food <= 6 && noEdible) {
                         try { bot.clearControlStates(); } catch (e) {}
