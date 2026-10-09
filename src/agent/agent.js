@@ -28,7 +28,7 @@ import { wsServer } from '../websocket/ws_server.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import fs from 'fs';
 import { dataPath, expandUserPath } from '../utils/paths.js';
-import { archiveStaleWorldStateOnSwitch } from './world_scope.js';
+import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket } from './world_scope.js';
 
 // ★2026-08-07 路径统一: 本文件所有监工状态文件原来都是裸相对 'bots/_supervisor/xxx' (相对 CWD)。
 // 分发包里代码在 <包根>/app/、CWD 在 <包根>, 靠 bootstrap 的 chdir 才勉强对得上 —— 但那是兜底网,
@@ -401,11 +401,13 @@ export class Agent {
     // edits. Pure-additive, swallow all errors — a miss just leaves the old behavior, never worse.
     async _archiveStaleWorldStateOnSwitch() {
         // logic lives in world_scope.js so test/world_scope.test.mjs can pin it (T-0065)
-        return archiveStaleWorldStateOnSwitch(this.bot, { sup: SUP });
+        return archiveStaleWorldStateOnSwitch(this.bot, { sup: SUP, worldId: this.bot && this.bot._worldId });
     }
 
     async initBot() {
         this.bot = initBot(this.name);
+        // T-0065: 世界身份 = 原始 login 包的 hashedSeed (mineflayer 不存它), 供换世界检测用。
+        try { const b = this.bot; b._client.once('login', (p) => { b._worldId = worldIdFromLoginPacket(p); }); } catch (e) {}
         this._stampBotEpoch();
         this._disconnectHandled = false;
         
@@ -594,7 +596,10 @@ export class Agent {
                 // bed anchor are world-LOCAL but persisted GLOBALLY — on a fresh world they poison
                 // death-zone & site-scoring with PHANTOM hazards from the previous world (用户实证: 新
                 // 世界开局乱挖+横跳, 129 旧死有 54 条落在新生点 16 格内 → chopWood 死区误判 → 无限背撤).
-                // No world seed is exposed (this mineflayer's game.js sets no hashedSeed) and this LAN
+                // ★2026-10-09: the raw login packet DOES carry worldState.hashedSeed (mineflayer just doesn't
+                // keep it) — now captured as bot._worldId and used as the primary signal (world_scope.js).
+                // The naked heuristic below remains only as the fallback when no seed is on record.
+                // (Original note:) No world seed is exposed (this mineflayer's game.js sets no hashedSeed) and this LAN
                 // server pins bot.spawnPoint to (0,0), so neither seed nor spawn-coord identifies the
                 // world. The robust available signal: a SAME-world process reconnect PRESERVES the
                 // inventory (the world save persists player data — confirmed live: a reboot reconnect

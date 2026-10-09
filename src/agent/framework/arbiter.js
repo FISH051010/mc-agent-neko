@@ -67,14 +67,32 @@ export function releaseBodyOwner(bot, name) {
     } catch (e) {}
 }
 
+/** 身体此刻是否真的在被驱动 (寻路在走/有寻路目标/正在挖/有按键/在用手上物品)。 */
+export function bodyBusy(bot) {
+    try {
+        if (!bot) return false;
+        const pf = bot.pathfinder;
+        if (pf && ((typeof pf.isMoving === 'function' && pf.isMoving()) || pf.goal)) return true;
+        if (bot.targetDigBlock) return true;
+        if (bot.usingHeldItem) return true;
+        const cs = bot.controlState || {};
+        for (const k of Object.keys(cs)) if (cs[k]) return true;
+    } catch (e) {}
+    return false;
+}
+
 /** 当前身体持有者 — bot._bodyOwner 优先; ws/watchdog 等只置 supervised_skill 不置
- *  令牌的旧路径, 从 owner-tag 合成家族名 (`ws:*`), Phase 2 给它们补真令牌。 */
+ *  令牌的旧路径, 从 owner-tag 合成家族名 (`ws:*`), Phase 2 给它们补真令牌。
+ *  ★T-0112 (2026-10-09): 合成持有者只在身体真忙时成立。kernelDriver 以 ws run_skill 常驻,
+ *  supervised_skill='ws' 永真; kernel 每次派发结束释放真令牌后, 这里旧逻辑仍合成出 `ws:*`
+ *  —— 一个什么都没在做的"幽灵持有者"。新世界开局实录: bot 卡在树冠 MAROONED, mobility 救援
+ *  12 次撞上 ws:*, LLM 4s 次次超时 → 回退 holder → 2 分钟谁都不动。空闲的身体没有主人。 */
 export function currentOwner(agent) {
     try {
         const bot = agent && agent.bot;
         if (bot && bot._bodyOwner && bot._bodyOwner.name) return bot._bodyOwner;
         const tag = agent && agent.supervised_skill;
-        if (tag) return { name: `${tag}:*`, kind: 'skill', since: 0 };
+        if (tag && bodyBusy(bot)) return { name: `${tag}:*`, kind: 'skill', since: 0 };
     } catch (e) {}
     return null;
 }

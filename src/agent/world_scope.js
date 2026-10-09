@@ -25,6 +25,34 @@ export function newestDeathSummary(deathLogText, pos, now = Date.now()) {
     return { ageMin, near, n: lines.length };
 }
 
+// ★T-0065 扩展 (2026-10-09 新世界实录): 旧清单只有 death_log/landmarks/bed, 新世界开局后
+// stations.json 仍留着旧世界 223 个工作台/熔炉坐标、spawn_pos/bank/migrate_state 也全是旧坐标。
+// 凡是"世界局部、但全局持久化"的坐标态都在这里登记一次, 换世界时整体归档。
+export const WORLD_SCOPED_FILES = [
+    'death_log.jsonl', 'landmarks.json', 'bed.json',
+    'stations.json', 'spawn_pos.json', 'home.json', 'death_pos.json',
+    'bank.json', 'bank_ghost.json', 'migrate_state.json', 'prep_water.json', 'oak_apple_backoff.json',
+];
+export const WORLD_ID_FILE = 'world_id.json';
+
+// 世界身份 = 登录包 worldState.hashedSeed (种子的 SHA-256 截断, 每个世界唯一; mineflayer 的
+// game.js 不存它, 所以要从 bot._client 的原始 login 包里拿)。i64 可能是 [hi,lo] 数组或 BigInt。
+export function worldIdFromLoginPacket(packet) {
+    try {
+        const ws = (packet && (packet.worldState || packet)) || {};
+        const h = ws.hashedSeed;
+        if (h === undefined || h === null) return null;
+        return Array.isArray(h) ? h.join(':') : String(h);
+    } catch (e) { return null; }
+}
+
+// 有可靠世界身份时以它为准: 变了=换世界(不管背包), 没变=同一世界(绝不归档)。
+// 任一侧缺失 (首次部署/旧版本没记过/包里没字段) → null, 调用方退回裸装启发式。
+export function decideBySeed(storedId, currentId) {
+    if (!storedId || !currentId) return null;
+    return storedId !== currentId;
+}
+
 // Guard (b): a SAME-world bot that died naked moments ago keeps its log (still relevant).
 export function shouldArchiveStaleWorld(recent) {
     if (!recent || recent.n < 1) return false;                 // nothing to contaminate
@@ -32,7 +60,37 @@ export function shouldArchiveStaleWorld(recent) {
     return true;
 }
 
-export async function archiveStaleWorldStateOnSwitch(b, { sup, delayMs = 5000, now = () => Date.now() } = {}) {
+function readStoredWorldId(sup) {
+    try { return JSON.parse(fs.readFileSync(sup(WORLD_ID_FILE), 'utf8').replace(/^﻿/, '')).id || null; } catch (e) { return null; }
+}
+function writeWorldId(sup, id, now) {
+    if (!id) return;
+    try { fs.writeFileSync(sup(WORLD_ID_FILE), JSON.stringify({ id, seenAt: new Date(now()).toISOString() })); } catch (e) {}
+}
+function archiveFiles(sup, now) {
+    const ts = new Date(now()).toISOString().replace(/[-:T]/g, '').slice(0, 15);
+    const archived = [];
+    for (const f of WORLD_SCOPED_FILES) {
+        try { if (fs.existsSync(sup(f))) { fs.renameSync(sup(f), sup(`${f}.${ts}.oldworld`)); archived.push(f); } } catch (e) {}
+    }
+    return archived;
+}
+
+export async function archiveStaleWorldStateOnSwitch(b, { sup, delayMs = 5000, now = () => Date.now(), worldId = null } = {}) {
+    const bySeed = decideBySeed(readStoredWorldId(sup), worldId);
+    if (bySeed !== null) {
+        writeWorldId(sup, worldId, now);
+        if (!bySeed) return null;                               // same world (seed matches) → never reset
+        const archived = archiveFiles(sup, now);
+        try {
+            fs.appendFileSync(sup('progress.txt'),
+                `[${new Date(now()).toISOString()}] [world-scope] ★C333 NEW-WORLD by seed (hashedSeed changed → ${worldId}) → archived ${archived.join(',') || 'none'}
+`);
+        } catch (e) {}
+        console.log(`🌍 C333 world-switch (seed changed): archived stale coordinate state [${archived.join(',')}]`);
+        return { archived, recent: null, by: 'seed' };
+    }
+    writeWorldId(sup, worldId, now);                           // first sighting: remember it for next time
     if (!isNakedFreshCharacter(b.inventory)) return null;     // has gear → same-world reconnect, never reset
     // (a) defeat inventory LOAD-LAG: a real fresh char is still naked after 5s; lag has resolved by then.
     await new Promise((r) => setTimeout(r, delayMs));
@@ -42,17 +100,13 @@ export async function archiveStaleWorldStateOnSwitch(b, { sup, delayMs = 5000, n
         recent = newestDeathSummary(fs.readFileSync(sup('death_log.jsonl'), 'utf8'), b.entity && b.entity.position, now());
     } catch (e) { recent = null; }
     if (!shouldArchiveStaleWorld(recent)) return null;
-    const ts = new Date(now()).toISOString().replace(/[-:T]/g, '').slice(0, 15);
-    const archived = [];
-    for (const f of ['death_log.jsonl', 'landmarks.json', 'bed.json']) {
-        try { if (fs.existsSync(sup(f))) { fs.renameSync(sup(f), sup(`${f}.${ts}.oldworld`)); archived.push(f); } } catch (e) {}
-    }
+    const archived = archiveFiles(sup, now);
     try {
         fs.appendFileSync(sup('progress.txt'),
             `[${new Date(now()).toISOString()}] [world-scope] ★C333 NEW-WORLD detected (naked fresh char, armor=0/tools=0; newest death ${recent.ageMin.toFixed(0)}min ago near=${recent.near}) → archived ${archived.join(',') || 'none'} (phantom-hazard reset)\n`);
     } catch (e) {}
     console.log(`🌍 C333 world-switch: archived stale coordinate state [${archived.join(',')}] — naked fresh character, old log won't poison death-zones`);
-    return { archived, recent };
+    return { archived, recent, by: 'naked' };
 }
 
 export const supIn = (dir) => (...segs) => path.join(dir, ...segs);

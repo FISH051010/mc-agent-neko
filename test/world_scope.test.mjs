@@ -80,3 +80,46 @@ test('C333: no death_log → nothing to archive', async () => {
     assert.equal(await run(bot(makeInv()), s.sup), null);
     assert.equal(s.has('landmarks.json'), true);
 });
+
+// ── 2026-10-09 扩展: 世界身份改用登录包 hashedSeed + 清单补全 ──────────────────────────────
+import { worldIdFromLoginPacket, WORLD_SCOPED_FILES, WORLD_ID_FILE } from '../src/agent/world_scope.js';
+
+const runSeed = (b, sup, worldId) => archiveStaleWorldStateOnSwitch(b, { sup, delayMs: 0, now: () => NOW, worldId });
+const geared = () => makeInv({ items: [{ name: 'iron_pickaxe', count: 1 }], armor: { 5: 'iron_helmet' } });
+
+test('T-0065: seed changed → archive ALL world-scoped coordinate state, even when geared and with no death_log', async () => {
+    const s = makeSup(null);
+    fs.writeFileSync(path.join(s.dir, WORLD_ID_FILE), JSON.stringify({ id: 'old-seed' }));
+    for (const f of ['stations.json', 'spawn_pos.json', 'bank.json', 'migrate_state.json']) fs.writeFileSync(path.join(s.dir, f), '{}');
+    const r = await runSeed(bot(geared()), s.sup, 'new-seed');
+    assert.equal(r.by, 'seed');
+    for (const f of ['stations.json', 'spawn_pos.json', 'bank.json', 'migrate_state.json', 'landmarks.json', 'bed.json']) {
+        assert.equal(s.has(f), false, `${f} must be archived on a world switch`);
+    }
+    assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, WORLD_ID_FILE), 'utf8')).id, 'new-seed');
+});
+
+test('T-0065: same seed → never archive, even a naked character with an old far death_log', async () => {
+    const s = makeSup([{ ts: minsAgo(600), x: 500, z: 500 }]);
+    fs.writeFileSync(path.join(s.dir, WORLD_ID_FILE), JSON.stringify({ id: 'seed-A' }));
+    assert.equal(await runSeed(bot(makeInv()), s.sup, 'seed-A'), null);
+    assert.equal(s.has('death_log.jsonl'), true);
+});
+
+test('T-0065: first sighting of a seed records it and falls back to the naked heuristic', async () => {
+    const s = makeSup(null);
+    assert.equal(await runSeed(bot(geared()), s.sup, 'seed-B'), null);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, WORLD_ID_FILE), 'utf8')).id, 'seed-B');
+});
+
+test('T-0065: world id is read from the raw login packet (worldState.hashedSeed, i64 as [hi,lo] or bigint)', () => {
+    assert.equal(worldIdFromLoginPacket({ worldState: { hashedSeed: [12, 34] } }), '12:34');
+    assert.equal(worldIdFromLoginPacket({ worldState: { hashedSeed: 99n } }), '99');
+    assert.equal(worldIdFromLoginPacket({ hashedSeed: [1, 2] }), '1:2');
+    assert.equal(worldIdFromLoginPacket({}), null);
+    assert.equal(worldIdFromLoginPacket(null), null);
+});
+
+test('T-0065: stations.json is world-scoped (old world left 223 phantom tables/furnaces behind)', () => {
+    for (const f of ['stations.json', 'spawn_pos.json', 'bank.json', 'migrate_state.json']) assert.ok(WORLD_SCOPED_FILES.includes(f), f);
+});
