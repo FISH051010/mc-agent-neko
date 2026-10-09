@@ -24,7 +24,7 @@ test('T-0060: 3 木镐 + 木料 + 0 台 + 0 圆石 → 必须提 TOOL_UPKEEP 只
     const w = dayWorld({ picks: 3, pickTier: 'wood', sufficientForUnderground: false });
     const tu = proposeTasks(w, bot).find(p => p.kind === 'TOOL_UPKEEP');
     assert.ok(tu, 'TOOL_UPKEEP proposed');
-    assert.deepEqual(tu.args[0], [['crafting_table', 1]], 'only the wood-affordable table; no stone pick without cobble');
+    assert.deepEqual(tu.args[0], [['spruce_planks', 1], ['crafting_table', 1]], 'fold logs→planks, then the table; no stone pick without cobble');
     assert.equal(isGoalDone('TOOL_UPKEEP', w, bot), false, 'not "done" while the table is still craftable and missing');
 });
 
@@ -45,5 +45,11 @@ test('T-0060: 全套造得起时行为不变 (台+棍+石镐一起造)', () => {
     const inv = { wooden_pickaxe: 1, oak_log: 4, cobblestone: 5 };
     const { wants, partial } = toolUpkeepPlan({ picks: 1, pickTier: 'wood', counts: inv, woodUnits: woodOf(inv) });
     assert.equal(partial, false);
-    assert.deepEqual(wants.map(w => w[0]), ['crafting_table', 'stick', 'stone_pickaxe']);
+    assert.deepEqual(wants.map(w => w[0]), ['oak_planks', 'crafting_table', 'stick', 'stone_pickaxe']);
+});
+
+test('T-0060: 只揣原木 0 板 → 清单首步必须折够板 (craftChain 只折清单里列出的板; 16:23 实录 3 连败→冷却)', () => {
+    const inv = { wooden_pickaxe: 3, spruce_log: 11, stick: 2 };   // 16:23 live
+    const { wants } = toolUpkeepPlan({ picks: 3, pickTier: 'wood', counts: inv, woodUnits: woodOf(inv) });
+    assert.deepEqual(wants, [['spruce_planks', 2], ['crafting_table', 1], ['stick', 1]], '4 (table) + 2 (sticks) = 6 planks = 2 folds');
 });

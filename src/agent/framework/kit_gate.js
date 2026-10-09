@@ -23,6 +23,16 @@ export function undergroundKitGate({ picks, durablePick, counts }) {
 // 返回 wants=[] 表示没有可执行的维护 (proposal 不提 / isGoalDone 视为完成)。
 const PICK_DURABLE_RE = /stone|iron|diamond|netherite/;
 const woodCost = (ws) => ws.reduce((s, [n]) => s + (n === 'crafting_table' ? 4 : n === 'stick' ? 2 : 0), 0);
+// craftChain 只在清单里列出 *_planks 时才折板 (STEP 1) — 只揣原木时台/棍必失败 (10-10 16:23 实录 3 连败→冷却)。
+// 板不够就在清单最前补「主力木种折板」步: 1 次合成 = 4 板。
+function withPlanks(wants, counts) {
+    const need = woodCost(wants);
+    const planks = Object.keys(counts).filter(k => k.endsWith('_planks')).reduce((s, k) => s + (counts[k] || 0), 0);
+    if (need <= planks) return wants;
+    const logs = Object.keys(counts).filter(k => k.endsWith('_log') && counts[k] > 0).sort((a, b) => counts[b] - counts[a]);
+    if (!logs.length) return wants;
+    return [[logs[0].replace(/_log$/, '_planks'), Math.ceil((need - planks) / 4)], ...wants];
+}
 export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
     counts = counts || {};
     const cobble = (counts['cobblestone'] || 0) + (counts['cobbled_deepslate'] || 0);
@@ -35,14 +45,14 @@ export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
     if (!durable || picks < 2) wants.push(['stone_pickaxe', 1]);
     const needsCobble = wants.some(([n]) => n === 'stone_pickaxe');
     if (wants.length && (!needsCobble || cobble >= 3) && woodUnits >= Math.max(2, woodCost(wants)))
-        return { wants, partial: false };
+        return { wants: withPlanks(wants, counts), partial: false };
     const sub = wants.filter(([n]) => n !== 'stone_pickaxe');
     if (sub.length && sub.length < wants.length && woodUnits >= Math.max(2, woodCost(sub))) {
         const after = { ...counts };
         if (sub.some(([n]) => n === 'crafting_table')) after['crafting_table'] = (after['crafting_table'] || 0) + 1;
         if (sub.some(([n]) => n === 'stick')) after['stick'] = sticks + 4;
         if (undergroundKitGate({ picks, durablePick: durable, counts: after }).sufficientForUnderground)
-            return { wants: sub, partial: true };
+            return { wants: withPlanks(sub, counts), partial: true };
     }
     return { wants: [], partial: false };
 }
