@@ -98,6 +98,36 @@ export function noopEscapePlan(w) {
     return null;
 }
 
+// ★T-0115 DISPATCH-FAILURE COOLDOWN for the LIVE dispatcher. The 3-strike → 5-min kind cooldown
+// (bot._kindCooldownUntil, filtered by world_model.proposeTasks) was only ever stamped by
+// framework/kernel.js _settleDispatch — but kernelDriver is the dispatcher actually running, and it
+// discarded every child's return value. So a skill honestly returning {failed:true} ("NO-OP ... failed
+// for kernel cooldown") got re-dispatched every 1.5s forever (live 10-10: GET_BED→prepNether no-op;
+// progress history: ★dispatch-cooldown 0×, prepNether NO-OP 2474×), leaving only the 90s NO-OP-SPIN
+// escape that marches the bot away. Same contract as kernel.js: strict false / {ok:false} /
+// {failed:true} / threw = failure; a supervisor-cancel or interrupt unwind is NOT a strike (neither
+// strike nor reset); success resets the kind's streak. Streaks live on the bot (survive hot-reload).
+export const DISPATCH_FAIL_LIMIT = 3;
+export const DISPATCH_COOLDOWN_MS = 300000;
+const SUPERVISOR_CANCEL_WINDOW_MS = 30000;
+export function isDispatchFailure(res, threw) {
+    return !!threw || res === false || !!(res && typeof res === 'object' && (res.ok === false || res.failed === true));
+}
+export function settleDispatch(bot, kind, res, { threw = false, interrupted = false, now = Date.now() } = {}) {
+    if (!bot || !kind) return { failed: false, cooled: false, strikes: 0 };
+    const fails = bot._kdDispatchFails || (bot._kdDispatchFails = {});
+    if (!isDispatchFailure(res, threw)) { fails[kind] = 0; return { failed: false, cooled: false, strikes: 0 }; }
+    const cancelUnwind = !!bot._supervisorCancelAt && now - bot._supervisorCancelAt < SUPERVISOR_CANCEL_WINDOW_MS;
+    if (cancelUnwind || interrupted) return { failed: true, cooled: false, strikes: fails[kind] || 0, unwind: true };
+    fails[kind] = (fails[kind] || 0) + 1;
+    if (fails[kind] < DISPATCH_FAIL_LIMIT) return { failed: true, cooled: false, strikes: fails[kind] };
+    fails[kind] = 0;
+    const cd = bot._kindCooldownUntil || (bot._kindCooldownUntil = {});
+    cd[kind] = now + DISPATCH_COOLDOWN_MS;
+    if (bot._commitment && bot._commitment.kind === kind) bot._commitment = null;
+    return { failed: true, cooled: true, strikes: DISPATCH_FAIL_LIMIT };
+}
+
 export default async function kernelDriver(bot, ctx) {
     const { skills, world } = ctx;
     const has = (n) => { try { return world.getInventoryCounts(bot)[n] || 0; } catch (e) { return 0; } };
@@ -203,6 +233,7 @@ export default async function kernelDriver(bot, ctx) {
             // an emergency HOLD — raise interrupt_code so the child (migrate/mineDown/… all honor
             // it) bails promptly and we re-dispatch the NEW goal, instead of blocking to completion
             // and running the wrong task into the night. The loop-top consumes the interrupt.
+            let flipped = false;
             const _watch = setInterval(() => {
                 try {
                     const nc = bot._commitment;
@@ -210,18 +241,26 @@ export default async function kernelDriver(bot, ctx) {
                     const kindFlip = nc.kind && nc.kind !== startKind;
                     const idFlip = (nc.id != null && startId != null && nc.id !== startId);   // Phase C: head swapped (maybe same skill)
                     if (kindFlip || idFlip) {
+                        flipped = true;
                         prog(`commitment flipped ${startKind || '?'}${startId ? '/' + startId : ''}→${nc.kind}${nc.id ? '/' + nc.id : ''} mid-child → interrupt ${c.skill} to re-dispatch`);
                         bot.interrupt_code = true;
                     }
                 } catch (e) {}
             }, 1000);
+            let childRes, childThrew = false;
             try {
-                await skills.customSkill(bot, c.skill, ...args);
+                childRes = await skills.customSkill(bot, c.skill, ...args);
             } catch (e) {
+                childThrew = true;
                 prog(`child ${c.skill} threw: ${e.message}`);
             } finally {
                 clearInterval(_watch);
             }
+            // ★T-0115: honor the child's verdict — 3 consecutive failures of this kind → 5-min cooldown + release.
+            try {
+                const st = settleDispatch(bot, startKind, childRes, { threw: childThrew, interrupted: flipped || !!bot.interrupt_code });
+                if (st.cooled) prog(`★dispatch-cooldown ${startKind} via ${c.skill}: failed ${DISPATCH_FAIL_LIMIT}x consecutively — suppressing ${startKind} proposals ${DISPATCH_COOLDOWN_MS / 60000}min + releasing commitment`);
+            } catch (e) {}
             // Child returned (done / cancelled / errored) — reset so the same commitment
             // re-dispatches on the next loop, and a changed commitment dispatches fresh.
             lastSkill = null;
