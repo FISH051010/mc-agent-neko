@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining } from './framework/night_owner.js';
@@ -4437,9 +4437,27 @@ const modes_list = [
             };
             const guardedDig = async (block, why = '') => {
                 if (!block) return false;
-                const owner = `mobility:${why || 'dig'}`;
+                // ★T-0174: drowning promotes ANY mobility dig to a rescue dig (owner 'mobility:DROWN-<why>').
+                let _drown = false;
+                try {
+                    const _fp = bot.entity.position.floored();
+                    _drown = skills.drowningPriority({ headInWater: /water/.test((bot.blockAt(_fp.offset(0, 1, 0)) || {}).name || ''), oxygen: bot.oxygenLevel });
+                } catch (e) {}
+                const owner = _drown ? `mobility:DROWN-${why || 'dig'}` : `mobility:${why || 'dig'}`;
+                const _rescue = isRescueDig(owner, _drown);
                 const acquire = async () => {
                     const t0 = Date.now();
+                    // ★T-0174 dig-slot rule (mobility_signals.rescueMayPreempt): a rescue dig (ENTOMBED/SEALED escape,
+                    // drowning) outranks any task dig holding the slot (death #10: mineDown kept chipping stone
+                    // underwater, 'dig slot busy' ×6, drowned) → stopDigging + take the slot.
+                    const _busy0 = bot.targetDigBlock || (bot._bodyDigLockUntil && Date.now() < bot._bodyDigLockUntil && bot._bodyDigLockOwner !== owner);
+                    if (_busy0 && rescueMayPreempt({ claimantOwner: owner, drowning: _drown, holderOwner: bot._bodyDigLockOwner })) {
+                        try { bot.stopDigging(); } catch (e) {}
+                        bot._bodyDigLockOwner = owner;
+                        bot._bodyDigLockUntil = Date.now() + 6000;
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★rescue dig preempts task dig (${owner}, O2=${bot.oxygenLevel}, was ${bot.targetDigBlock ? 'targetDigBlock' : '-'}) (T-0174)\n`); } catch (e) {}
+                        return true;
+                    }
                     while (Date.now() - t0 < 900) {
                         const busy = bot.targetDigBlock || (bot._bodyDigLockUntil && Date.now() < bot._bodyDigLockUntil);
                         if (!busy || bot._bodyDigLockOwner === owner) {
@@ -4456,6 +4474,7 @@ const modes_list = [
                     return false;
                 };
                 if (!(await acquire())) return false;
+                if (_rescue) bot._rescueDigToken = owner;   // ★T-0174: our own digs pass the rescue slot lock in the bot.dig gate
                 try {
                     for (let n = 0; n < 2; n++) {
                         const fresh = bot.blockAt(block.position);
@@ -4528,6 +4547,7 @@ const modes_list = [
                     }
                     return false;
                 } finally {
+                    if (bot._rescueDigToken === owner) bot._rescueDigToken = null;
                     if (bot._bodyDigLockOwner === owner) {
                         bot._bodyDigLockOwner = null;
                         bot._bodyDigLockUntil = 0;
@@ -5395,6 +5415,15 @@ const modes_list = [
                         }
                     }
                 }
+                // ★T-0174 RESCUE SLOT LOCK: while a rescue dig (ENTOMBED/SEALED escape, drowning) holds the dig slot,
+                //   refuse any OTHER dig — the task the rescue just preempted would otherwise restart its dig next tick.
+                try {
+                    if (taskDigBlockedByRescue({ slotOwner: bot._bodyDigLockOwner, slotUntil: bot._bodyDigLockUntil, rescueToken: bot._rescueDigToken })) {
+                        const err = new Error(`rescue dig holds the slot (${bot._bodyDigLockOwner}) — task dig refused`);
+                        write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
+                        throw err;
+                    }
+                } catch (e) { if (/rescue dig holds the slot/.test(e && e.message || '')) throw e; }
                 // ★T-0172③ OVERHEAD-GRAVITY 总闸 (重力族第 4 次换入口出事后的收口: death #3 SEALED / #7 mineDown /
                 //   #9 surfaceUp+窒息自救; 普查 11 处挖头顶/挖了往上爬的调用点无重力检查)。挖 bot 身体所占列脚上方
                 //   2..4 格、且其本身或上方 3 格有重力块 = 整列塌进身上 → 拒挖 (throw, 调用方按挖掘失败换路/横挪)。

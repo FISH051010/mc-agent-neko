@@ -27,6 +27,24 @@ export function noteSkillDig(bot, actionLabel, now = Date.now()) {
     bot._lastSkillDigAt = now;
 }
 
+// ★T-0174 挖掘槽统一规则 (death #10 溺死 + T-0163 同类抢槽): 救命类挖掘 (ENTOMBED/SEALED 脱困、溺水中、
+//   窒息自救) 可以抢断任何任务类挖掘 —— 对当前挖掘 stopDigging 并接管槽位; 救命挖掘持槽期间 bot.dig 总闸
+//   拒绝新的任务挖掘 (否则任务被打断后下一拍又开挖)。救命挖掘自身带 bot._rescueDigToken 放行。
+//   槽位约定沿用 T-0121/T-0163: bot._bodyDigLockOwner ('mobility:<why>' / 'unstuck:<why>' = 反射, 其余 = 技能)。
+export const RESCUE_DIG_RE = /^mobility:(ENTOMBED|SEALED|SUFFOC|DROWN)/;
+export function isRescueDig(owner, drowning = false) {
+    return !!drowning || RESCUE_DIG_RE.test(String(owner || ''));
+}
+/** 救命挖掘申请槽位时能否抢断当前持有者: 自己是救命挖掘, 且持有者不是救命挖掘 (救命之间不互抢)。 */
+export function rescueMayPreempt({ claimantOwner, drowning, holderOwner }) {
+    return isRescueDig(claimantOwner, drowning) && !RESCUE_DIG_RE.test(String(holderOwner || ''));
+}
+/** bot.dig 总闸: 救命挖掘持槽且未过期时, 不带救命令牌的挖掘一律拒绝。 */
+export function taskDigBlockedByRescue({ slotOwner, slotUntil, now = Date.now(), rescueToken }) {
+    if (rescueToken) return false;
+    return RESCUE_DIG_RE.test(String(slotOwner || '')) && Number(slotUntil) > now;
+}
+
 // ★T-0123 挖出 burst 截止时间: ENTOMBED/SEALED 的单次 burst (≤2-3 次挖, 每次挖自带 ≤20s 超时) 里还有
 // bot.equip / bot.tool.equipForBlock / lookAt 这类无超时 await — 背包事务不同步时 equip 永不 resolve。
 // 实录 10-10 17:00:48: "Entombed — digging out!" 之后再无 "Mode mobility finished" → mobility 一直 active →

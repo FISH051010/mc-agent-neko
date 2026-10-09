@@ -667,6 +667,16 @@ export default async function mineDown(bot, ctx, opts = {}) {
     for (let i = 0; i < steps; i++) {
         const cur = bot.entity.position;
         const cy = Math.round(cur.y);
+        // ★T-0174: head under water / air running out → stop mining NOW, give the body to the swim/escape
+        // reflexes (death #10: kept chipping stone underwater while the rescue dig couldn't get the slot).
+        try {
+            const _hb = bot.blockAt(cur.floored().offset(0, 1, 0));
+            if (skills.drowningPriority && skills.drowningPriority({ headInWater: /water/.test((_hb && _hb.name) || ''), oxygen: bot.oxygenLevel })) {
+                rememberAbortedHeading(bot, sx, sz);
+                abort = `head in water / O2=${bot.oxygenLevel} — stop mining, yield to swim/escape (T-0174)`;
+                break;
+            }
+        } catch (e) {}
         if (cy <= targetY + DESCEND_TOLERANCE) {
             // ★AT-DEPTH NO-OP FREEZE FIX (live y12 pin 450s+): mineDown ONLY descends, so once it reaches
             //   targetY it returns instantly and the proposer (GO_UNDERGROUND/DUSK_MINE_NIGHT) re-dispatches

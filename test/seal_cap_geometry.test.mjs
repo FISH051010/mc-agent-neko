@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon, suffocationEscapeDir, overheadGravityRisk } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket, gravityOverColumn, awaitCapMaterial, escapeDigPlan, marchStepClimbable, climbLanded, unarmedSoloMeleeExempt, fallbackPickWeapon, suffocationEscapeDir, overheadGravityRisk, drowningPriority } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -246,4 +246,29 @@ test('T-0172③: master dig gate refuses digging a gravity column standing over 
     assert.equal(overheadGravityRisk(col({ '12,47,20': 'gravel' }), pos, new Vec3(12, 47, 20)), false);
     // straddling a cell edge (x=10.75 → body spans x10..11): the neighbouring column counts
     assert.equal(overheadGravityRisk(col({ '11,47,20': 'gravel' }), new Vec3(10.75, 45, 20.5), new Vec3(11, 47, 20)), true);
+});
+
+test('T-0174: drowning outranks task digging (death #10: mineDown held the dig slot underwater, rescue got "dig slot busy" ×6)', () => {
+    assert.equal(drowningPriority({ headInWater: true, oxygen: 20 }), true, 'head under water → rescue first');
+    assert.equal(drowningPriority({ headInWater: false, oxygen: 8 }), true, 'air running out');
+    assert.equal(drowningPriority({ headInWater: false, oxygen: 20 }), false);
+    assert.equal(drowningPriority({ headInWater: false, oxygen: undefined }), false);
+});
+
+test('T-0174: dig-slot rule — rescue digs preempt task digs; while a rescue holds the slot, other digs are refused', async () => {
+    const { isRescueDig, rescueMayPreempt, taskDigBlockedByRescue } = await import('../src/agent/framework/mobility_signals.js');
+    assert.equal(isRescueDig('mobility:ENTOMBED'), true);
+    assert.equal(isRescueDig('mobility:SEALED-up'), true);
+    assert.equal(isRescueDig('mobility:MAROONED'), false, 'road-building march is not a rescue');
+    assert.equal(isRescueDig('mobility:MAROONED', true), true, 'but drowning promotes it');
+    // death #10: mineDown's dig (no slot owner, targetDigBlock) vs ENTOMBED rescue
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:ENTOMBED', drowning: true, holderOwner: null }), true);
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:SEALED', drowning: false, holderOwner: 'branchMine:ore-window' }), true, 'T-0163 shape');
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:SEALED', drowning: false, holderOwner: 'mobility:ENTOMBED' }), false, 'rescues never fight each other');
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:MAROONED', drowning: false, holderOwner: 'branchMine:ore-window' }), false);
+    const now = 1000;
+    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:ENTOMBED', slotUntil: 5000, now }), true, 'task dig refused while rescue holds');
+    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:ENTOMBED', slotUntil: 5000, now, rescueToken: 'mobility:ENTOMBED' }), false, 'the rescue itself digs');
+    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:ENTOMBED', slotUntil: 500, now }), false, 'expired lock');
+    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:MAROONED', slotUntil: 5000, now }), false);
 });

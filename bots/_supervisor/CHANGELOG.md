@@ -12,7 +12,15 @@
 
 ---
 
-## C372. ★★重力族收口: bot.dig 总闸拒挖"压在自己头顶的重力列"（modes.js bot.dig master gate + skills.overheadGravityRisk 需重启,T-0172③,worker-death,⏳待重启）
+## C373. ★★挖掘槽统一规则: 救命挖掘抢断任务挖掘 + 救命持槽期间拒绝任务挖掘; mineDown 头进水即停（modes.js guardedDig/bot.dig 总闸 + framework/mobility_signals 规则 + skills.drowningPriority 需重启; mineDown.js 热加载,T-0174,worker-death,⏳待重启）
+
+**证据**: death #10 10-09 22:04:16Z `drowning` @~32,38,-8 skill=mineDown(GO_UNDERGROUND)。22:03:52 →SWIM, 22:04:05 →ENTOMBED, 22:04:06-14 `[mobility] dig slot busy (ENTOMBED) … heldBy=targetDigBlock` ×6, act_trace 全程 dig stone(mineDown 在水下慢挖); hp 18→6→0。mineDown DONE 另记 "pick about to break + no replacement"(镐将坏 = 水下挖不动的放大因素)。同类第二次: T-0163(SEALED 脱困 vs branchMine 抢槽)。
+**机理**: 优先级倒置 —— guardedDig acquire 遇占槽只等 900ms 后放弃, 不区分自己是不是救命挖掘; 任务挖掘(mineDown/chopWood/breakBlockAt 直调 bot.dig, 不占槽只体现为 targetDigBlock)被打断后下一拍会重开。
+**改动**: framework/mobility_signals.js 规则(纯函数): `RESCUE_DIG_RE=/^mobility:(ENTOMBED|SEALED|SUFFOC|DROWN)/`, `isRescueDig`, `rescueMayPreempt`(救命挖掘可抢非救命持有者; 救命之间不互抢), `taskDigBlockedByRescue`(救命持槽未过期 + 无救命令牌 → 拒)。skills.js `drowningPriority({headInWater, oxygen<12})`。modes guardedDig: 溺水时 owner 升格为 `mobility:DROWN-<why>`; 救命挖掘遇占槽 → stopDigging + 接管; 自身挖掘期间挂 `bot._rescueDigToken`, finally 清。bot.dig 总闸: taskDigBlockedByRescue → throw。mineDown 每步开头: 头在水里/O2 低 → 记 aborted heading 并中止让位。
+**可证伪预测**: 水下/被困时出 `★rescue dig preempts task dig (mobility:… O2=…) (T-0174)` 且不再出现 `dig slot busy (ENTOMBED|SEALED)` 连刷; mineDown 进水出 `head in water … stop mining, yield to swim/escape (T-0174)`。若任务技能在救命持槽期间反复 'rescue dig holds the slot' 抛错空转 → 锁 6s 自动过期, 观察是否需更短。
+**回滚**: revert, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0174: …' ×2。
+
+## C372. ★★重力族收口: bot.dig 总闸拒挖"压在自己头顶的重力列"（modes.js bot.dig master gate + skills.overheadGravityRisk 需重启,T-0172③,worker-death,🟡已上线 21:57:42Z）
 
 **证据**: 重力块致死已 4 次换入口(death #3 SEALED 脱困 C363 / #7 mineDown C367 / #9 surfaceUp C370 + 窒息自救 C371)。全仓普查(Explore agent)另有 11 处"挖头顶/挖了往上爬"调用点无重力检查: skills.pillarUp clearJumpColumn(goToSurface/溺水石穴/prepNether/slayDragon 共用)、stepEdgeAssist own-above-notch(goToGoal 卡住处理/branchMine)、placeBlockNearby 两处垫柱、chopWood digToSurface 簇(816/849/880/774/905/499)/LEASH coffin/pinned-stair、modes edge_unstick capped-head/headroom-break、unstuck step-edge notch、rubberband resync、self_preservation 溺水上挖+pillarUp; 另 mineflayer-pathfinder 自身挖路也走 bot.dig。
 **机理**: 每个调用点各写各的"挖头顶", 重力判据只在被死亡点名的那一处补过 —— 补丁永远追不上入口。所有挖掘最终都经 modes 的 bot.dig 总闸(C360-XR/PICK-TIER 已在此兜底), 判据应下沉到这里一份。

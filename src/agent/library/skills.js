@@ -6449,6 +6449,16 @@ export function breakWouldFlood(blockAt, pos) {
 }
 
 /**
+ * ★T-0174 (death #10 10-09 22:04:16 溺死 @y38): mineDown 进水后仍在水下挖石 (占着挖掘槽 targetDigBlock),
+ * mobility ENTOMBED 救援 'dig slot busy' ×6 拿不到槽 → 溺死。保命挖掘排在任务挖掘后面 = 优先级倒置。
+ * 人类: 憋不住气了立刻停下手里的活往外挖。判据: 头在水里, 或氧气 < 12 (满 20)。
+ */
+export function drowningPriority({ headInWater, oxygen }) {
+    if (headInWater) return true;
+    return Number.isFinite(oxygen) && oxygen < 12;
+}
+
+/**
  * ★T-0172 ③ 重力族总闸判据 (death #3/#7/#9 + 普查: 11 处"挖头顶/挖了往上爬"调用点无重力检查 —
  * pillarUp/goToSurface/stepEdgeAssist/placeBlockNearby 垫柱/chopWood digToSurface/edge_unstick/unstuck…)。
  * 被挖格在 bot 身体所占列 (碰撞箱 ±0.3) 的脚上方 2..4 格, 且它本身或其上 3 格内有重力块 → 挖了整列
