@@ -72,7 +72,7 @@ test('T-0189 补: 侦察段被反射叫停 ("Path was stopped") 不耗航点; �
     assert.ok(goals.length <= 4, `did not burn through waypoints (${goals.length} legs)`);
 });
 
-test('T-0191: 危急 (food≤3 或 hp≤6) 猎到生猪排 → 先生吃一块再烤 (不让全部生肉进炉、包里零可吃)', async () => {
+test('T-0191: 危急 (food≤3) 猎到生猪排 → 先生吃一块再烤 (不让全部生肉进炉、包里零可吃)', async () => {
     const order = [];
     const inv = {};
     const pig = { name: 'pig', position: V(1, 61, 0), isValid: true };

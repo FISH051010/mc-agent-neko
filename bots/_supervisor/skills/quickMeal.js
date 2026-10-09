@@ -236,8 +236,9 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     }
 
     // ①.5 ★T-0191 (23:38:53-23:39:35Z 实录: food 0 时猎到 3 猪排全拿去烤, 生肉进了炉包里零可吃, 饥饿掉血 hp 5→2 才烤好):
-    //   危急 (hp≤6 或 food≤3) 先生吃一块保命 (生猪排/牛/羊/兔安全; 生鸡肉排除, RAW 里的 chicken 不在此档), 剩下的再烤。
-    if ((bot.health <= 6 || bot.food <= 3) && skills.consume) {
+    //   危急 (food≤3; 饥饿掉血只在 food=0 发生, 不用绝对血量门 — 技能层禁绝对 hp 门) 先生吃一块保命
+    //   (生猪排/牛/羊/兔安全; 生鸡肉排除, RAW 里的 chicken 不在此档), 剩下的再烤。
+    if (bot.food <= 3 && skills.consume) {
         const rawSafe = ['porkchop', 'beef', 'mutton', 'rabbit'].find(n => (inv()[n] || 0) > 0);
         if (rawSafe) {
             prog(`critical (hp=${Math.round(bot.health)} food=${bot.food}) — eat 1 raw ${rawSafe} now, cook the rest`);
