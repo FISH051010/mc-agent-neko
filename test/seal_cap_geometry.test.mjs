@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Vec3 from 'vec3';
 import minecraftData from 'minecraft-data';
-import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter } from '../src/agent/library/skills.js';
+import { planOverheadCap, resolveCapBlock, isCapBlockName, isSealedPocket, breakWouldFlood, woodAboveReserve, entombedIsNightShelter, creeperResponseInPocket } from '../src/agent/library/skills.js';
 
 const registry = minecraftData('1.21.1');
 
@@ -120,4 +120,15 @@ test('T-0105: ENTOMBED in a breathable pocket at night = the shelter, not a buri
     assert.equal(entombedIsNightShelter({ ...base, headName: 'gravel' }), false, 'block in head = real burial');
     assert.equal(entombedIsNightShelter({ ...base, feetName: 'water' }), false, 'flooded pocket → escape');
     assert.equal(entombedIsNightShelter({ ...base, msSinceDamage: 800 }), false, 'taking damage → escape');
+});
+
+test('T-0127: creeper next to a 1×1 night pit — no horizontal exit means no "backoff" (02:12 hp1, 19× wedged)', () => {
+    // sealed pit: feet y66, head y67, roof y68 solid (ground top 68)
+    const sealed = world({ groundTop: 68, dug: col(0, 0, [66, 67]) });
+    assert.equal(creeperResponseInPocket(sealed, new Vec3(0, 66, 0)), 'hold');
+    // open-roofed 2-deep shaft: no side exit → cap it (bunker), don't run into the wall
+    const shaft = world({ groundTop: 67, dug: col(0, 0, [66, 67]) });
+    assert.equal(creeperResponseInPocket(shaft, new Vec3(0, 66, 0)), 'bunker');
+    // standing on open ground → running is possible
+    assert.equal(creeperResponseInPocket(world({ groundTop: 65 }), new Vec3(0, 66, 0)), 'backoff');
 });

@@ -12,6 +12,14 @@
 
 ---
 
+## C362. ★封闭坑里不对着墙"后撤"苦力怕: 无水平出口→封好就 hold / 没封就封顶（modes.js self_preservation 需重启,T-0127,worker-death,⏳待重启）
+
+**证据**(T-0127, worker-stuck 记录): 10-10 02:12-02:13 夜 @73,71,54 hp=1 food=0, 1×1 过夜坑内苦力怕 2.6-3.7 格, `creeper backoff wedged: stuck=8 … rotate=±0.96` 连刷 19 行(当晚累计 36; 17:30-17:33 同型 21 行), 位置不变, 18:13:19 才 `creeper backoff gated … emergency bunker/hold`。
+**机理**: 苦力怕反射在近距(≤5.5)时无条件进入 raw-sprint 后撤循环; 后撤要先连续 8 次零位移才转向、再撞满计数才 bunkerDown。坑里四面是墙, 后撤物理上不可能 → 在引信窗口里白白空转 ~25s。
+**改动**: skills.js 纯函数 `creeperResponseInPocket(blockAt, feet)`: 已是封闭口袋(顶+四墙)→'hold'; 无任何水平出口(脚/头两格都空的方向)→'bunker'; 否则 'backoff'。modes.js 苦力怕反射在 say('backing off') 之前判定, 非 backoff 直接 execute bunkerDown(封闭则 dwell/加深, 敞顶则 capOverhead 封顶), 5s 节流记 progress。
+**可证伪预测**: 坑内遇苦力怕出 `creeper … pocket has no horizontal exit → hold|bunker (no backoff, T-0127)`, 不再出现同一坐标连串 `creeper backoff wedged`。开阔地后撤行为不变。若出现"坑内被苦力怕炸死"→看当时是否敞顶且 capOverhead 失败(无料)。
+**回滚**: revert 本提交, 重启 main.js。回归 `test/seal_cap_geometry.test.mjs` 'T-0127: …'。
+
 ## C361. ★T-0089 回归补回: villageHarvest 每趟完成都写 _villageHarvestCooldownUntil（villageHarvest.js 热加载即生效,worker-tests,🟡已生效待观测)
 - **触发**: 补回归测试时发现 modes.js computeOpening 的 `!_villCooldown` 门读 `bot._villageHarvestCooldownUntil`，全仓 0 处写入——当年写戳的 villageHarvest 版本从未提交，现行 99 行重写版没有它。采空村 32b 内 opening.phase 永远 VILLAGE_HARVEST，只靠 kernel 3 连败冷却兜底。
 - **改动**: villageHarvest 完成一趟（有收获或采空零收获）后打 8min 冷却戳；夜间/有怪的让位不打。

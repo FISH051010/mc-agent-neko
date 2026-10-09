@@ -6356,6 +6356,19 @@ export function entombedIsNightShelter({ timeOfDay, feetName, headName, msSinceD
     return !(Number.isFinite(msSinceDamage) && msSinceDamage < 3000);   // 正在掉血(窒息/漏缝挨打) → 不算庇护
 }
 
+/**
+ * ★T-0127 (10-10 02:12 夜 @73,71,54 hp1: 1×1 过夜坑里苦力怕 2.6-3.7 格, 反射对着四面墙"后撤"
+ * 'creeper backoff wedged' 19 次/~25s 才落到 bunkerDown)。坑里没有水平出口时后撤物理上不可能。
+ * 人类: 坑已封好 → 待着(苦力怕看不见人不点火, 墙挡爆炸); 头顶还开着 → 先封顶; 有路才跑。
+ * @returns {'hold'|'bunker'|'backoff'}
+ */
+export function creeperResponseInPocket(blockAt, feet) {
+    if (isSealedPocket(blockAt, feet)) return 'hold';
+    const solid = (p) => _capSolid(blockAt(p));
+    const anyExit = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => !solid(feet.offset(dx, 0, dz)) && !solid(feet.offset(dx, 1, dz)));
+    return anyExit ? 'backoff' : 'bunker';
+}
+
 const FLUID_RE = /water|lava|kelp|seagrass|bubble_column/;
 /**
  * ★T-0105 溺死链: 挖掉 pos 处方块会不会把液体放进来 (其上方或四个水平邻格是液体)。

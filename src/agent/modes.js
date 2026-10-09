@@ -2193,6 +2193,25 @@ const modes_list = [
                     });
                     return;
                 }
+                // ★T-0127: in a pocket with no horizontal exit, "backing off" is physically impossible —
+                // the old path burned ~25s of 'creeper backoff wedged' (stuck counter) inside the fuse
+                // window before reaching bunkerDown. Sealed → hold (bunkerDown dwells in a real box);
+                // roof still open → bunkerDown caps it now. Only run when there is somewhere to run.
+                {
+                    let _cResp = 'backoff';
+                    try { _cResp = skills.creeperResponseInPocket((p) => bot.blockAt(p), bot.entity.position.floored()); } catch (e) {}
+                    if (_cResp !== 'backoff') {
+                        if (Date.now() - (this._creeperPocketLogAt || 0) > 5000) {
+                            this._creeperPocketLogAt = Date.now();
+                            try {
+                                fs.appendFileSync('bots/_supervisor/progress.txt',
+                                    `[${new Date().toISOString()}] [self_preservation] creeper ${cr0Dist.toFixed(1)}m but pocket has no horizontal exit → ${_cResp} (no backoff, T-0127) hp=${Math.round(bot.health)}\n`);
+                            } catch (e) {}
+                        }
+                        execute(this, agent, async () => { await this.bunkerDown(agent); });
+                        return;
+                    }
+                }
                 say(agent, `Creeper ${Math.round(cr0.position.distanceTo(bot.entity.position))}m — backing off!`);
                 execute(this, agent, async () => {
                     try { bot.interrupt_code = false; } catch (e) {}   // consume activation interrupt once
