@@ -1,5 +1,6 @@
 import * as skills from './library/skills.js';
 import { undergroundKitGate } from './framework/kit_gate.js';
+import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
@@ -6176,35 +6177,9 @@ const modes_list = [
                 // trees. Latched 5min so MIGRATE finishes the walk (recommendation/proposal are day-gated,
                 // so the latch rides through the night and fires the relocate at dawn); cleared the moment
                 // a pickaxe is back (recovered locally → no need to move) or we've travelled clear (>48b).
+                // (latch logic lives in framework/migration_triggers.js — pinned by test/migration_triggers.test.mjs)
                 let woodBarren = false;
-                try {
-                    const sticksN = counts['stick'] || 0;
-                    const planksN = Object.entries(counts).reduce((s, [n, v]) => s + (n.endsWith('_planks') ? v : 0), 0);
-                    const logsN = Object.entries(counts).reduce((s, [n, v]) => s + (/_(log|stem|hyphae|wood)$/.test(n) ? v : 0), 0);
-                    const woodlessForPick = picks < 1 && (planksN + logsN * 4 + sticksN) < 2;   // can't even make 2 sticks for a pick
-                    if (woodlessForPick) { if (!bot._woodBarrenSince) bot._woodBarrenSince = now; }
-                    else { bot._woodBarrenSince = 0; }                                          // has a pick or has wood → not barren-deadlocked
-                    const barrenMs = bot._woodBarrenSince ? now - bot._woodBarrenSince : 0;
-                    if (barrenMs >= 300000 && now - (bot._woodBarrenLatchAt || 0) > 300000) {
-                        bot._woodBarrenLatchAt = now;
-                        bot._woodBarrenOrigin = { x: Math.round(p.x), z: Math.round(p.z) };
-                    }
-                    if (bot._woodBarrenLatchAt && now - bot._woodBarrenLatchAt < 300000) {
-                        const o = bot._woodBarrenOrigin;
-                        const movedClear = o && Math.hypot(p.x - o.x, p.z - o.z) > 48;
-                        // woodBarren-2026-07-14 (yong-ling): woodBarren pan-ju zhi kan "bei-bao wu mu" bu kan "fu-jin you mei you shu".
-                        //   zhan sen-lin li kan-bu-dao shu (chopWood ka jiang-sheng/hei-ming-dan/ye-si da-duan) shi bao-kong 5min ye wu-pan barren.
-                        //   zha: shang-yi-pai di-biao you [jin(<=48b) qie xin-xian(<120s) de ke-da mu] = zhe-di zhen you shu, wen-ti zai kan-bu-dong fei mei shu ->
-                        //   bu pan barren(qing latch). zhen shu-xi-shu qun-xi(beach/desert) woodReach kong/yuan/jiu -> treeHere=false -> zhao-chang qian-xi.
-                        let treeHere = false;
-                        try {
-                            const _wr = bot._world && bot._world.landmarks && bot._world.landmarks.woodReach;
-                            treeHere = !!(_wr && Number.isFinite(_wr.dist) && _wr.dist <= 48 && Number.isFinite(_wr.age) && _wr.age < 120000);
-                        } catch (e) {}
-                        if (movedClear || picks >= 1 || treeHere) { bot._woodBarrenLatchAt = 0; bot._woodBarrenSince = 0; }   // recovered or relocated
-                        else woodBarren = true;
-                    }
-                } catch (e) {}
+                try { woodBarren = woodBarrenTick(bot, { picks, counts, p, now }); } catch (e) {}
                 // ★T-0106 MIGRATE-COOLDOWN NO-OP-SPIN FIX (06-30 live, root-caused from migrate.log):
                 //   the badBiome/inDeathZone triggers dispatch migrate with NO force, so migrate.js's
                 //   start-gate REFUSES every call within its 20-min post-migrate cooldown ("migrated
@@ -6239,10 +6214,8 @@ const modes_list = [
                 // commitment (isGoalDone(MIGRATE)=!recommend) so the night plan takes over instead of the bot
                 // no-op-spinning migrate against the night gate. woodBarren/stuckTerrain LATCHES still ride
                 // through the night and re-fire at dawn (the latch is a separate timestamp, not recommend).
-                const _forceRelocate = (stuckTerrain || woodBarren) && !badBiome && !inDeathZone;
-                const _anyTrigger = badBiome || inDeathZone || stuckTerrain || woodBarren;
                 const migration = { biome, badBiome, inDeathZone, stuckTerrain, woodBarren, migrateOnCooldown,
-                    recommend: (phase === 'day') && (_forceRelocate || (_anyTrigger && !migrateOnCooldown)) };
+                    recommend: migrationRecommend({ phase, badBiome, inDeathZone, stuckTerrain, woodBarren, migrateOnCooldown }) };
                 // --- surfaceGate (AUTO; supervisor override read from advisory.surfaceGate) ---
                 let gateMode = 'free', gateReason = 'safe day', decidedBy = 'auto', gateUntil = 0;
                 try {
