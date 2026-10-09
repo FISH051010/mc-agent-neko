@@ -4114,8 +4114,13 @@ const modes_list = [
                     // 误判 MAROONED 无害(行军=朝锚挖几格路,顺路),漏判昂贵(原地空转分钟级)
                     // → 阈值激进: 90秒没挪出20格 + 3分钟内寻路失败≥3 = 困,开挖。人类试三
                     // 个方向走不通也就这个耗时。)
+                    // ★T-0121 采矿心跳: 非反射技能正在持续挖 (branchMine/mineDown/chopWood…) = 有目的工程不是被困 →
+                    //   重锚且不升 MAROONED, 已在 MAROONED 的也不 sticky 续命 (与上面 climbing 心跳同理)。
+                    const _purposefulDig = purposefulDigActive(bot, now);
+                    if (_purposefulDig) { this.regAnchor = bot.entity.position.clone(); this.regAt = now; }
                     const noPathRecent = (this.noPathTimes || []).filter(t => now - t < 180000).length;
-                    if (now - this.regAt > 90 * 1000 && noPathRecent >= 3) st = 'MAROONED';
+                    if (_purposefulDig) { /* mining — not marooned */ }
+                    else if (now - this.regAt > 90 * 1000 && noPathRecent >= 3) st = 'MAROONED';
                     // ★STICKY MAROONED (打转机理之一: 行军挖出20格→重锚FREE→寻路依然全堵
                     // →90s后再判MAROONED→方向已被清,重选可能反向→挖回去 = FREE↔MAROONED
                     // 振荡。修: 退出不光看位移,还要寻路真恢复;且最短驻留3分钟——因为移动
