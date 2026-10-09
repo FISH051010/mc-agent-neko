@@ -80,8 +80,14 @@ export function noopIsProgress(anchor, anchorSig, p, sig) {
 }
 // Which escape (if any) a churned-out no-op spin may take: 'migrate' (day) / 'nightShelter' (night),
 // or null when blocked (legit sealed night hold / active combat / deep mining).
-export function noopEscapePlan(w) {
+// ★T-0105 (10-10 16:15:48 黎明死: NIGHT_DIG_ONE 封坑 hold 524s 被判 no-op → tod≈23100 world_model 已转
+// isDay → legitNightHold 失效 → force migrate 拉出口袋 → 云杉荫下骷髅未晒死 → shot:Skeleton, 掉光装备)。
+// 夜间/hold 类承诺"站着不动"就是它的成功态 (kernel.js NO_DELTA_EXEMPT 同一判据) — 绝不当空转逃逸;
+// 天亮后决策层换承诺 → noopSkill 变化 → 锚点自然重置。
+export const NOOP_EXEMPT_KIND = /^(NIGHT_|DUSK_GO_BED$|HOLD$|SLEEP$|FREE_PLAY$)/;
+export function noopEscapePlan(w, kind) {
     w = w || {};
+    if (kind && NOOP_EXEMPT_KIND.test(String(kind))) return null;
     const isDay = !(w.time && w.time.isDay === false);
     const legitNightHold = !isDay && w.cover && w.cover.coverReal === true && (!w.threat || (w.threat.actionable || 0) === 0);
     const inCombat = w.threat && ((w.threat.actionable || 0) > 0 || w.threat.takingDamage === true);
@@ -296,7 +302,7 @@ export default async function kernelDriver(bot, ctx) {
                             noopAnchor = { x: p.x, y: p.y, z: p.z }; noopAnchorAt = Date.now(); noopAnchorSig = sig;
                         } else if (Date.now() - noopAnchorAt > 90000 && Date.now() - noopLastEscapeAt > 120000) {
                             const w = bot._world || {};
-                            const escape = noopEscapePlan(w);
+                            const escape = noopEscapePlan(w, c.kind);
                             const isDay = escape === 'migrate';
                             if (escape) {
                                 prog(`★NO-OP-SPIN escape: ${c.skill} churned ${Math.round((Date.now() - noopAnchorAt) / 1000)}s (no >8b hop / no descent / no ore) @${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)} → force ${isDay ? 'migrate(escape bad spot)' : 'nightShelter seal'}`);

@@ -64,3 +64,11 @@ test('T-0110: no-op escape — day→migrate, night→nightShelter; blocked by s
     assert.equal(noopEscapePlan({ pos: { depthBand: 'mid' } }), null);
     assert.equal(noopEscapePlan({ pos: { depthBand: 'deep' } }), null);
 });
+
+test('T-0105: a night/hold commitment (NIGHT_DIG_ONE sealed-pocket hold) is never a no-op escape, even once world_model flips to day at dawn', () => {
+    const dawn = { time: { isDay: true }, cover: { coverReal: true }, pos: { depthBand: 'surface' } };
+    assert.equal(noopEscapePlan(dawn, 'NIGHT_DIG_ONE'), null);
+    assert.equal(noopEscapePlan({ time: { isDay: false }, cover: { coverReal: false } }, 'NIGHT_SEAL'), null);
+    assert.equal(noopEscapePlan(dawn, 'HOLD'), null);
+    assert.equal(noopEscapePlan(dawn, 'REPLENISH_KIT'), 'migrate', 'daytime work kinds still escape a real no-op pin');
+});

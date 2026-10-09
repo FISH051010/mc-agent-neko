@@ -12,6 +12,14 @@
 
 ---
 
+## C358. ★夜间/hold 承诺不算 no-op 空转: kernelDriver NO-OP-SPIN 逃逸按承诺 kind 豁免（kernelDriver.js 顶层 sticky 需重启,T-0105,worker-death,⏳待重启）
+
+**证据**: 10-09 16:15:48 `★NO-OP-SPIN escape: nightShelter churned 524s … → force migrate(escape bad spot)` —— bot 正在 y65 口袋 `night bunker dwell: sealedBox=true`; tod≈23100(黎明前) → migrate 拉出 26 格 → 16:16:47 起连中箭 → 16:16:59 死 `shot:Skeleton` @96,75,16 tod479(云杉林荫骷髅未晒死), keepInventory 关 → 13 原木/3 木镐全掉。
+**机理**: `noopEscapePlan` 只用 `w.time.isDay` 判"合法夜 hold"; 黎明过渡 world_model 已转 isDay → legitNightHold=false → 封坑 hold 被当"白天空转"。kernel.js 早有 `NO_DELTA_EXEMPT=/^(NIGHT_|DUSK_GO_BED$|HOLD$|SLEEP$|FREE_PLAY$)/`(夜间/hold 承诺不动即成功), 实际在跑的 kernelDriver 没用它。
+**改动**: kernelDriver.js `NOOP_EXEMPT_KIND`(同判据) + `noopEscapePlan(w, kind)` 对豁免 kind 返回 null; 调用处传 `c.kind`。天亮后决策层换承诺 → noopSkill 变 → 锚点自然重置, 白天真 no-op pin 仍会逃逸。
+**可证伪预测**: 夜里/黎明不再出现 `NO-OP-SPIN escape: nightShelter …`; 黎明 bot 在口袋里待到决策层换日间承诺才出坑。若出现"NIGHT_ 承诺卡到白天很久不换、bot 原地不动"→ 是决策层 isGoalDone 问题, 不是本豁免。
+**回滚**: revert 本提交 + 重启 main.js(或 cancel re-arm kernelDriver)。回归 `test/kernel_driver.test.mjs` 'T-0105: a night/hold commitment…'(行为级先红后绿)。
+
 ## C357. ★夜里透气 1×1 口袋 ≠ 活埋: mobility ENTOMBED 挖出反射加夜间庇护豁免（modes.js mobility 需重启,T-0105,worker-death,⏳待重启）
 
 **证据**: 10-09 16:06:37 派 nightShelter(dig_one) → 16:06:40 `[mobility] → ENTOMBED` → `dig retry (ENTOMBED) spruce_log@70,70,-2`(刚放的墙) / `dirt@70,69,-2` → 16:06:48 `→ FREE`: 夜庇护封好 3 秒就被自家反射拆开。15:50 溺死前同样出现"已封口袋被拆"。
