@@ -35,14 +35,19 @@ export const RESCUE_DIG_RE = /^mobility:(ENTOMBED|SEALED|SUFFOC|DROWN)/;
 export function isRescueDig(owner, drowning = false) {
     return !!drowning || RESCUE_DIG_RE.test(String(owner || ''));
 }
-/** 救命挖掘申请槽位时能否抢断当前持有者: 自己是救命挖掘, 且持有者不是救命挖掘 (救命之间不互抢)。 */
-export function rescueMayPreempt({ claimantOwner, drowning, holderOwner }) {
+/**
+ * 救命挖掘申请槽位时能否抢断当前持有者: 自己是救命挖掘 + 【正处于危险中】(溺水 / 刚掉血) + 持有者不是救命挖掘。
+ * ★T-0174 实机收紧 (22:45 满血 O2=20 白天, surfaceUp 在 1×1 竖井里上爬, mobility 把竖井判 ENTOMBED 去抢槽 →
+ * 两边互相 'Digging aborted'): 没危险时被困挖出无理由打断正在推进的挖掘 (T-0163 精神: 有目的挖掘≠被困)。
+ */
+export function rescueMayPreempt({ claimantOwner, drowning, holderOwner, inDanger }) {
+    if (!(drowning || inDanger)) return false;
     return isRescueDig(claimantOwner, drowning) && !RESCUE_DIG_RE.test(String(holderOwner || ''));
 }
-/** bot.dig 总闸: 救命挖掘持槽且未过期时, 不带救命令牌的挖掘一律拒绝。 */
-export function taskDigBlockedByRescue({ slotOwner, slotUntil, now = Date.now(), rescueToken }) {
+/** bot.dig 总闸: 发生过抢断(preemptUntil 未过期)时, 不带救命令牌的挖掘一律拒绝。平时救命挖掘正常持槽不封锁别人。 */
+export function taskDigBlockedByRescue({ preemptUntil, now = Date.now(), rescueToken }) {
     if (rescueToken) return false;
-    return RESCUE_DIG_RE.test(String(slotOwner || '')) && Number(slotUntil) > now;
+    return Number(preemptUntil) > now;
 }
 
 // ★T-0123 挖出 burst 截止时间: ENTOMBED/SEALED 的单次 burst (≤2-3 次挖, 每次挖自带 ≤20s 超时) 里还有

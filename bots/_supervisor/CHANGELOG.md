@@ -12,7 +12,15 @@
 
 ---
 
-## C373. ★★挖掘槽统一规则: 救命挖掘抢断任务挖掘 + 救命持槽期间拒绝任务挖掘; mineDown 头进水即停（modes.js guardedDig/bot.dig 总闸 + framework/mobility_signals 规则 + skills.drowningPriority 需重启; mineDown.js 热加载,T-0174,worker-death,⏳待重启）
+## C374. ★C373 收紧: 救命挖掘只在【危险中】(溺水/3s 内掉血) 才抢槽, 封锁只跟随真实抢断（modes.js + framework/mobility_signals 需重启,T-0174,worker-death,⏳待重启）
+
+**证据(C373 预测落空的那一半)**: 22:45:05-46 每 ~8s `★rescue dig preempts task dig (mobility:ENTOMBED, O2=20, was -)`; 当时满血 O2=20 白天, surfaceUp(replenishKit ①) 在 1×1 竖井里上爬, mobility 把竖井判 ENTOMBED 抢 surfaceUp 的槽, 两边互相 `Digging aborted`。
+**机理**: C373 规则只看"谁是救命挖掘", 不看是否真有危险; death #10 的本质是"有危险时保命挖掘被挡", 没危险时被困挖出无理由打断一个正在推进的(脱困)挖掘 —— 与 T-0163"有目的挖掘≠被困"冲突。封锁锁绑在"救命挖掘持槽"上, 平时 ENTOMBED 正常持槽也会封别人。
+**改动**: `rescueMayPreempt` 加 `inDanger`(溺水 或 lastDamageTime<3s)前置; guardedDig 抢断时写 `bot._rescuePreemptUntil=now+6s`, 结束时清; `taskDigBlockedByRescue({preemptUntil,rescueToken})` 只在真实抢断后的 6s 内生效。
+**可证伪预测**: 满血不缺氧时不再出现 `rescue dig preempts`; 溺水/掉血时仍抢断(death #10 场景测试保留)。
+**回滚**: revert 本条恢复 C373 原规则。回归 'T-0174: dig-slot rule…'(含 22:45 竖井回归断言)。
+
+## C373. ★★挖掘槽统一规则: 救命挖掘抢断任务挖掘 + 救命持槽期间拒绝任务挖掘; mineDown 头进水即停（modes.js guardedDig/bot.dig 总闸 + framework/mobility_signals 规则 + skills.drowningPriority 需重启; mineDown.js 热加载,T-0174,worker-death,⚠️部分有效→C374 收紧）
 
 **证据**: death #10 10-09 22:04:16Z `drowning` @~32,38,-8 skill=mineDown(GO_UNDERGROUND)。22:03:52 →SWIM, 22:04:05 →ENTOMBED, 22:04:06-14 `[mobility] dig slot busy (ENTOMBED) … heldBy=targetDigBlock` ×6, act_trace 全程 dig stone(mineDown 在水下慢挖); hp 18→6→0。mineDown DONE 另记 "pick about to break + no replacement"(镐将坏 = 水下挖不动的放大因素)。同类第二次: T-0163(SEALED 脱困 vs branchMine 抢槽)。
 **机理**: 优先级倒置 —— guardedDig acquire 遇占槽只等 900ms 后放弃, 不区分自己是不是救命挖掘; 任务挖掘(mineDown/chopWood/breakBlockAt 直调 bot.dig, 不占槽只体现为 targetDigBlock)被打断后下一拍会重开。

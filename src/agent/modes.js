@@ -4451,10 +4451,12 @@ const modes_list = [
                     // drowning) outranks any task dig holding the slot (death #10: mineDown kept chipping stone
                     // underwater, 'dig slot busy' ×6, drowned) → stopDigging + take the slot.
                     const _busy0 = bot.targetDigBlock || (bot._bodyDigLockUntil && Date.now() < bot._bodyDigLockUntil && bot._bodyDigLockOwner !== owner);
-                    if (_busy0 && rescueMayPreempt({ claimantOwner: owner, drowning: _drown, holderOwner: bot._bodyDigLockOwner })) {
+                    const _inDanger = _drown || (Date.now() - (bot.lastDamageTime || 0) < 3000);
+                    if (_busy0 && rescueMayPreempt({ claimantOwner: owner, drowning: _drown, holderOwner: bot._bodyDigLockOwner, inDanger: _inDanger })) {
                         try { bot.stopDigging(); } catch (e) {}
                         bot._bodyDigLockOwner = owner;
                         bot._bodyDigLockUntil = Date.now() + 6000;
+                        bot._rescuePreemptUntil = Date.now() + 6000;   // gate lock only after a real preemption
                         try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★rescue dig preempts task dig (${owner}, O2=${bot.oxygenLevel}, was ${bot.targetDigBlock ? 'targetDigBlock' : '-'}) (T-0174)\n`); } catch (e) {}
                         return true;
                     }
@@ -4547,7 +4549,7 @@ const modes_list = [
                     }
                     return false;
                 } finally {
-                    if (bot._rescueDigToken === owner) bot._rescueDigToken = null;
+                    if (bot._rescueDigToken === owner) { bot._rescueDigToken = null; bot._rescuePreemptUntil = 0; }
                     if (bot._bodyDigLockOwner === owner) {
                         bot._bodyDigLockOwner = null;
                         bot._bodyDigLockUntil = 0;
@@ -5418,7 +5420,7 @@ const modes_list = [
                 // ★T-0174 RESCUE SLOT LOCK: while a rescue dig (ENTOMBED/SEALED escape, drowning) holds the dig slot,
                 //   refuse any OTHER dig — the task the rescue just preempted would otherwise restart its dig next tick.
                 try {
-                    if (taskDigBlockedByRescue({ slotOwner: bot._bodyDigLockOwner, slotUntil: bot._bodyDigLockUntil, rescueToken: bot._rescueDigToken })) {
+                    if (taskDigBlockedByRescue({ preemptUntil: bot._rescuePreemptUntil, rescueToken: bot._rescueDigToken })) {
                         const err = new Error(`rescue dig holds the slot (${bot._bodyDigLockOwner}) — task dig refused`);
                         write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
                         throw err;

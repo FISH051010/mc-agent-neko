@@ -261,14 +261,16 @@ test('T-0174: dig-slot rule — rescue digs preempt task digs; while a rescue ho
     assert.equal(isRescueDig('mobility:SEALED-up'), true);
     assert.equal(isRescueDig('mobility:MAROONED'), false, 'road-building march is not a rescue');
     assert.equal(isRescueDig('mobility:MAROONED', true), true, 'but drowning promotes it');
-    // death #10: mineDown's dig (no slot owner, targetDigBlock) vs ENTOMBED rescue
+    // death #10: mineDown's dig (no slot owner, targetDigBlock) vs ENTOMBED rescue while drowning
     assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:ENTOMBED', drowning: true, holderOwner: null }), true);
-    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:SEALED', drowning: false, holderOwner: 'branchMine:ore-window' }), true, 'T-0163 shape');
-    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:SEALED', drowning: false, holderOwner: 'mobility:ENTOMBED' }), false, 'rescues never fight each other');
-    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:MAROONED', drowning: false, holderOwner: 'branchMine:ore-window' }), false);
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:SEALED', drowning: false, inDanger: true, holderOwner: 'branchMine:ore-window' }), true, 'hurt + task holds → preempt');
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:SEALED', drowning: true, holderOwner: 'mobility:ENTOMBED' }), false, 'rescues never fight each other');
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:MAROONED', drowning: false, inDanger: true, holderOwner: 'branchMine:ore-window' }), false);
+    // live 22:45 regression: full hp, O2=20, surfaceUp climbing a 1×1 shaft → ENTOMBED must NOT fight it
+    assert.equal(rescueMayPreempt({ claimantOwner: 'mobility:ENTOMBED', drowning: false, inDanger: false, holderOwner: 'surfaceUp:fallback' }), false);
     const now = 1000;
-    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:ENTOMBED', slotUntil: 5000, now }), true, 'task dig refused while rescue holds');
-    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:ENTOMBED', slotUntil: 5000, now, rescueToken: 'mobility:ENTOMBED' }), false, 'the rescue itself digs');
-    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:ENTOMBED', slotUntil: 500, now }), false, 'expired lock');
-    assert.equal(taskDigBlockedByRescue({ slotOwner: 'mobility:MAROONED', slotUntil: 5000, now }), false);
+    assert.equal(taskDigBlockedByRescue({ preemptUntil: 5000, now }), true, 'task dig refused right after a preemption');
+    assert.equal(taskDigBlockedByRescue({ preemptUntil: 5000, now, rescueToken: 'mobility:ENTOMBED' }), false, 'the rescue itself digs');
+    assert.equal(taskDigBlockedByRescue({ preemptUntil: 500, now }), false, 'expired lock');
+    assert.equal(taskDigBlockedByRescue({ preemptUntil: 0, now }), false, 'no preemption → no lock');
 });
