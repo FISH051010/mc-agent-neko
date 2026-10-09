@@ -12,6 +12,14 @@
 
 ---
 
+## C367. ★mineDown 砂砾层: 悬空重力块不算支撑 + 重力列塌完再进（③mineDown.js 热加载即生效,T-0158,worker-death,🟡已生效待观测）
+
+**证据**: death #7 10-09 20:08:26Z `suffocation` @16,32,41 夜 skill=replenishKit act=auto_eat。act_trace 20:08:14-21 @y49 连续 dig gravel; 20:08:22 y39.3 g=0 → 20:08:24 y32(坠 17 格, hp→6); 20:08:23 `mineDown DIAG newHead(16,32,41)=gravel clear(16,33,41)=gravel` → `breakResults head+1=true` → 前进 → 窒息。
+**机理**: ① 支撑检查只看 (fx,cy-2) 非空; 它是悬在洞穴上的砂砾时, 一挖开其上方那格就塌, bot 踩空坠洞。② 三格挖完立即 forward, 砂砾列还在往下掉 → 落进新头格。
+**改动**: mineDown.js 纯函数 `supportCollapses(support, under)`(重力块且其下为空/液体 → 当无支撑, 走 T-0137 void-hop) + `gravityPendingAbove(bn,x,feetY,z)`(列内三格有重力块, 或往上第一个非空格是重力块 → 仍会塌); 前进前若仍会塌: 每 400ms 挖掉落进来的重力块, ≤8 轮, 塌不完则记 aborted heading 并中止该方向。
+**可证伪预测**: 砂砾区下矿出 `support … hangs over … treating as void (T-0158)` / `gravity column … drained — stepping in` / `won't settle — not stepping under it`; 不再有 mineDown 中的 suffocation 或重力坑坠落。
+**回滚**: revert mineDown.js(热加载)。回归 `test/minedown_gravity.test.mjs`。
+
 ## C366. ★MAROONED 行军不爬树叶/树干, 爬台阶落稳即收脚（modes.js MAROONED climb + skills.marchStepClimbable/climbLanded 需重启,T-0152,worker-death,⏳待重启）
 
 **证据**: death #6 10-09 20:03:31Z `fall` @50,70,25 hp=1(饥饿 food0→4)。act_trace: 20:03:27-28 mode:mobility dig spruce_log / spruce_leaves 爬到 y74→76.2; 20:03:29 g=0 ctrl=forward,jump; 20:03:30 y73.4 仍下落(z 22.8→25.4); 20:03:30.305 `MAROONED ledge veto dir=0,1 at 49,75,24`(已在空中)。

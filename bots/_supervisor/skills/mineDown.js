@@ -105,6 +105,27 @@ export function rotateAwayFromAborted(avoidList, p0, sx, sz, now = Date.now()) {
     return clean ? { sx: clean[0], sz: clean[1], rotated: true, avoid } : { sx, sz, rotated: false, exhausted: true, avoid };
 }
 
+// ★T-0158 (death #7 10-09 20:08:26 suffocation @y32, 前一刻从 y49 坠到 y32): 砂砾层里的两个重力坑。
+const MD_GRAV_RE = /^(sand|red_sand|gravel|suspicious_sand|suspicious_gravel|[a-z_]*concrete_powder)$/;
+const MD_VOIDISH_RE = /^(air|cave_air|void_air|water|flowing_water|lava|flowing_lava)$/;
+/** ① 落脚支撑是悬在空洞上的重力块 → 挖开其上那格它就塌, bot 踩空 (= 当作无支撑, 走 void-hop)。 */
+export function supportCollapses(supportName, underSupportName) {
+    return MD_GRAV_RE.test(supportName || '') && MD_VOIDISH_RE.test(underSupportName || '');
+}
+/**
+ * ② 新站位列 (feet..clear) 头顶上方是否还会掉重力块进来: 从 topY+1 往上走, 先遇到重力块 = 会塌;
+ *    先遇到非重力实心 = 被托住不会塌。列内三格本身还是重力块 = 回填了, 也算未清。
+ */
+export function gravityPendingAbove(bn, x, feetY, z, span = 6) {
+    for (let y = feetY; y <= feetY + 2; y++) if (MD_GRAV_RE.test(((bn(x, y, z) || {}).name) || '')) return true;
+    for (let y = feetY + 3; y <= feetY + 2 + span; y++) {
+        const n = ((bn(x, y, z) || {}).name) || '';
+        if (MD_GRAV_RE.test(n)) return true;
+        if (!MD_VOIDISH_RE.test(n)) return false;   // solid non-gravity roof holds the column
+    }
+    return false;
+}
+
 export default async function mineDown(bot, ctx, opts = {}) {
     const { log, skills, Vec3 } = ctx;
     const steps = opts.steps || 40;
@@ -655,7 +676,11 @@ export default async function mineDown(bot, ctx, opts = {}) {
             break;
         }
         // No solid support under the new feet (cliff/cave) => don't blind-drop; stop.
-        if (/^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) {
+        // ★T-0158①: a gravity block hanging over a void is NOT support — digging the cell above it drops it
+        // (death #7: gravel floor over a cave, 17-block fall y49→32). Treat it exactly like no support.
+        const _supportCollapses = supportCollapses(nm(support), nm(bn(fx, cy - 3, fz)));
+        if (_supportCollapses) log_(`support ${nm(support)}@${fx},${cy - 2},${fz} hangs over ${nm(bn(fx, cy - 3, fz))} — collapses when dug above; treating as void (T-0158)`);
+        if (_supportCollapses || /^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) {
             rememberAbortedHeading(bot, sx, sz);   // ★T-0139 next dispatch turns away from the void
             // ★T-0137② turn / sidestep ≤4b to a column with 3 solid below and restart the stair — this dispatch
             if (voidHops < 3) {
@@ -684,6 +709,26 @@ export default async function mineDown(bot, ctx, opts = {}) {
             // was actually removed, so count only those.
             dug += [r1, r2, r3].filter(v => v === true).length;
         } catch (e) { abort = `dig threw: ${e && e.message || e}${/aborted/i.test(String(e && e.message || e)) ? ' ' + digInterrupter(bot) : ''}`; break; }   // ★T-0148 diag: who stopped our dig
+
+        // ★T-0158②: never step into a column that is still collapsing (gravel/sand above or refilled cells).
+        // Human: stand back, let it fall, dig what lands, repeat until it stops — THEN step in. Bounded; if the
+        // column won't drain (tall gravel pile) give up this heading instead of walking under it.
+        if (gravityPendingAbove(bn, fx, cy - 1, fz)) {
+            let drained = false;
+            for (let k = 0; k < 8 && !bot.interrupt_code && bot.health > 0; k++) {
+                await new Promise(r => setTimeout(r, 400));   // let what's falling land
+                for (const yy of [cy + 1, cy, cy - 1]) {
+                    if (MD_GRAV_RE.test(nm(bn(fx, yy, fz)))) { try { if (await skills.breakBlockAt(bot, fx, yy, fz) === true) dug++; } catch (e) {} }
+                }
+                if (!gravityPendingAbove(bn, fx, cy - 1, fz)) { drained = true; break; }
+            }
+            if (!drained) {
+                rememberAbortedHeading(bot, sx, sz);
+                abort = `gravity column over ${fx},${cy - 1},${fz} won't settle — not stepping under it (T-0158)`;
+                break;
+            }
+            log_(`gravity column at ${fx},${cy - 1},${fz} drained — stepping in (T-0158)`);
+        }
 
         // Walk forward; the bot falls 1 block into the cleared step. Low-level (no pathfinder).
         try {
