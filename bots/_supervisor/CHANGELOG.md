@@ -3052,6 +3052,8 @@
 
 - **★C410-S chopWood 响应 kernel 承诺切换(T-0197)**（2026-10-10，worker-stuck，T-0197）: 实录 10-10 00:26:03→00:26:34 'commitment flipped REPLENISH_KIT→TOOL_UPKEEP mid-child' ×32 — replenishKit ② 的 chopWood 照跑 iter5..9 (dig-staircase/raw-approach) 直到无树才退。chopWood 每 iter 让位点 _superseded 只认代号/poisoned。修: _superseded 并入 kernelYieldRequested(bot, 进入时刻) (T-0181 的 _commitFlipAt 戳), 所有既有让位点下一 iter 即 YIELD。测试 test/chopwood_kernel_yield.test.mjs。
 
+- **★C411-S mineDown 返回契约: 圆石增量也算进度(T-0198)**（2026-10-10，worker-stuck，T-0198）: 实录 10-10 00:26:42→00:27:38 NIGHT_STONE_BOOTSTRAP mineDown @y67 挖下 23 块到 y64, 同点第 3 次楔死 → wedge-final moveAway 回升到 y68 → (entryY-endY)=-1 判零进度 → failed:true 吃第 3 个 strike → 冷却 5min, 而夜间取圆石的目的已达成。修: dispatchProgressed 纯函数 (下降 ≥1 / wedge-final ≥3, 或矿石增量, 或 cobblestone+cobbled_deepslate 增量 ≥3); 零世界变化的热循环仍 failed。测试 test/minedown_cobble_progress.test.mjs。
+
 ---
 
 ---

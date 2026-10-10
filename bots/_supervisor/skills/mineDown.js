@@ -202,6 +202,13 @@ export async function relocateFallback(bot, skills, bn, log_, why, { ms = 20000 
     return false;
 }
 
+/** ★T-0198 return-contract progress: descended (≥3 after a wedge-final moveAway, else ≥1), ore gained, or ≥3 cobble
+ *  gained (live 00:27:38: 23 blocks dug for NIGHT_STONE_BOOTSTRAP, moveAway climbed back 1 → judged zero-progress). */
+export function dispatchProgressed({ wedgeFinal, entryY, endY, oreGain, cobbleGain }) {
+    const down = entryY - endY;
+    return (wedgeFinal ? down >= 3 : down >= 1) || oreGain > 0 || cobbleGain >= 3;
+}
+
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     const nm = (b) => (b && b.name) || 'air';
     const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
@@ -486,6 +493,8 @@ export default async function mineDown(bot, ctx, opts = {}) {
         + invCount(/_ore$/);
     const entryY = Math.round(bot.entity.position.y);
     const oreUnitsAtEntry = oreUnits();
+    const cobbleUnits = () => invCount(/^(cobblestone|cobbled_deepslate)$/);   // ★T-0198
+    const cobbleAtEntry = cobbleUnits();
 
     // ★2026-07-08 到层背包满就地清理 (钻石"够不到"根因 4, 见 [[diamond-never-reached-blocker-stack]]):
     //   实录 bot 抵 targetY 后 'pack full (free=1) — stop at-depth mining' ×4 + 'diamondBank: no chest
@@ -1038,9 +1047,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     // ★P2-8: wedge-final 走过 moveAway 8b — 顺坡白得的 y 差不是"下降进度", 抬高下降门槛到 >=3
     // (moveAway 顺坡至多白得 1-2 格; 真挖降 3+ 格再楔死的派发不该被一票否决白吃 strike),
     // 否则 moveAway 下坡 1 格就把三连楔死洗成 truthy = 新活锁口.
-    const progressed = wedgeFinal
-        ? (entryY - r.endY) >= 3 || oreUnits() > oreUnitsAtEntry
-        : (entryY - r.endY) >= 1 || oreUnits() > oreUnitsAtEntry;
+    const progressed = dispatchProgressed({ wedgeFinal, entryY, endY: r.endY, oreGain: oreUnits() - oreUnitsAtEntry, cobbleGain: cobbleUnits() - cobbleAtEntry });
     if (!progressed) r.failed = true;
     log_(`DONE ${JSON.stringify(r)}`);
     return r;
