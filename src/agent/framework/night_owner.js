@@ -1,3 +1,5 @@
+import { purposefulDigActive } from './mobility_signals.js';
+
 // ★T-0136 决策层夜挖 vs 反射预防性封箱 — 契约必须一致。
 // 实录 10-10 18:47:23Z: 决策层 computeNightPlan 选 MINE_THROUGH_NIGHT → kernel 派 mineDown(DUSK_MINE_NIGHT);
 // 同刻 bot 在 y59 (≥50 且 enclosed=false) → self_preservation.shouldNightShelter=true → bunkerDown "sealed night hold"
@@ -7,11 +9,24 @@
 export const NIGHT_MINE_KIND_RE = /^(DUSK_MINE_NIGHT|MINE_THROUGH_NIGHT|NIGHT_STONE_BOOTSTRAP)$/;   // ★T-0175 木镐夜就地下挖取圆石也是下挖即庇护
 export const DISPATCHER_FRESH_MS = 10000;
 
+// ★T-0182 #15 (让位必须有人接): 派发器心跳只证明 kernelDriver 活着, 不证明夜挖在跑 —— 3 连败冷却、reflexBusy 让位、
+//   承诺刚翻还没派的空档里心跳照新, 反射却已为"在下挖"让出夜宿 → 地表站着过夜。接收方此刻在干活 =
+//   承诺的技能就是当前技能 (customSkill 置 bot._currentSkill), 或 15s 内有技能挖掘 (purposefulDigActive),
+//   或承诺 ≤10s 新 (派发在路上)。
+export function nightMiningReceiverActive(bot, now = Date.now()) {
+    const c = bot && bot._commitment;
+    if (!c) return false;
+    if (c.skill && bot._currentSkill === c.skill) return true;
+    if (purposefulDigActive(bot, now)) return true;
+    return Number.isFinite(c.since) && now - c.since < DISPATCHER_FRESH_MS;
+}
+
 export function decisionOwnsNightMining(bot, { hostilesNear = 0, now = Date.now() } = {}) {
     try {
         const c = bot && bot._commitment;
         if (!c || !NIGHT_MINE_KIND_RE.test(String(c.kind || ''))) return false;
         if (!bot._kernelDriverActive || now - bot._kernelDriverActive > DISPATCHER_FRESH_MS) return false;
+        if (!nightMiningReceiverActive(bot, now)) return false;
         return hostilesNear === 0;
     } catch (e) { return false; }
 }

@@ -12,6 +12,20 @@
 
 ---
 
+## C385. ★苦力怕夹击: 远处同向苦力怕只排序不否决 + 近身无路先打退再选路（modes.js/mobility_geom.js 需重启,T-0200,worker-death,⏳待重启）
+
+**证据**: death #14 01:06:05 地表黄昏 hp8 food0 石剑 0 甲, 苦力怕 2.2/2.9/13b + 僵尸 4。01:06:02 `creeper backoff gated: cdist=7.8 drop=2 risk=creeper@17.0 proj=14.9 toward=0.49; emergency bunker/hold` —— 地形可跑的方向全被 17b 外"大致同向"(toward>0.15) 的另一只苦力怕否决 (旧 creeperCorridorRisk 二值), 退化成原地 bunker, 3s 内建不完 → 被炸。
+**改动**: mobility_geom `creeperCorridorAssess` 分 hard/soft: hard = 目标 ≤5.5b 不背离 / 5.5–10b 朝它, 或任一苦力怕 6 步投影 <7.5b; soft = 非目标 <18b 同向但投影始终 ≥7.5b。`pickCreeperRunDir`: 先零风险; 无则无 hard 里投影最远 (soft 只排序)。modes 退避扇形扩到 ±135°, maxDrop 2→3 (≤3 格落差 0 伤害)。无路且苦力怕 ≤3.4b → 换剑 creeperPunchBack 击退 + creeperInterpose 垫块 → continue 重新选路, 连续 6 次仍无路才 bunker。
+**可证伪预测**: 同类夹击出现 `creeper backoff: no clean lane — taking least-bad lane …(T-0200)` 或 `creeper ≤3.4b and no lane — knock it back …(T-0200)`, 而非直接 `creeper backoff gated … emergency bunker/hold`。
+**回滚**: revert, 重启。回归 test/creeper_lane.test.mjs (实录几何复刻 proj=14.9)。
+
+## C384. 让位普查收尾: MAROONED 残血 hold 必须能回血 (#25) + 夜挖让位须接收方在干活 (#15)（modes.js/mobility_signals.js/night_owner.js 需重启,T-0182,worker-death,⏳待重启）
+
+**#25**: MAROONED hp≤6 hold 只在 food≥回血线或包里有吃的时成立 (mobility_signals.lowHpHoldRecovers); 否则转 FREE (同 famine gate) 让 kernel 派 feedUp —— 旧: kernel 为 MAROONED 让位 + self_preservation 让行军 + hold, 只有 <6b 怪能唤醒。
+**#15**: night_owner.decisionOwnsNightMining 加 nightMiningReceiverActive: 承诺技能 == bot._currentSkill, 或 15s 内技能挖掘, 或承诺 ≤10s 新 —— 旧: 只看 kernelDriver 心跳, 3 连败冷却/让位空档里反射照样为"在下挖"放弃夜宿。
+**#17** 不改: 无怪封坑失败 45s 冷却期内 bunkerCooldownReopen 已在近身<5b/苦力怕<8b/5–15b 射手时重开, 无"危险无人接"缺口。
+**回滚**: revert, 重启。回归 ranged_cover 'T-0182 #25' + night_owner 'T-0182 #15'。
+
 ## C383. 危险无人掌舵兜底: 被动位移 (击退/坠落) 不算有人掌舵 + #11 甲兵单挑索敌半径对齐（modes.js 需重启,T-0182,worker-death,✅已上线 01:03:29Z 85796ed）
 
 **证据**: death #13 00:23:41-43 act_trace ctrl 全空 path=0, 但箭击退+落坑让 bot 3s 内移动 ~4b; reflex_watchdog 掌舵判据只看位移 ≥0.8b → 记为"有人在开"。

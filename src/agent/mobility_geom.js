@@ -87,6 +87,47 @@ export function backtrackTarget(crumbs, me, threat, { maxRise = 3 } = {}) {
     return null;
 }
 
+/**
+ * ★T-0200 (death #14 10-10 01:06:05: 苦力怕 7.8b 逼近, 地形可跑的方向全被 17b 外"大致同向"的另一只苦力怕否决
+ * → 原地 bunker/hold → 被炸)。逃跑走廊风险分两级 (纯函数, 判据与旧 creeperCorridorRisk 同口径):
+ *   hard — 目标苦力怕 ≤5.5b 且方向不背离 (toward>-0.1) / 5.5–10b 且朝它 (toward>0.25); 任一苦力怕 6 步投影内 <7.5b
+ *   soft — 非目标苦力怕 <18b 且大致同向 (toward>0.15) 但投影始终 ≥7.5b (还远, 先躲近的)
+ * creepers: [{x,y,z,isTarget}] ; p0 {x,y,z} ; (rx,rz) 单位方向
+ * @returns {{hard, soft, minProjected, worst}}
+ */
+export function creeperCorridorAssess(creepers, p0, rx, rz) {
+    let hard = false, soft = false, minProjected = Infinity, worst = null;
+    for (const e of creepers || []) {
+        const d0 = Math.hypot(e.x - p0.x, (e.y ?? p0.y) - p0.y, e.z - p0.z);
+        if (d0 > 24) continue;
+        const vx = e.x - p0.x, vz = e.z - p0.z, h = Math.hypot(vx, vz);
+        const toward = h < 0.001 ? 1 : (rx * vx + rz * vz) / h;
+        let projected = h < 0.001 ? 0 : d0;
+        for (const step of [2, 4, 6]) projected = Math.min(projected, Math.hypot(e.x - (p0.x + rx * step), e.z - (p0.z + rz * step)));
+        minProjected = Math.min(minProjected, projected);
+        let lvl = null;
+        if (h < 0.001) lvl = 'hard';
+        else if (e.isTarget) {
+            if ((d0 <= 5.5 && toward > -0.1) || (d0 > 5.5 && d0 < 10 && toward > 0.25)) lvl = 'hard';
+        } else if (projected < 7.5) lvl = 'hard';
+        else if (d0 < 18 && toward > 0.15) lvl = 'soft';
+        if (lvl === 'hard') hard = true;
+        if (lvl === 'soft') soft = true;
+        if (lvl && (!worst || lvl === 'hard')) worst = { d: d0, toward, projected, level: lvl };
+    }
+    return { hard, soft, minProjected, worst };
+}
+
+/** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */
+export function pickCreeperRunDir(cands) {
+    const okTerrain = (cands || []).filter(c => c && c.ok);
+    const clean = okTerrain.find(c => !c.assess.hard && !c.assess.soft);
+    if (clean) return { ...clean, tier: 'clean' };
+    let best = null;
+    for (const c of okTerrain) if (!c.assess.hard && (!best || c.assess.minProjected > best.assess.minProjected)) best = c;
+    return best ? { ...best, tier: 'soft' } : null;
+}
+
 export function chooseFleeHeading(dx, dz, probe) {
     let hx = dx, hz = dz, needJump = true;   // boxed-in fallback: jump + push straight
     let _found = false;

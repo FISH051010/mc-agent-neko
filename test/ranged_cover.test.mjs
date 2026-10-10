@@ -71,6 +71,19 @@ test('T-0182 #11: armoredSoloBrawl 让 shouldFlee 不逃 (16b 判据) ⇒ self_d
     assert.match(src, /const range = recentlyHurt \? \(armoredSoloBrawl\(bot\) \? 16 : 12\) : 5;/, 'self_defense reach matches the brawl radius');
 });
 
+test('T-0182 #25: MAROONED 残血 hold 只在"等着能回血"时成立 — 回不了血又没吃的 → 必须放手让 feedUp 派发', async () => {
+    const { lowHpHoldRecovers } = await import('../src/agent/framework/mobility_signals.js');
+    assert.equal(lowHpHoldRecovers({ hp: 5, food: 12, hasEdible: false }), false, 'food<18, nothing to eat → hold = freeze');
+    assert.equal(lowHpHoldRecovers({ hp: 5, food: 12, hasEdible: true }), true, 'auto_eat will act');
+    assert.equal(lowHpHoldRecovers({ hp: 5, food: 19, hasEdible: false }), true, 'natural regen');
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const i = src.indexOf('if (!lowHpMovementProfile(bot.health).allowJump) {');
+    assert.ok(i > 0);
+    const hold = src.slice(i, src.indexOf('MAROONED low-hp hold hp=', i));
+    assert.match(hold, /lowHpHoldRecovers\(/);
+    assert.match(hold, /state: 'FREE'/);
+});
+
 test('T-0182 #24: self_defense 的 ranged-unreachable-trap 让位分支在被射时必须自己接手 (垫块 → 回撤), 不能裸 return', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const i = src.indexOf('DISENGAGE ranged-unreachable-trap mob=');

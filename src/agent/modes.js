@@ -28,10 +28,10 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, effectivelyOwned, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, effectivelyOwned, lowHpHoldRecovers, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
@@ -2302,6 +2302,7 @@ const modes_list = [
                     // backoff run, no module-level mutable state (hot-reload safe by construction).
                     let lastCreeperPunchAt = 0;   // >=550ms spacing → full-charge knockback, clears 500ms hurt-invuln
                     let creeperPunches = 0;       // hard per-encounter cap — no infinite same-action retry
+                    let gatedPunches = 0;         // ★T-0200 ②: no-lane knock-backs before falling back to bunker
                     for (let i = 0; i < 4000; i++) {
                         if (bot.interrupt_code || bot.health <= 0) break;
                         if (bot.oxygenLevel !== undefined && bot.oxygenLevel <= 6) break; // drowning → swim reflex
@@ -2425,58 +2426,64 @@ const modes_list = [
                                 return { fwd, foot, head, drop, hazard: bad(foot) || bad(head) };
                             } catch (e) { return { fwd: null, foot: null, head: null, drop: 5, hazard: true }; }
                         };
-                        const creeperCorridorRisk = (rx, rz, target) => {
-                            try {
-                                const p0 = bot.entity.position;
-                                for (const e of Object.values(bot.entities || {})) {
-                                    if (!e || !e.position || !/creeper/i.test(e.name || '')) continue;
-                                    const d0 = e.position.distanceTo(p0);
-                                    if (d0 > 24) continue;
-                                    const vx = e.position.x - p0.x;
-                                    const vz = e.position.z - p0.z;
-                                    const h = Math.hypot(vx, vz);
-                                    if (h < 0.001) return { risk: true, name: e.name || 'creeper', d: d0, toward: 1, projected: 0 };
-                                    const toward = (rx * vx + rz * vz) / h;
-                                    let projected = d0;
-                                    for (const step of [2, 4, 6]) {
-                                        const px = p0.x + rx * step;
-                                        const pz = p0.z + rz * step;
-                                        projected = Math.min(projected, Math.hypot(e.position.x - px, e.position.z - pz));
-                                    }
-                                    if (e === target) {
-                                        if (d0 <= 5.5 && toward > -0.1) return { risk: true, name: e.name || 'creeper', d: d0, toward, projected };
-                                        if (d0 > 5.5 && d0 < 10 && toward > 0.25) return { risk: true, name: e.name || 'creeper', d: d0, toward, projected };
-                                        continue;
-                                    }
-                                    if ((d0 < 18 && toward > 0.15) || projected < 7.5) {
-                                        return { risk: true, name: e.name || 'creeper', d: d0, toward, projected };
-                                    }
-                                }
-                            } catch (e) {}
-                            return { risk: false };
-                        };
                         const rotate = (rx, rz, a) => {
                             const ca = Math.cos(a), sa = Math.sin(a);
                             return [rx * ca - rz * sa, rx * sa + rz * ca];
                         };
-                        const maxDrop = 2;
+                        const maxDrop = 3;   // ★T-0200: a ≤3-block fall deals no damage (MC: damage = fall − 3)
                         let runDir = null;
                         let runInfo = null;
                         let runRisk = null;
-                        for (const a of [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2]) {
+                        // ★T-0200 (death #14): a far creeper roughly ahead is a SOFT risk (rank, don't veto) — the old
+                        //   all-or-nothing veto turned "run from the 7.8b creeper" into "bunker in place" because another
+                        //   creeper stood 17b away in the same general direction. Hard risks still veto (creeperCorridorAssess).
+                        const _creepers = [];
+                        try {
+                            for (const e of Object.values(bot.entities || {})) {
+                                if (e && e.position && /creeper/i.test(e.name || '')) _creepers.push({ x: e.position.x, y: e.position.y, z: e.position.z, isTarget: e === c });
+                            }
+                        } catch (e) {}
+                        const _cands = [];
+                        // fan incl. perpendicular (±90°) and back-quarters (±135°): the hard target check still
+                        // vetoes any lane that closes on the near creeper.
+                        for (const a of [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, 3 * Math.PI / 4, -3 * Math.PI / 4]) {
                             const [tx, tz] = rotate(dx, dz, a);
                             const info = inspectRunDir(tx, tz);
-                            const risk = creeperCorridorRisk(tx, tz, c);
-                            if (!info.hazard && info.drop <= maxDrop && !risk.risk) {
-                                runDir = [tx, tz];
-                                runInfo = info;
-                                break;
-                            } else if (!info.hazard && info.drop <= maxDrop && !runRisk) {
-                                runRisk = risk;
+                            _cands.push({ dir: [tx, tz], info, ok: !info.hazard && info.drop <= maxDrop, assess: creeperCorridorAssess(_creepers, bot.entity.position, tx, tz) });
+                        }
+                        const _pick = pickCreeperRunDir(_cands);
+                        if (_pick) {
+                            runDir = _pick.dir;
+                            runInfo = _pick.info;
+                            if (_pick.tier === 'soft' && Date.now() - (this._softRunLogAt || 0) > 4000) {
+                                this._softRunLogAt = Date.now();
+                                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] creeper backoff: no clean lane — taking least-bad lane (min projected ${_pick.assess.minProjected.toFixed(1)}b to any creeper) instead of bunkering (T-0200)\n`); } catch (e) {}
                             }
+                        } else {
+                            const _w = _cands.find(x => x.ok && x.assess.worst);
+                            if (_w) runRisk = { risk: true, name: 'creeper', d: _w.assess.worst.d, projected: _w.assess.worst.projected, toward: _w.assess.worst.toward };
                         }
                         if (!runDir) {
                             try { bot.clearControlStates(); } catch (e) {}
+                            // ★T-0200 ② (监工): 苦力怕 ≤3.4b 且无路可退 → bunker 3s 内建不完 = 没人接。人类: 拿剑把它打退
+                            //   (击退把它推出引爆距离, 爆炸伤害随距离陡降), 垫一块挡, 再回循环重新选路。连续 6 次仍无路才 bunker。
+                            const _cdG = c ? c.position.distanceTo(bot.entity.position) : Infinity;
+                            if (c && _cdG <= 3.4 && gatedPunches < 6 && typeof this.creeperPunchBack === 'function') {
+                                gatedPunches++;
+                                try {
+                                    const _sw = bot.inventory.items().find(it => /_sword$|_axe$/.test(it.name || '') && !/pickaxe/.test(it.name || ''));
+                                    if (_sw && (!bot.heldItem || bot.heldItem.name !== _sw.name)) await Promise.race([bot.equip(_sw, 'hand'), new Promise(r => setTimeout(r, 250))]);
+                                } catch (e) {}
+                                let _hit = false;
+                                try { _hit = this.creeperPunchBack(agent, c); } catch (e) {}
+                                if (typeof this.creeperInterpose === 'function' && Date.now() - (this._creeperInterposeAt || 0) > 1200) {
+                                    this._creeperInterposeAt = Date.now();
+                                    try { await this.creeperInterpose(agent, c, 800); } catch (e) {}
+                                }
+                                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] creeper ≤3.4b and no lane — knock it back (${_hit ? 'hit' : 'miss'}) + interpose, then re-pick a lane (#${gatedPunches}, T-0200)\n`); } catch (e) {}
+                                await new Promise(r => setTimeout(r, 200));
+                                continue;
+                            }
                             const bad = inspectRunDir(dx, dz);
                             try {
                                 fs.appendFileSync('bots/_supervisor/progress.txt',
@@ -5029,6 +5036,23 @@ const modes_list = [
                     //   safe bot loses nothing by waiting for food/regen; a falling one loses the whole kit.
                     if (!lowHpMovementProfile(bot.health).allowJump) {
                         try { bot.clearControlStates(); } catch (e) {}
+                        // ★T-0182 #25: the hold only makes sense if waiting actually heals (food≥regen line or
+                        //   something to eat). Otherwise kernelDriver (yielding to MAROONED) never dispatches feedUp
+                        //   and the bot freezes until a mob <6b wakes someone — release to FREE like the famine gate.
+                        const _edible = bot.inventory.items().some(i => FAMINE_FOOD_RE.test(i.name || ''));
+                        if (!lowHpHoldRecovers({ hp: bot.health, food: bot.food, hasEdible: _edible })) {
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] MAROONED low-hp hold would never heal (hp=${Math.round(bot.health || 0)} food=${bot.food} no food) — release to FREE so feedUp can dispatch (T-0182 #25)\n`); } catch (e) {}
+                            this.lastState = 'FREE';
+                            this.stateSince = Date.now();
+                            this.regAnchor = bot.entity.position.clone();
+                            this.regAt = Date.now();
+                            this.maroonedAt = 0;
+                            bot._marchDir = null;
+                            bot._marchFails = 0;
+                            bot._maroonedMarchOrigin = null;
+                            try { bot._mobility = { ...(bot._mobility || {}), state: 'FREE', since: this.stateSince }; } catch (e) {}
+                            return;
+                        }
                         if (Date.now() - (bot._lowHpMarchHoldLogAt || 0) > 30000) {
                             bot._lowHpMarchHoldLogAt = Date.now();
                             try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0154 MAROONED low-hp hold hp=${Math.round(bot.health || 0)} food=${bot.food} — no climb/jump/ledge march until hp>6

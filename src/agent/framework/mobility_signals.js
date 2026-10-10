@@ -1,3 +1,5 @@
+import { cannotRegen } from './food_floor.js';
+
 // ★T-0121 采矿心跳 (MAROONED 误判豁免): 地下 branchMine/mineDown 打矿道 = 有目的工程, 不是被困。
 // 实录 10-10 16:47:19→16:50:19: bot 在 y23 整晚挖矿 (粗铁 8→12), mobility 因"90s 没挪 20 格 + 寻路失败"
 // 判 MAROONED 并 sticky 180s, march 42 次抢挖掘槽 ("dig slot busy … heldBy=branchMine:ore-window") = 拔河。
@@ -177,6 +179,15 @@ export function mobilityDigTimeoutMs(bot, block) {
 //   统一原语: hp<=LOW_HP 时 不跳跃前进、落差<=1、不 parkour(跳弧下方深坑)。所有移动路径过它
 //   (pathfinder: Movements 访问器按血量实时钳制; mobility: MAROONED 行军残血 hold)。
 export const LOW_HP_MOVE = 6;
+/**
+ * ★T-0182 #25: MAROONED 残血 hold 的前提是"等着就能回血" — 接收方是自然回血 (food≥FOOD_RELEASE) 或
+ * auto_eat (包里有能吃的)。两者都不在 → hold = 冻结: kernelDriver 为 MAROONED 让位不派 feedUp, self_preservation
+ * 让位行军, 只有 <6b 的怪能唤醒。此时必须放手 (转 FREE) 让决策层去觅食 (pathfinder 残血档已钳制跳跃/落差)。
+ */
+export function lowHpHoldRecovers({ hp, food, hasEdible }) {
+    if (hasEdible) return true;
+    return !cannotRegen(hp, food);
+}
 export function lowHpMovementProfile(hp) {
     const h = Number.isFinite(hp) ? hp : 20;
     const low = h <= LOW_HP_MOVE;
