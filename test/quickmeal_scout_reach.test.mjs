@@ -154,3 +154,12 @@ test('T-0213: 定向侦察航点沿连线每 32b 一段走到目标 (145b), 再�
     assert.equal(ring.length, 8);
     assert.ok(ring.every(p => Math.abs(Math.hypot(p.x - 145, p.z) - 16) < 1e-6), 'circle the target at 16b');
 });
+
+test('T-0214: 封在坑里 (每段寻路都瞬间返回、一格不动) → 连续 6 段不动即提前结束, 不把 42 段试完', async () => {
+    let gotos = 0;
+    const bot = { food: 5, health: 18, entity: { position: V(0, 73, 0) }, entities: {}, blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {}, setGoal() {}, setMovements() {}, goto: async () => { gotos++; } }, clearControlStates() {} };
+    await quickMeal(bot, { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } },
+        { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 90000 });
+    assert.ok(gotos <= 7, `stopped early after ${gotos} motionless legs`);
+});

@@ -143,7 +143,7 @@ export async function scoutForAnimal(bot, opts) {   // ★T-0202 导出: bedErra
 
 async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward, targetRe }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
-    let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, moved = 0, firstErr = null;
+    let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, stuckRun = 0, moved = 0, firstErr = null;
     setSafeMovements(bot);
     const wps = scoutWaypoints(origin, scoutRadius, scoutToward);
     for (let wi = 0; wi < wps.length; wi++) {
@@ -187,6 +187,10 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
         }
         stoppedRun = 0;
         if (err) { legsFailed++; if (!firstErr) firstErr = err.slice(0, 80); }
+        // ★T-0214 (02:56:37-02:57:55Z 实录: 拂晓还封在夜坑里, 两轮各 42 段 moved 0b, 白跑 25s): 连续 6 段几乎没动 → 提前结束
+        const legMoved = Math.hypot(bot.entity.position.x - x0, bot.entity.position.z - z0);
+        stuckRun = legMoved < 0.5 ? stuckRun + 1 : 0;
+        if (stuckRun >= 6) { prog(`scout: ${stuckRun} legs in a row without moving (sealed pit / no path) — stop early`); break; }
     }
     const last = pickHuntTarget(bot, radius, maxDy, targetRe);
     if (!last) prog(`scout: ${legs} legs, ${legsFailed} unreachable, ${legsStopped} stopped, moved ${moved.toFixed(0)}b in ${((Date.now() - t0) / 1000).toFixed(1)}s${firstErr ? ` (first fail: ${firstErr})` : ''}`);
