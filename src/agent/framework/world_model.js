@@ -23,14 +23,16 @@ import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
-import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits } from './kit_gate.js';
+import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt } from './food_floor.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
-export const NIGHT_ARMOR_PRIORITY = 94.2;   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
+export const NIGHT_ARMOR_PRIORITY = 94.2;
+export const BED_ERRAND_PRIORITY = 66;   // ★T-0202 床优先: FOOD_FLOOR 70 之后、GET_ARMOR 58 之前
+export const BED_ERRAND_MIN_FOOD = 10;   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
 export const STARVING_FOOD_FLOOR_COOLDOWN_MS = 30000;   // ★T-0201 food=0 时 FOOD_FLOOR 派发冷却上限 (续命类不干等 5min)
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
@@ -865,6 +867,14 @@ export function proposeTasks(world, bot) {
         preIronDescend: !hasIronTierPick(w),
         diamondYield: hasIronTierPick(w) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < DIAMOND_FLOOR,
     });
+    // ★T-0202 床优先 (监工战略拍板, #13/#14/#15 45min 三连死; #5/#15 裸装夜间重生即死): 石器到手 (石镐+剑) 后的白天、food≥10、
+    //   无敌对 → 主动侦察找羊做床并设重生点 (bedErrand: ≤96b/120s 有界侦察, 剪/杀取 3 羊毛 → setBed)。@66: FOOD_FLOOR@70 之后、
+    //   GET_ARMOR@58 之前 (人类顺序: 吃饱 → 床 → 甲)。不看 hp (core routing 禁绝对 hp 门), food≥10 已能回血。
+    if (overworld && kit.picks >= 1 && !bedKnown(bot) && bedErrandScoutOk(w, bot)) {
+        push({ kind: PROPOSAL_KIND.GET_BED, priority: BED_ERRAND_PRIORITY, skill: 'bedErrand',
+               rationale: 'stone-tier + no bed — scout for sheep (≤96b/120s), 3 wool → bed, set spawn here (sleep the night, respawn by the bed)',
+               hints: { bedErrand: true } });
+    } else
     if (overworld && kit.picks >= 1 && !bedKnown(bot) && _bedPri != null && bedErrandFeasible(bot)) {   // ★T-0119: never propose a guaranteed setBed no-op   // ★T-0092 completion (worker-sync): GET_BED@50 was an UNFULFILLABLE wool-errand (no wool→no bed→bedKnown永false) that OUTRANKED GET_DIAMOND@46, so an iron-tooled+armored bot never descended for diamond. Yield GET_BED exactly when the bot is diamond-ready (mirror the GET_DIAMOND gate) so GET_DIAMOND wins → mineDiamonds descends. Safe: pure re-prioritize, does NOT gate pick/bed-MAKING (keepInventory ON so a delayed respawn-anchor loses nothing).
         // ★T-0110 (worker-frozen 0701): RE-ENABLE the @44 yield the T-0060 note below deferred. That
         // note's exact blocker — "@44 → GO_UNDERGROUND → mineDown NO-OP-spun → HARD-PINNED, because the
@@ -1608,7 +1618,7 @@ export function isGoalDone(kind, world, bot) {
         // ironArmorGoalDone — a flat `<4` livelocked at e.g. boots owned + 4 iron, helmet costs 5).
         case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot) || armorCraftBlocked(w, bot);   // ★T-0157 缺台/炉/燃料即释放
         case PROPOSAL_KIND.RECLAIM_FURNACE: return !strandedFurnaceInReach(w, STRANDED_RELEASE_REACH);   // 释放门 128 > 提案门 96 (迟滞)
-        case PROPOSAL_KIND.GET_BED:       return bedKnown(bot) || !bedErrandFeasible(bot);   // ★T-0178 同谓词: 入夜/无路径即释放 (防 holding commitment 续派 setBed NO-OP)
+        case PROPOSAL_KIND.GET_BED:       return bedKnown(bot) || (!bedErrandFeasible(bot) && !bedErrandScoutOk(w, bot));   // ★T-0178 同谓词: 入夜/无路径即释放; ★T-0202 侦察找羊路径成立时不释放
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
@@ -2105,6 +2115,15 @@ export function woolPathVisible(bot) {
  *  both = a guaranteed DEFER (live 10-10 02:26: night DIAMOND rush ×3 DEFER → night plan cooled, hp1 exposed). */
 export function diamondDiveReady(bot) {
     return invCount(bot, /^(iron|diamond|netherite)_pickaxe$/) >= 1 && invCount(bot, /^stone_pickaxe$/) >= 1;
+}
+
+/** ★T-0202 床优先: 石器到手 (石镐+ 且有剑) + 白天 + food≥10 + 无可动敌对 → 可以去侦察找羊做床 (bedErrand)。提案门与 isGoalDone 同谓词。 */
+export function bedErrandScoutOk(world, bot) {
+    try {
+        const w = world || EMPTY_WORLD;
+        return w.time && w.time.phase === 'day' && Number(w.vitals && w.vitals.food) >= BED_ERRAND_MIN_FOOD
+            && !((w.threat && w.threat.actionable) > 0) && hasStoneTierPick(w) && !swordMissing(invCounts(bot));
+    } catch (e) { return false; }
 }
 
 export function bedErrandFeasible(bot) {

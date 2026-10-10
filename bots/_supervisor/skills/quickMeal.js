@@ -116,13 +116,13 @@ function installStopProbe(bot) {
     };
 }
 
-async function scoutForAnimal(bot, opts) {
+export async function scoutForAnimal(bot, opts) {   // ★T-0202 导出: bedErrand 找羊复用同一套有界侦察
     const probe = installStopProbe(bot);
     try { return await scoutForAnimalInner(bot, opts); }
     finally { probe.restore(); const s = probe.summary(); if (s) prog(`scout interrupters (T-0199 probe): ${s}`); }
 }
 
-async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
+async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward, targetRe }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
     let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, moved = 0, firstErr = null;
     setSafeMovements(bot);
@@ -139,7 +139,7 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
             const ap = awayPoint(me, hd.h.pos, 24);
             if (Math.hypot(ap.x - origin.x, ap.z - origin.z) <= scoutRadius) { wp = ap; prog(`scout away from ${hd.h.name} ${hd.h.dist.toFixed(1)}b → (${Math.round(ap.x)},${Math.round(ap.z)})`); }
         }
-        const found = pickHuntTarget(bot, radius, maxDy);
+        const found = pickHuntTarget(bot, radius, maxDy, targetRe);
         if (found) return found;
         const legMs = Math.min(20000, scoutMs - (Date.now() - t0));
         // ★T-0189 (23:21:15-17Z 实录: "bounded scout" 0.15-0.4s 就 "found nothing"; 上线以来只成功过一次): 旧 GoalNear 把目标高度钉在
@@ -168,7 +168,7 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
         stoppedRun = 0;
         if (err) { legsFailed++; if (!firstErr) firstErr = err.slice(0, 80); }
     }
-    const last = pickHuntTarget(bot, radius, maxDy);
+    const last = pickHuntTarget(bot, radius, maxDy, targetRe);
     if (!last) prog(`scout: ${legs} legs, ${legsFailed} unreachable, ${legsStopped} stopped, moved ${moved.toFixed(0)}b in ${((Date.now() - t0) / 1000).toFixed(1)}s${firstErr ? ` (first fail: ${firstErr})` : ''}`);
     return last;
 }
@@ -178,12 +178,12 @@ const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()
 const RAW = ['beef', 'porkchop', 'mutton', 'rabbit', 'chicken'];
 const COOKED = ['cooked_beef', 'cooked_porkchop', 'cooked_mutton', 'cooked_rabbit', 'cooked_chicken'];
 
-export function pickHuntTarget(bot, radius, maxDy) {
+export function pickHuntTarget(bot, radius, maxDy, targetRe = HUNTABLE_RE) {   // ★T-0202: targetRe 可只找羊 (bedErrand 复用)
     const me = bot.entity && bot.entity.position;
     if (!me) return null;
     let best = null, bd = Infinity;
     for (const e of Object.values(bot.entities || {})) {
-        if (!e || !e.position || !HUNTABLE_RE.test(e.name || '')) continue;
+        if (!e || !e.position || !targetRe.test(e.name || '')) continue;
         if (Math.abs(e.position.y - me.y) > maxDy) continue;
         const d = Math.hypot(e.position.x - me.x, e.position.z - me.z);   // 监工口径: 半径按水平距离
         if (d <= radius && d < bd) { bd = d; best = e; }
