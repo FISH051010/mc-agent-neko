@@ -167,6 +167,41 @@ export function descendTolerance(startY, targetY) {
     return Math.max(0, Math.min(6, Math.floor((startY - targetY) / 3)));
 }
 
+/** ★T-0193: pathfinder walk to a planned column, bounded (live 00:04:30 a relocate hung 43s). true = within 2.5b. */
+export async function goToColumn(bot, skills, dest, ms = 20000) {
+    let timer = null;
+    try {
+        await Promise.race([
+            Promise.resolve().then(() => skills.goToPosition(bot, dest.x, dest.y, dest.z, 1)).catch(() => {}),
+            new Promise(r => { timer = setTimeout(r, ms); }),
+        ]);
+    } finally { if (timer) clearTimeout(timer); }
+    const p = bot.entity.position;
+    const ok = Math.hypot(p.x - (dest.x + 0.5), p.z - (dest.z + 0.5)) <= 2.5;
+    if (!ok) { try { bot.pathfinder.stop(); } catch (e) {} try { bot.clearControlStates(); } catch (e) {} }
+    return ok;
+}
+
+/** ★T-0193 relocation when no dry tunnel line works: walk (own tunnels / surface) to a solid column 6-24b away;
+ *  surface-only moveAway as a last resort (it has never moved the bot underground); underground → fail fast. */
+export async function relocateFallback(bot, skills, bn, log_, why, { ms = 20000 } = {}) {
+    const p = bot.entity.position;
+    const cx = Math.floor(p.x), cy = Math.round(p.y), cz = Math.floor(p.z);
+    const dest = planSolidColumn(bn, cx, cy, cz);
+    if (dest) {
+        const ok = await goToColumn(bot, skills, dest, ms);
+        log_(`relocate: ${why} — path to solid column ${dest.x},${dest.y},${dest.z} ${ok ? 'arrived' : 'not reached'}`);
+        return ok;
+    }
+    if (openSkyAbove(bn, cx, cy, cz) || (bot._mobility && bot._mobility.enclosed === false)) {
+        log_(`relocate: ${why} — surface, no solid column found; moveAway`);
+        try { await skills.moveAway(bot, 10); } catch (e) {}
+        return true;
+    }
+    log_(`relocate: ${why} — underground, no solid column in reach; honest fail (moveAway never moves underground)`);
+    return false;
+}
+
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     const nm = (b) => (b && b.name) || 'air';
     const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
@@ -333,9 +368,10 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 if (_tun) {
                     const _ok = await walkDugPath(bot, skills, Vec3, bn, _tun.path);
                     log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length} — ${_ok ? 'arrived' : 'walk stopped early: ' + (bot._walkDugFail || '?')}`);
+                    if (!_ok) await relocateFallback(bot, skills, bn, log_, 'tunnel walk stopped');
                 } else {
-                    log_('relocate tunnel: no dry solid 9-cell line at this level — falling back to moveAway');
-                    try { await skills.moveAway(bot, 10); } catch (e) {}
+                    // ★T-0193: moveAway underground moved 0.2b / hung 43s (live 00:04:25-30) — column walk or fast fail
+                    await relocateFallback(bot, skills, bn, log_, 'no dry solid 9-cell tunnel line at this level');
                 }
                 const p2 = bot.entity.position;
                 const movedB = Math.hypot(p2.x - before.x, p2.z - before.z);
@@ -884,10 +920,9 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 } else if (openSkyAbove(bn, cx, cy, cz) || (bot._mobility && bot._mobility.enclosed === false)) {
                     const _dest = planSolidColumn(bn, cx, cy, cz);
                     if (_dest) {
-                        try { await skills.goToPosition(bot, _dest.x, _dest.y, _dest.z, 1); } catch (e) {}
+                        _moved = await goToColumn(bot, skills, _dest);   // ★T-0193 bounded walk
                         const _p = bot.entity.position;
                         const _left = Math.hypot(_p.x - (_dest.x + 0.5), _p.z - (_dest.z + 0.5));
-                        _moved = _left <= 2.5;
                         log_(`void: surface relocate to solid column ${_dest.x},${_dest.y},${_dest.z} (${Math.round(Math.hypot(_dest.x - cx, _dest.z - cz))}b) — ${_moved ? 'arrived' : 'stopped ' + _left.toFixed(1) + 'b short'}`);
                     } else log_(`void: surface — no column with 5 solid below within 24b`);
                 } else log_(`void: no tunnel line${_tun ? ' (walk stopped: ' + (bot._walkDugFail || '?') + ')' : ''} and not under open sky`);

@@ -3025,6 +3025,8 @@
 
 - **★C407-S mineDown 楼梯主循环响应 kernel 承诺切换(T-0190)**（2026-10-10，worker-stuck，T-0190）: 实录 10-09 23:26:37→23:26:53 'commitment flipped GET_IRON_ARMOR_SET→NIGHT_DIG_ONE mid-child → interrupt mineDown' ×17 — 楼梯主循环只有到层分支挖矿循环查 interrupt_code (反射脉冲也置位, 不能裸查), 于是切换后仍走完 step 11 + 整轮楔死恢复 (ghost re-dig ×3/blacklist/sidestep) 才退出。修: 复用 T-0181 的 _commitFlipAt 戳 (surfaceUp.kernelYieldRequested), 每步开头与 wedgeRecover 入口检查, 命中即 abort 'kernel commitment flipped — yield' (kernel 以 interrupted 结算, 不计 strike)。测试 test/minedown_kernel_yield.test.mjs。
 
+- **★C408-S mineDown 换址退路: 地下不再 moveAway, 寻路到实心列或快速诚实失败(T-0193)**（2026-10-10，worker-stuck，T-0193）: 实录 10-10 00:04:25/30 @-5,48,7 含水层区四向皆记忆 → START lever#1 'no dry solid 9-cell line — falling back to moveAway' → moved 0.2b; 第二次 moveAway 挂起 43s 直到重启。moveAway (GoalInvert) 地下史上 0 成功。修: relocateFallback = planSolidColumn (T-0183) + goToColumn (goToPosition 20s 上限, 超时 pathfinder.stop) 沿自家通道去 6-24b 外实心列; 仅地表 (openSkyAbove / enclosed=false) 才 moveAway; 地下都不行 → 立即诚实失败。START 隧道不可行/走失败都走它; 空洞分支地表寻路也改用 goToColumn 限时。测试 test/minedown_relocate_fallback.test.mjs, 更新 T-0161/T-0183 钉子。
+
 ---
 
 ---
