@@ -136,7 +136,9 @@ test('监工加急#2: 侦察航点全在 96 格内, 有线索先朝线索; 16 �
         const o = { x: 81, y: 64, z: 54 };
         const pts = scoutWaypoints(o, 96, { x: 300, z: 54 });
         assert.ok(pts.every(p => Math.hypot(p.x - o.x, p.z - o.z) <= 96 + 1e-6), 'bounded radius');
-        assert.ok(Math.abs(pts[0].x - (81 + 96)) < 1e-6, 'first leg heads toward the hint, clipped to 96');
+        // T-0213: 沿连线分段 (每 32b) 走向线索, 最远一点截在半径上
+        assert.ok(Math.abs(pts[0].x - (81 + 32)) < 1e-6 && Math.abs(pts[0].z - 54) < 1e-6, 'first leg heads toward the hint (32b step)');
+        assert.ok(pts.some(p => Math.abs(p.x - (81 + 96)) < 1e-6), 'reaches the radius along the hint line');
         const V = (x, y, z) => ({ x, y, z, distanceTo(q) { return Math.hypot(this.x - q.x, this.y - q.y, this.z - q.z); } });
         assert.equal(hostileWithin({ entity: { position: V(0, 64, 0) }, entities: { 1: { name: 'zombie', position: V(10, 64, 0) } } }, 16), true);
         assert.equal(hostileWithin({ entity: { position: V(0, 64, 0) }, entities: { 1: { name: 'cow', position: V(10, 64, 0) } } }, 16), false);

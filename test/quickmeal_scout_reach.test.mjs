@@ -143,3 +143,14 @@ test('T-0211: 地下饿着要上浮, 但 16 格内有敌对 → 不上浮 (等 �
     assert.equal(r.deferred, true, JSON.stringify(r));
     assert.ok(Date.now() - t0 < 17000);
 });
+
+test('T-0213: 定向侦察航点沿连线每 32b 一段走到目标 (145b), 再绕目标 16b 一圈, 不是一个够不着的直达点', async () => {
+    const { scoutWaypoints } = await import('../bots/_supervisor/skills/quickMeal.js');
+    const pts = scoutWaypoints({ x: 0, y: 64, z: 0 }, 162, { x: 145, z: 0 });
+    const line = pts.slice(0, 5);
+    assert.deepEqual(line.map(p => Math.round(p.x)), [32, 64, 96, 128, 145], 'stepwise along the line to the target');
+    assert.ok(line.every(p => Math.abs(p.z) < 1e-6));
+    const ring = pts.slice(5, 13);
+    assert.equal(ring.length, 8);
+    assert.ok(ring.every(p => Math.abs(Math.hypot(p.x - 145, p.z) - 16) < 1e-6), 'circle the target at 16b');
+});

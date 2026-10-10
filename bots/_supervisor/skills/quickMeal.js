@@ -31,9 +31,18 @@ export function haltPath(bot) {
 export function scoutWaypoints(origin, radius, toward) {
     const pts = [];
     if (toward && Number.isFinite(toward.x)) {
+        // ★T-0213 (02:42-02:46Z 实录: 羊在 145-153b 外一直被追踪着, 定向侦察 100s 没走到 — 旧逻辑只放一个 145b 的直达点, 单段 20s
+        //   超时走不到, 之后的航点全绕出发点转圈, 越走越远): 沿连线每 32b 一个中间点一路走到目标, 到了在目标周围 16b 转一圈,
+        //   最后才退回出发点螺旋。
         const dx = toward.x - origin.x, dz = toward.z - origin.z, d = Math.hypot(dx, dz) || 1;
         const reach = Math.min(radius, d);
-        pts.push({ x: origin.x + dx / d * reach, z: origin.z + dz / d * reach });
+        const along = (s) => ({ x: origin.x + dx / d * s, z: origin.z + dz / d * s });
+        for (let s = 32; s < reach; s += 32) pts.push(along(s));
+        pts.push(along(reach));
+        if (d <= radius) for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * Math.PI * 2, p = { x: toward.x + Math.cos(a) * 16, z: toward.z + Math.sin(a) * 16 };
+            if (Math.hypot(p.x - origin.x, p.z - origin.z) <= radius) pts.push(p);
+        }
     }
     for (let r = 24; r <= radius; r += 24)
         for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + r / 24; pts.push({ x: origin.x + Math.cos(a) * r, z: origin.z + Math.sin(a) * r }); }
