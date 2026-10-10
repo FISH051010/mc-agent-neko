@@ -68,8 +68,12 @@ export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
 // Requires a REAL pick: a pickless bot "dig_one"-ing soft dirt buries itself under the forest floor
 // (live 06-30 @y66→y62 capped → dawn trees all "+4 elevated unreachable" → wood=0 bootstrap deadlock).
 // Never in a gravity column, never below y16 (dig_one is a shallow night shelter).
-export function digOneCapViable({ picks, gravityPit, y }) {
-    return picks >= 1 && !gravityPit && y > 16;
+// ★T-0043 第三次复发 (death #5/#15, 监工: "裸装夜间重生 → 10s 内必须有顶"): T-0107 的前提是"keepInv 开, 裸 hold 挨打
+//   死了也便宜" — 本世界 keepInv 关, 且裸装夜里在出生点重生 = 裸 hold → 死 → 再重生的死循环, 比自埋更贵。T-0107 的
+//   自埋树底是旧 digOneCapOne 一夜一片往下沉 (y66→y62) + 天亮没人挖出; 现在 digOneCapOne 已封不再挖 (T-0105),
+//   天亮由 ENTOMBED 挖出接手。故: 无镐但脚下是可徒手挖的软土 (非重力) → 也可挖三填一 (只挖 1 格)。
+export function digOneCapViable({ picks, gravityPit, y, softFloor = false }) {
+    return !gravityPit && y > 16 && (picks >= 1 || !!softFloor);
 }
 
 // ★T-0118 回归修 (10-10 16:40 实录): 石镐磨光后 tier 掉回木器, 背包 97 圆石 + 2 木镐 + 9 原木 — 下矿门因

@@ -8,7 +8,7 @@ import nightShelter from '../bots/_supervisor/skills/nightShelter.js';
 // unless NEKO_ENABLE_SEAL_SHELTER=1. An upstream merge flipping this default silently resurrects the box.
 // (T-0103's "就地取材 for sealBlock" patched the pre-07-07 seal builder, which no longer exists.)
 
-function makeWorld({ pick = false, bag = { dirt: 20 } } = {}) {
+function makeWorld({ pick = false, bag = { dirt: 20 }, floor = 'grass_block' } = {}) {
     const calls = { place: 0, digOne: 0, goTo: 0 };
     const items = Object.entries(bag).map(([name, count]) => ({ name, count }));
     if (pick) items.push({ name: 'stone_pickaxe', count: 1 });
@@ -25,7 +25,7 @@ function makeWorld({ pick = false, bag = { dirt: 20 } } = {}) {
         clearControlStates() {},
         // flat grass plain: solid below y64, air above — no terrain walls at all
         blockAt: (p) => (p.y < 64
-            ? { name: 'grass_block', boundingBox: 'block', position: p, digTime: () => 900 }
+            ? { name: floor, boundingBox: 'block', position: p, digTime: () => 900 }
             : { name: 'air', boundingBox: 'empty', position: p }),
     };
     const counts = Object.fromEntries(items.map(i => [i.name, i.count]));
@@ -63,13 +63,24 @@ test('shelter-disabled (07-07): seal at night with a full dirt bag places ZERO b
     });
 });
 
-test('shelter-disabled §7.3: PICKLESS seal never hand-digs 挖三填一 (self-bury under trees → wood deadlock)', async () => {
+test('T-0043 不变量 (supersedes §7.3 pickless ban): 裸装夜间重生在软土上 → 当拍徒手挖三填一, 不裸 hold', async () => {
+    // death #15 01:10:27: naked respawn, bag = dirt×2, NIGHT_SEAL bare hold ×15 instant returns → zombie+drowned.
     await withSealEnv(undefined, async () => {
-        const { bot, ctx, calls } = makeWorld({ pick: false });
+        const { bot, ctx, calls } = makeWorld({ pick: false, bag: { dirt: 2 } });
         await nightShelter(bot, ctx, 'seal', { maxMs: 30 });
-        assert.equal(calls.place, 0);
-        assert.equal(calls.digOne, 0);
-        assert.equal(calls.goTo, 0, 'no relocation hunt for diggable ground either');
+        assert.equal(calls.place, 0, 'still no wall-box');
+        assert.equal(calls.digOne, 1, 'pickless digs the 1-deep pocket on soft ground');
+    });
+});
+
+test('T-0043: 裸装站在石头/沙子上 → 不徒手就地挖 (挖不动/重力柱), 只会去 ≤15b 找软土', async () => {
+    await withSealEnv(undefined, async () => {
+        for (const floor of ['stone', 'sand']) {
+            const { bot, ctx, calls } = makeWorld({ pick: false, floor });
+            await nightShelter(bot, ctx, 'seal', { maxMs: 30 });
+            assert.equal(calls.digOne, 0, `${floor}: no bare-hand dig in place, no soft ground to relocate to`);
+            assert.equal(calls.goTo, 0);
+        }
     });
 });
 

@@ -12,6 +12,14 @@
 
 ---
 
+## C386. ★★T-0043 第三次复发 (death #15): 裸装夜间重生必须当拍有顶 — 撤 §7.3 无镐禁挖 + 贴脸怪不就地开挖 + 残血兜底 1.5s（modes.js/kit_gate.js/mobility_signals.js 需重启; nightShelter.js 热加载,T-0043,worker-death,⏳待重启）
+
+**证据**: death #15 01:10:27 夜 @-16,63,-3, 0 甲 0 武器 0 镐, 背包 dirt×2 (#14 后重生)。夜计划 DIG_ONE_CAP 要 picks≥1 (T-0107/§7.3) → 落终兜底 SEAL_FORT = nightShelter('seal') 原地裸 hold, 附近有溺尸 → 秒退 ×15 (01:06:41–01:07:17)。反射 bunkerDown 01:09:04 封不上 "no mobs — skill-layer dig-in owns it" 冷却 45s (技能层其实是裸 hold, 无人接)。01:10:21 僵尸 ~1.6b 时 proactive bunker 就地开挖 (unarmedSoloMeleeExempt 未挨打不逃), 坑没封上 → 01:10:23–27 被僵尸+溺尸 17→4→0; 01:10:27 UNOWNED DANGER 才触发 (3s 阈值, hp1)。
+**假设**: T-0107 禁裸挖的前提 "keepInv 开, 裸 hold 死了便宜" 在本世界不成立 (keepInv 关), 且裸装在出生点夜重生 = hold→死→重生循环; T-0107 的自埋是旧 digOneCapOne 一夜一片下沉 + 天亮无人挖出, 现已由 T-0105 (封了不再挖) + ENTOMBED 天亮挖出覆盖。
+**改动**: ① kit_gate.digOneCapViable 加 softFloor: 无镐但脚下软土 (非沙/砾) → 可挖三填一; modes 决策层传 _floorSoft, ≤15b 找地分支去掉 picks≥1 (扫描本身无镐只认软土)。② nightShelter seal 分支撤无镐硬门: 无镐就地仅软土挖, 否则 ≤15b relocate 到软土 (排重力柱)。③ mobility_signals.bunkerTooLate: 近战怪 <4.5b 高差≤2 → 主动夜宿分支前先 sprintFlee 拉开再挖。④ unownedDangerThreshold: hp≤10 时 1.5s。
+**可证伪预测**: 裸装夜重生后 ≤10s 内出现 `nightShelter: 挖三填一 pocket sealed`; 不再出现裸装 NIGHT_SEAL 秒退串; 贴脸怪时出现 `night shelter wanted but a melee mob is <4.5b — sprinting clear (T-0043)`。
+**回滚**: revert, 重启。回归 test/night_respawn_shelter.test.mjs + night_shelter.sim 'T-0043 不变量'(仿真: 裸装软土 digOne=1, 石/沙 0) + kit_gate 'T-0043'。
+
 ## C385. ★苦力怕夹击: 远处同向苦力怕只排序不否决 + 近身无路先打退再选路（modes.js/mobility_geom.js 需重启,T-0200,worker-death,⏳待重启）
 
 **证据**: death #14 01:06:05 地表黄昏 hp8 food0 石剑 0 甲, 苦力怕 2.2/2.9/13b + 僵尸 4。01:06:02 `creeper backoff gated: cdist=7.8 drop=2 risk=creeper@17.0 proj=14.9 toward=0.49; emergency bunker/hold` —— 地形可跑的方向全被 17b 外"大致同向"(toward>0.15) 的另一只苦力怕否决 (旧 creeperCorridorRisk 二值), 退化成原地 bunker, 3s 内建不完 → 被炸。

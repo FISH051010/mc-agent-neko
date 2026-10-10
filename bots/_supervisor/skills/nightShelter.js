@@ -112,8 +112,12 @@ export default async function nightShelter(bot, ctx, mode = 'seal', opts = {}) {
         //   无镐 bot 被挖下 1 格封顶后, 天亮周围树"抬高+4不可达" → chopWood 全 blacklist → wood=0 bootstrap 死锁
         //   (modes.js:6349-6354 决策层正是为此把 dig_one 卡"必须真镐"; 执行层这里同门, 决策/执行一致).
         //   keepInv 开着, 无镐裸 hold 挨打死了也只重生, 严格优于自埋死锁. 半径 5→15 更放大了自埋触达面 → 更要卡.
-        if (!isDay() && !bot.interrupt_code && bot.health > 0 && _hasPickInv()) {
-            dug = await skills.digOneCapOne(bot).catch(() => false);   // ① 就地挖三填一 (仅有镐)
+        // ★T-0043 第三次复发 (death #15): 无镐硬门撤销 — 本世界 keepInv 关, 裸 hold = 夜重生死循环; diggableUnder 无镐时
+        //   只认软土 (非重力), digOneCapOne 只挖 1 格且已封不再挖 (T-0105), 天亮 ENTOMBED 挖出。见 kit_gate.digOneCapViable。
+        if (!isDay() && !bot.interrupt_code && bot.health > 0) {
+            const _h0 = bot.entity.position.floored();
+            if (_hasPickInv() || diggableUnder(_h0.x, _h0.y, _h0.z))   // 无镐只在脚下是软土时就地挖
+                dug = await skills.digOneCapOne(bot).catch(() => false);   // ① 就地挖三填一
             if (!dug && !bot.interrupt_code && bot.health > 0) {
                 // ② relocate: 由近及远环扫"可站+脚下可挖地" (≤15b, 命中即停; 用户令 2026-07-08 半径 5→15; bot 本已露天, 走位比裸站安全)
                 const here = bot.entity.position.floored();

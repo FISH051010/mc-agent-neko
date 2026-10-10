@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, effectivelyOwned, lowHpHoldRecovers, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, unownedDangerThreshold, effectivelyOwned, lowHpHoldRecovers, bunkerTooLate, BUNKER_TOO_LATE_B, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
@@ -2520,6 +2520,22 @@ const modes_list = [
                 }
                 execute(this, agent, () => this.sprintFlee(agent));
             }
+            else if (this.shouldNightShelter(bot) && !this.shouldFlee(bot) && (() => {
+                // ★T-0043 (death #15): a melee mob already within 4.5b → in-place bunker can't finish (dig 2 + cap ≥2s,
+                //   the mob hits down into the hole). Open distance first; the next tick (mobs clear) bunkers.
+                try {
+                    const _me = bot.entity.position;
+                    const _mobs = Object.values(bot.entities || {}).filter(e => e && e !== bot.entity && e.position && mc.isHostile(e))
+                        .map(e => ({ name: e.name, d: e.position.distanceTo(_me), dy: e.position.y - _me.y }));
+                    return bunkerTooLate(_mobs);
+                } catch (e) { return false; }
+            })()) {
+                if (Date.now() - (this._bunkerTooLateLogAt || 0) > 8000) {
+                    this._bunkerTooLateLogAt = Date.now();
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] night shelter wanted but a melee mob is <${BUNKER_TOO_LATE_B}b — sprinting clear before digging in (hp=${Math.round(bot.health)}, T-0043)\n`); } catch (e) {}
+                }
+                execute(this, agent, () => this.sprintFlee(agent));
+            }
             else if (this.shouldNightShelter(bot) && !this.shouldFlee(bot)) {
                 // ★用户令 2026-07-09 "遇怪要 flee 就优先逃跑, 不允许就地 bunkerDown": 预防夜宿 bunkerDown
                 //   现在附加 !shouldFlee 门 —— 只有【没有够得到的、该逃的怪】时才主动蹲坑 (=用户的"周围暂时
@@ -3731,6 +3747,7 @@ const modes_list = [
                         unownedMs: this._unownedSince ? now - this._unownedSince : 0,
                         hurtRecently: _hurt, headInWater: _headInWater, oxygen: bot.oxygenLevel,
                         exposed: _sp1.y >= 50 && !(bot._mobility && bot._mobility.enclosed),
+                        threshold: unownedDangerThreshold(bot.health),
                     });
                     if (_act && now - (this._unownedActAt || 0) > 6000) {
                         this._unownedActAt = now; this._unownedSince = 0;
@@ -6559,7 +6576,10 @@ const modes_list = [
                 //   → chopWood 全 blacklist → wood=0 bootstrap 死锁)。pickless 不能挖矿,dig_one 对它只剩
                 //   "埋自己"的恶果; SEAL_FORT(原地封顶不下挖)同样安全(keepInv + 天亮树仍可达),严格更优。
                 //   故 dig_one 现在要求真镐; pickless 落 SEAL_FORT。(_floorBareDig 仍用于上方 gravity-pit 语义。)
-                const digOneViable = digOneCapViable({ picks, gravityPit: _gravityPitTrap(), y });   // framework/kit_gate.js
+                // ★T-0043: pickless + bare-hand soft floor (not sand/gravel) also qualifies (kit_gate.digOneCapViable).
+                let _floorSoft = false;
+                try { const fb = bot.blockAt(m.offset(0, -1, 0)); _floorSoft = !!(fb && /^(dirt|coarse_dirt|rooted_dirt|grass_block|podzol|mycelium|clay|mud|moss_block|dirt_path|farmland)$/.test(fb.name || '')); } catch (e) {}
+                const digOneViable = digOneCapViable({ picks, gravityPit: _gravityPitTrap(), y, softFloor: _floorSoft });   // framework/kit_gate.js
                 // landmark navigation costs (manhattan-ish straight-line; bedReachCost surfaced for skills)
                 const _bedLm = _nearLm('bed');
                 const _bedReachCost = _bedLm ? _bedLm.dist : null;
@@ -6699,7 +6719,8 @@ const modes_list = [
                         // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
                         //     lazy 扫描: 只在链子走到这里(近床/炼铁/下矿都没命中)时才扫, 命中即停. 硬门 picks>=1 卡在 when 里(不在扫描函数内) —
                         //     §7.3 红线: 无镐 bot 走 dig_one 会徒手挖软土把自己埋到树底 → 天亮树抬高不可达 → wood=0 bootstrap 死锁. 与 digOneViable 同守卫.
-                        { decision: 'DIG_ONE_CAP', when: () => digOneViable || (picks >= 1 && y > 16 && _hasDiggableGroundWithin(DIG_SEARCH)),
+                        // ★T-0043: the ≤15b ground search already filters soft-only when pickless — no separate pick gate.
+                        { decision: 'DIG_ONE_CAP', when: () => digOneViable || (y > 16 && _hasDiggableGroundWithin(DIG_SEARCH)),
                           build: () => ({ decision: 'DIG_ONE_CAP', reason: digOneViable ? `dig-one shelter y=${y}` : `dig-one via ≤${DIG_SEARCH}b ground search` }) },
                         // 背包床兜底: 深处/够不到别的但背包里【有床】→ 就地放床睡 (零步无跋涉, 不受第⑤项"仅黄昏"限 —— 那是给"走去远床"的跋涉风险设的).
                         //   排在下矿/挖三填一【之下】(深处矿工先挖), 黄昏远床【之上】(就地放床比走去远床更安全). 近地表背包床已在上面 nearBed 走最高优.

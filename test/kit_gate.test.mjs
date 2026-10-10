@@ -35,8 +35,14 @@ test('C290/T-0025: a single WOODEN pick never qualifies; zero picks never qualif
 });
 
 
-test('T-0107: a PICKLESS bot never picks DIG_ONE_CAP at night (would bury itself under the forest floor)', () => {
-    // live 06-30: spawn forest @y66, dig_one through dirt to y62 + capped → dawn chopWood: every tree "+4 unreachable".
+test('T-0043 (supersedes T-0107 pickless ban): naked night respawn on soft ground → DIG_ONE_CAP (1-deep pocket); pickless on stone/sand → no', () => {
+    // death #15 01:10:27: naked respawn, NIGHT_SEAL = bare hold ×15 instant returns, killed by zombie+drowned.
+    assert.equal(digOneCapViable({ picks: 0, gravityPit: false, y: 66, softFloor: true }), true, 'bare-hand dirt pocket');
+    assert.equal(digOneCapViable({ picks: 0, gravityPit: false, y: 66, softFloor: false }), false, 'stone/sand underfoot, no pick');
+    assert.equal(digOneCapViable({ picks: 0, gravityPit: true, y: 66, softFloor: true }), false, 'gravity column');
+});
+
+test('T-0107: pick gates kept for non-soft floors', () => {
     assert.equal(digOneCapViable({ picks: 0, gravityPit: false, y: 66 }), false);
     assert.equal(digOneCapViable({ picks: 1, gravityPit: false, y: 66 }), true);
     assert.equal(digOneCapViable({ picks: 1, gravityPit: true, y: 66 }), false, 'gravity column');

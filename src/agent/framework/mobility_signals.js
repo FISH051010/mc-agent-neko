@@ -69,6 +69,24 @@ export function effectivelyOwned(trail, now) {
     const moved = Math.hypot(last.x - o.x, last.y - o.y, last.z - o.z) >= 0.8;
     return moved && trail.some(q => q.drv);
 }
+/**
+ * ★T-0043 (death #15 10-10 01:10:27: 光身无武器入夜, 僵尸 1.6b + 溺尸 1.2b 时"主动夜宿"就地开挖 → 挖两格+封顶要 2s+,
+ * 怪站坑边往下打, 17→4→0)。就地封坑这个接收方 ≥2s 才能完成: 近战怪已在 4.5b 内 (高差 ≤2, 够得着) 时它接不住,
+ * 先拉开距离再挖。mobs: [{name, d, dy}]。远程射手/苦力怕不在此列 (各有专枝)。
+ */
+export const BUNKER_TOO_LATE_B = 4.5;
+export function bunkerTooLate(mobs) {
+    for (const m of mobs || []) {
+        const n = String((m && m.name) || '').toLowerCase();
+        if (!n || /creeper|skeleton|stray|pillager|ghast|blaze|witch/.test(n)) continue;
+        if (m.d < BUNKER_TOO_LATE_B && Math.abs(m.dy || 0) <= 2) return true;
+    }
+    return false;
+}
+/** 兜底阈值随血量收紧: 残血时 3s 无人掌舵已够死两次 (death #15 hp17→4→0 只用了 3.5s)。 */
+export function unownedDangerThreshold(hp) {
+    return Number.isFinite(hp) && hp <= 10 ? 1500 : UNOWNED_DANGER_MS;
+}
 export function unownedDangerAction({ unownedMs, hurtRecently, headInWater, oxygen, exposed, threshold = UNOWNED_DANGER_MS }) {
     const drowning = !!headInWater && Number.isFinite(oxygen) && oxygen < 10;
     if (!(hurtRecently || drowning)) return null;
