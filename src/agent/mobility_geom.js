@@ -72,13 +72,15 @@ export function sealedEscapeStep({ episode, sr, enc, night, now, debounceSealed,
  * from the nearest threat than we are now. null → caller keeps its old target logic.
  * @param crumbs [{x,y,z,t}] oldest→newest ; me {x,y,z} ; threat {x,z}|null
  */
-export function backtrackTarget(crumbs, me, threat) {
+export function backtrackTarget(crumbs, me, threat, { maxRise = 3 } = {}) {
     if (!Array.isArray(crumbs) || !crumbs.length || !me) return null;
     const dMe = threat ? Math.hypot(me.x - threat.x, me.z - threat.z) : 0;
     for (let i = crumbs.length - 1; i >= 0; i--) {
         const c = crumbs[i];
         const d = Math.hypot(c.x - me.x, c.z - me.z);
         if (d < 6 || d > 20) continue;
+        // ★T-0182 #24: 摔下来的 (death #13 y15→y3) 来路在头顶 12 格 — 走不回去的面包屑不是退路
+        if (typeof c.y === 'number' && typeof me.y === 'number' && c.y - me.y > maxRise) continue;
         if (threat && Math.hypot(c.x - threat.x, c.z - threat.z) <= dMe) continue;   // don't run back INTO the mob
         return c;
     }

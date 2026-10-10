@@ -3394,6 +3394,26 @@ const modes_list = [
                         fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_defense] DISENGAGE ranged-unreachable-trap mob=${bot._mobility ? bot._mobility.state : '-'} enclosed=${!!(bot._mobility && bot._mobility.enclosed)} pos=${p.x},${p.y},${p.z} — yield to escape/food\n`);
                     }
                 } catch (e) {}
+                // ★T-0182 #24 (death #13 00:23:44: 洞里被 6.4b 骷髅连射 hp12→4→0, 两次 DISENGAGE 让位, 接手方
+                //   mobility=FREE 不动、kernel 在挖铁 → 无人掌舵)。让位 ≠ 放手挨射: 正在被远程命中时, 本拍自己接手 ——
+                //   ① 朝射手垫块挡视线 (人类第一反应, 最便宜最快); ② 挡不住 → self_preservation.sprintFlee
+                //   (地下沿面包屑回撤, backtrackTarget 已滤掉爬不回去的来路)。
+                try {
+                    const _shooter = recentlyHurt
+                        ? world.getNearestEntityWhere(bot, e => mc.isHostile(e) && /skeleton|stray|pillager/i.test(e.name || ''), 16)
+                        : null;
+                    if (_shooter && Date.now() - (this._coverAt || 0) > 1500) {
+                        this._coverAt = Date.now();
+                        execute(this, agent, async () => {
+                            let r = null;
+                            try { r = await skills.coverFromShooter(bot, _shooter, { tag: 'self_defense' }); } catch (e) {}
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_defense] shot while disengaged by ${_shooter.name} d=${_shooter.position.distanceTo(bot.entity.position).toFixed(1)} hp=${Math.round(bot.health)} → cover ${r ? `${r.why} placed=${r.placed}` : 'error'}${r && r.covered ? '' : ' → backtrack/flee'} (T-0182 #24)\n`); } catch (e) {}
+                            if (r && r.covered) return;
+                            const _sp = modes_list.find(m => m.name === 'self_preservation');
+                            if (_sp && typeof _sp.sprintFlee === 'function') await _sp.sprintFlee(agent);
+                        });
+                    }
+                } catch (e) {}
                 return;
             }
             if (enemy && hasWeapon && !swarmed) {

@@ -344,6 +344,20 @@ test('T-0180①: shared cavity-breach primitive — own tunnel/stair is not a ca
     assert.equal(cavityBreachAt(caveBelow, p, 1, 0, { yLo: -1 }), true, 'mineDown band (one below the feet) catches it');
 });
 
+test('T-0195: no chestplate-tier armor (bot._cavitySealAlways) → a cavity breach is sealed even with no hostile in sight', async () => {
+    const { sealCavityBreach } = await import('../src/agent/library/skills.js');
+    const mk = (always) => ({
+        output: '', entities: {}, _cavitySealAlways: always,
+        entity: { position: new Vec3(0.5, 10, 0.5) },
+        inventory: { items: () => [] },
+        blockAt: (q) => ({ name: (q.x >= 1 && q.x <= 4 && q.y >= 9 && q.y <= 13) ? 'cave_air' : 'stone' }),
+    });
+    assert.equal((await sealCavityBreach(mk(true), 1, 0)).breached, true, 'seal-always: breach handled without seeing a mob');
+    assert.equal((await sealCavityBreach(mk(false), 1, 0)).breached, false, 'chestplate worn + no hostile → keep digging (old behavior)');
+    const solid = mk(true); solid.blockAt = () => ({ name: 'stone' });
+    assert.equal((await sealCavityBreach(solid, 1, 0)).breached, false, 'no cavity → nothing to seal');
+});
+
 test('T-0180① C381: the cells the caller just dug (p+d column) are not cavity evidence — 3 self-dug + 5 natural air ≠ breach', async () => {
     const { cavityBreachAt } = await import('../src/agent/library/skills.js');
     const p = new Vec3(-8, 39, 11);

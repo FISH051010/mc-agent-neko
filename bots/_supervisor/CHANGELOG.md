@@ -12,6 +12,13 @@
 
 ---
 
+## C382. ★被远程命中时让位方必须自己接手: 垫块挡视线 → 挡不住沿面包屑回撤（modes.js/skills.js/mobility_geom.js 需重启,T-0182 #24 + T-0195 配合,worker-death,⏳待重启）
+
+**证据**: death #13 00:23:44 y5 @-9,5,36 白天 shot:Skeleton d=6.4, 1 甲+石剑。00:23:32 y15 挖铁矿挖穿进洞摔到 y3 (-8hp→12); 00:23:34/42 self_defense `DISENGAGE ranged-unreachable-trap mob=POCKET/FREE enclosed=true` 让位 —— trapped 判据含 `enclosed`, 洞里有顶就算"被困"; 接手方 mobility=FREE 不动, mineDown 在 hp8/4 时还在挖铁, 00:23:41-43 ctrl 全空 → hp4→0。来路面包屑在 y15, 头顶 12 格走不回去。
+**改动**: ① skills.js `losCoverCells(blockAt, me, shooter)` 纯几何: bot 朝射手方向相邻一列 (排除碰撞箱列), 射手眼→bot 脚/眼两视线穿过该列的高度段内开放格, 自下而上, 悬空补 ≤2 支撑; <1.5b 返回 null。`coverFromShooter(bot, shooter)` 用封顶料补格 (positioning:false), 复核视线。② modes.js self_defense ranged-unreachable-trap 分支: 2.5s 内挨打且 16b 内有射手 → execute 当拍接手 (1.5s 限频): coverFromShooter, 挡不住 → self_preservation.sprintFlee (地下沿面包屑回撤)。③ mobility_geom.backtrackTarget 加 maxRise=3: 高于脚 3 格以上的面包屑 (摔下来的来路) 不当退路。④ T-0195: sealCavityBreach 认 `bot._cavitySealAlways` (worker-tier 决策层置: keepInv 关且无胸甲档) — 无胸甲时破入空腔不等看见敌对就封口换向。
+**可证伪预测**: 被射时 progress 出现 `[self_defense] shot while disengaged by skeleton … → cover placed …` 及 `LOS cover toward skeleton … placed N/N`; 不再出现 DISENGAGE 后挨射 ≥2 次且 ctrl 全空。无胸甲时 mineDown/branchMine 出现 `with no chestplate-tier armor (T-0195 seal-always)`。
+**回滚**: revert, 重启 main.js。回归 test/ranged_cover.test.mjs (先红后绿 5) + seal_cap_geometry 'T-0195'。
+
 ## C381. 破口判据不计自挖列: cavityBreachAt 排除 p+d（skills.js 需重启,T-0180,worker-death,⏳待重启）
 
 **证据**: 00:07:33/37/41 mineDown @-8,39,11 三个方向 (1,0)(0,1)(0,-1) 连判 `cavity breach … sealed 3`, 封的 3 格正是本步刚挖开的 newFeet/newHead/clear(DIAG 显示挖前全是 stone)→ 3 连败 → DUSK_MINE_NIGHT 压 5min。3×3×3 盒含 p+d 列, 自挖 3 格计入 → 只需 5 格天然空隙即"≥8"。

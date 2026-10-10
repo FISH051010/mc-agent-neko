@@ -6495,7 +6495,9 @@ export async function sealCavityBreach(bot, dx, dz, { yLo = 0, radius = 16, tag 
     const p = bot.entity.position.floored();
     const bt = (q) => bot.blockAt(q);
     const hostile = Object.values(bot.entities || {}).some(e => { try { return e && e !== bot.entity && e.position && mc.isHostile(e) && e.position.distanceTo(bot.entity.position) <= radius; } catch (er) { return false; } });
-    if (!hostile || !cavityBreachAt(bt, p, dx, dz, { yLo })) return { breached: false, sealed: 0, mat: null };
+    // ★T-0195 (worker-tier 决策层置 bot._cavitySealAlways: keepInventory 关且无胸甲档): 不等看见敌对 —
+    //   暗处骷髅随时刷, 1 件甲 + 石剑进开放洞穴 = death #13。
+    if ((!hostile && !bot._cavitySealAlways) || !cavityBreachAt(bt, p, dx, dz, { yLo })) return { breached: false, sealed: 0, mat: null };
     const mat = resolveCapBlock(bot);
     let sealed = 0;
     if (mat) {
@@ -6507,8 +6509,61 @@ export async function sealCavityBreach(bot, dx, dz, { yLo = 0, radius = 16, tag 
         }
     }
     try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx: dx, sz: dz, at: Date.now() }); } catch (e) {}
-    log(bot, `${tag}: broke into a cavity with a hostile ≤${radius}b — sealed ${sealed} cell(s) with ${mat || 'nothing'}, abandoning heading ${dx},${dz} (T-0180)`);
+    log(bot, `${tag}: broke into a cavity ${hostile ? `with a hostile ≤${radius}b` : 'with no chestplate-tier armor (T-0195 seal-always)'} — sealed ${sealed} cell(s) with ${mat || 'nothing'}, abandoning heading ${dx},${dz} (T-0180)`);
     return { breached: true, sealed, mat };
+}
+
+/**
+ * ★T-0182 #24 (death #13 10-10 00:23:44: 摔进洞穴 y5, 骷髅 6.4b 连射 hp12→4→0; self_defense 判
+ * ranged-unreachable-trap 让位, 没人接)。人类第一反应: 朝射手那侧垫一块挡住视线。纯几何:
+ * 取 bot 朝射手方向的相邻一列 (不含 bot 碰撞箱占的列), 计算射手眼 → bot 脚/眼两条视线穿过该列的高度,
+ * 返回该高度段内需要补的开放格 (自下而上; 最低格悬空则向下补支撑, 至多 2 格)。
+ * @returns {null | {column:{x,z}, cells:Vec3[]}}  null = 太近 (<1.5b, 中间放不下); cells 空 = 已被挡住
+ */
+const LOS_OPEN_RE = /^(air|cave_air|void_air|water|flowing_water|short_grass|grass|tall_grass|fern|snow|vine|glow_lichen)$/;
+export function losCoverCells(blockAt, me, shooter) {
+    if (!me || !shooter) return null;
+    let hx = shooter.x - me.x, hz = shooter.z - me.z;
+    const hl = Math.hypot(hx, hz);
+    if (hl < 1.5) return null;
+    hx /= hl; hz /= hl;
+    const own = (x, z) => x >= Math.floor(me.x - 0.3) && x <= Math.floor(me.x + 0.3) && z >= Math.floor(me.z - 0.3) && z <= Math.floor(me.z + 0.3);
+    let cx, cz;
+    for (const s of [1.0, 1.4, 1.8]) {
+        const x = Math.floor(me.x + hx * s), z = Math.floor(me.z + hz * s);
+        if (!own(x, z)) { cx = x; cz = z; break; }
+    }
+    if (cx === undefined) return null;
+    const f = Math.min(1, Math.hypot(cx + 0.5 - me.x, cz + 0.5 - me.z) / hl);
+    const eye = shooter.y + 1.5;
+    const lo = me.y + 0.2 + (eye - (me.y + 0.2)) * f;
+    const hi = me.y + 1.6 + (eye - (me.y + 1.6)) * f;
+    const open = (y) => { const b = blockAt(new Vec3(cx, y, cz)); return LOS_OPEN_RE.test((b && b.name) || 'air'); };
+    const cells = [];
+    for (let y = Math.floor(Math.min(lo, hi)); y <= Math.floor(Math.max(lo, hi)); y++) if (open(y)) cells.push(new Vec3(cx, y, cz));
+    if (cells.length) {
+        // 最低格下方悬空 → 向下补支撑 (placeBlock 需要可贴面), 至多 2 格
+        let y0 = cells[0].y;
+        for (let k = 0; k < 2 && open(y0 - 1); k++) { y0--; cells.unshift(new Vec3(cx, y0, cz)); }
+    }
+    return { column: { x: cx, z: cz }, cells };
+}
+
+/** 执行: 用封顶料补 losCoverCells 的格 (不寻路)。返回 {covered, placed, mat, why}。 */
+export async function coverFromShooter(bot, shooter, { tag = 'cover' } = {}) {
+    const plan = losCoverCells((q) => bot.blockAt(q), bot.entity.position, shooter.position);
+    if (!plan) return { covered: false, placed: 0, mat: null, why: 'point-blank' };
+    if (!plan.cells.length) return { covered: true, placed: 0, mat: null, why: 'already-blocked' };
+    const mat = resolveCapBlock(bot);
+    if (!mat) return { covered: false, placed: 0, mat: null, why: 'no-material' };
+    let placed = 0;
+    for (const c of plan.cells) {
+        try { if (await placeBlock(bot, mat, c.x, c.y, c.z, 'side', true, { positioning: false })) placed++; } catch (e) {}
+    }
+    const after = losCoverCells((q) => bot.blockAt(q), bot.entity.position, shooter.position);
+    const covered = !!(after && after.cells.length === 0);
+    log(bot, `${tag}: LOS cover toward ${shooter.name} at column ${plan.column.x},${plan.column.z} — placed ${placed}/${plan.cells.length} ${mat}${covered ? '' : ' (still exposed)'} (T-0182 #24)`);
+    return { covered, placed, mat, why: covered ? 'placed' : 'placement-failed' };
 }
 
 /**
