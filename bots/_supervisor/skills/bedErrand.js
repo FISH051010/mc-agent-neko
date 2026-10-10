@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { scoutForAnimal, pickHuntTarget, haltPath, raceI } from './quickMeal.js';
+import { scoutForAnimal, pickHuntTarget, haltPath, raceI, exitPitIfSealed } from './quickMeal.js';
 import { nearestSighting, scoutPlanToward } from '../../../src/agent/framework/animal_sightings.js';
 const { goals } = mfp;
 
@@ -45,13 +45,18 @@ export default async function bedErrand(bot, ctx) {
         const plan = scoutPlanToward(sight, SCOUT_RADIUS);
         prog(`no bed/wool (wool=${woolCount(inv())} string=${inv().string || 0}) — ${plan.targeted ? `sheep last seen @${sight.x},${sight.z} (${sight.dist}b, ${Math.round(sight.ageMs / 60000)}min ago) → targeted scout ≤${plan.radius}b` : `blind scout ≤${plan.radius}b`}/${SCOUT_MS / 1000}s`);
         let sheep = pickHuntTarget(bot, 48, 8, SHEEP_RE);
+        let exitedPit = false;
         if (!sheep) {
+            // ★T-0215: 拂晓还封在过夜坑里 → 先出坑再侦察 (坑里侦察只会 '6 legs without moving'); 出坑本身算进展, 不计 strike
+            const ex = await exitPitIfSealed(bot);
+            if (ex.hostile) { prog('exit pit deferred: hostile near'); return { deferred: true, reason: 'hostile-near-pit' }; }
+            exitedPit = ex.exited;
             sheep = await scoutForAnimal(bot, { radius: 48, maxDy: 8, scoutRadius: plan.radius, scoutMs: SCOUT_MS, targetRe: SHEEP_RE, scoutToward: plan.toward });
             if (sheep === 'hostile') { prog('scout deferred: hostile near'); return { deferred: true, reason: 'hostile-near' }; }
             if (bot.interrupt_code) { haltPath(bot); prog('interrupted during scout — exit'); return false; }   // ★T-0206: 打断按 unwind 处理
             // ★T-0208 (02:01/02:03Z 实录: 96b 内两轮都没羊, 立即重派 → 3 轮×2min + 5min 冷却 ≈ 每个白天一半在找羊): 记下时间,
             //   world_model 在 NO_SHEEP_BACKOFF_MS 内不再提侦察 (bot 去干别的、换了地方再找)。
-            if (!sheep) { prog('no sheep found'); try { bot._bedErrandNoSheepAt = Date.now(); } catch (e) {} return { failed: true, reason: 'no-sheep' }; }
+            if (!sheep) { prog('no sheep found'); try { bot._bedErrandNoSheepAt = Date.now(); } catch (e) {} return exitedPit ? { ok: true, exitedPit: true } : { failed: true, reason: 'no-sheep' }; }
         }
         const shears = (bot.inventory.items() || []).find(i => i.name === 'shears');
         let kills = 0;

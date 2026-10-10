@@ -49,6 +49,35 @@ export function scoutWaypoints(origin, radius, toward) {
     return pts;
 }
 
+// ★T-0215 出坑 (监工高优先, 03:01:50-55Z: 拂晓还封在过夜坑里, 侦察三轮 '6 legs without moving' → FOOD_FLOOR 冷却 → food 8 不够
+//   bedErrand 门 → 下矿一整天没碰床; T-0214 说'交给 mobility 挖开'实际没人接 — 白天封闭坑里 mobility 不主动挖)。人类早上先挖开头顶走出来。
+//   封闭 = mobility ENTOMBED/POCKET, 或四周无出口 (exits 为空: 开顶深坑也算; 注意 enclosed 只表示'头顶有遮盖'=在地下, 不作判据) → 临时允许挖方块, 依次朝 4 个方向寻路 6 格, pathfinder 自己挖开最便宜的头顶/侧面走出去;
+//   走出 ≥2 格即止, 恢复安全寻路。8 格内有敌对先等 ≤15s。返回 {needed, exited, moved}。
+export function sealedNow(bot) {
+    const m = (bot && bot._mobility) || {};
+    const st = String(m.state || '');
+    if (/ENTOMBED|POCKET/.test(st)) return true;
+    return st !== 'SWIM' && Array.isArray(m.exits) && m.exits.length === 0;
+}
+export async function exitPitIfSealed(bot, { legMs = 8000 } = {}) {
+    if (!sealedNow(bot)) return { needed: false, exited: false, moved: 0 };
+    if (hostileWithin(bot, 8) && !(await waitHostileClear(bot, 15000))) return { needed: true, exited: false, moved: 0, hostile: true };
+    const p0 = bot.entity.position, x0 = p0.x, y0 = p0.y, z0 = p0.z;
+    try { const mv = new Movements(bot); mv.canDig = true; mv.allow1by1towers = true; mv.allowParkour = false; mv.maxDropDown = 2; mv.liquidCost = 1000; bot.pathfinder.setMovements(mv); } catch (e) {}
+    let moved = 0;
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+        if (bot.interrupt_code) break;
+        try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(x0 + dx * 6), Math.round(z0 + dz * 6), 1)).catch(() => null), legMs); } catch (e) {}
+        haltPath(bot);
+        moved = Math.hypot(bot.entity.position.x - x0, bot.entity.position.z - z0);
+        if (moved >= 2 || bot.entity.position.y - y0 >= 1) break;
+    }
+    setSafeMovements(bot);
+    const exited = moved >= 2 || bot.entity.position.y - y0 >= 1;
+    prog(`exit pit: ${exited ? 'out' : 'still stuck'} (moved ${moved.toFixed(1)}b, dy ${(bot.entity.position.y - y0).toFixed(1)})`);
+    return { needed: true, exited, moved };
+}
+
 /** hp=1 安全寻路: 最多下落 2 格 (3 格内无摔伤)、不跑酷、不挖、水极贵。 */
 function setSafeMovements(bot) {
     try {
@@ -262,13 +291,17 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     if (rawHeld() === 0) {
         let target = pickHuntTarget(bot, radius, maxDy);
         if (!target && opts.scout) {
+            // ★T-0215: 封在坑里先出坑再侦察 (出坑本身是进展)
+            const ex = await exitPitIfSealed(bot);
+            if (ex.hostile) return { deferred: true, reason: 'hostile-near-pit' };
+            if (ex.exited) opts = { ...opts, _exitedPit: true };
             prog(`starving, no animal ≤${radius}b — bounded scout ≤${opts.scoutRadius ?? 96}b/${Math.round((opts.scoutMs ?? 90000) / 1000)}s`);
             target = await scoutForAnimal(bot, { radius, maxDy, scoutRadius: opts.scoutRadius ?? 96, scoutMs: opts.scoutMs ?? 90000, scoutToward: opts.scoutToward });
             // ★监工#5: 因敌对收手 = unwind 语义, 不计 strike (返回非失败的 deferred, kernel 1.5s 后重派, 每次最多等 15s)
             if (target === 'hostile') return { deferred: true, reason: 'hostile-near' };
             prog(target ? `scout found ${target.name}` : 'scout found nothing');
             t0 = Date.now();   // 侦察有自己的 ≤scoutMs 上限; 猎杀/烤/吃重新计 maxMs
-            if (!target) return opts._surfaced ? { ok: true, surfaced: true, scouted: true } : { failed: true, reason: 'scout-found-nothing' };
+            if (!target) return opts._surfaced ? { ok: true, surfaced: true, scouted: true } : opts._exitedPit ? { ok: true, exitedPit: true, scouted: true } : { failed: true, reason: 'scout-found-nothing' };
         }
         if (!target) {
             prog(`no huntable animal within ${radius}b/dy${maxDy} — ${opts._surfaced ? 'surfaced (progress), no hunt' : 'honest fail (no roaming)'}`);
@@ -345,5 +378,6 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     prog(`done food ${food0}→${bot.food} ate=${ate} gotMeat=${gotMeat} in ${Math.round((Date.now() - t0) / 1000)}s`);
     if (ate > 0 || gotMeat || bot.food > food0) return { ok: true, ate, gotMeat, food: bot.food };
     if (opts._surfaced) return { ok: true, surfaced: true, ate, gotMeat };   // T-0167: 上浮本身是进度 (下一拍在地面重猎)
+    if (opts._exitedPit) return { ok: true, exitedPit: true, ate, gotMeat };   // T-0215: 出坑本身是进度
     return { failed: true, reason: 'no-progress' };
 }
