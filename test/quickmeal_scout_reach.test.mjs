@@ -107,3 +107,25 @@ test('T-0199 诊断: 侦察期间外部 pathfinder.stop 被归因到调用者; �
     assert.equal(bot.pathfinder.stop, stopRef, 'restored');
     assert.ok(/scout interrupters \(T-0199 probe\)/.test(fs.readFileSync(logp, 'utf8')), 'summary logged');
 });
+
+test('T-0204: pathfinder.stop() 的延迟标志不再杀下一段 — 按真实库语义建模 (stop 置标志, 下次 setGoal 时才执行并拒掉新 goto)', async () => {
+    // mineflayer-pathfinder: stop() → stopPathing=true; setGoal()/goto() 内 resetPath: if (stopPathing) stop() → 新 goto 拒 "Path was stopped"
+    let stopPathing = false, gotos = 0, killed = 0;
+    const cow = { name: 'cow', position: V(70, 64, 0), isValid: true };
+    const bot = { food: 3, health: 18, entity: { position: V(0, 64, 0) }, entities: {}, blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: {
+            stop() { stopPathing = true; },
+            setGoal(g) { if (stopPathing) { stopPathing = false; } },
+            setMovements() {},
+            goto: async function (g) {
+                gotos++;
+                if (stopPathing) { stopPathing = false; killed++; throw new Error('Path was stopped before it could be completed!'); }
+                bot.entity.position = V(bot.entity.position.x + 20, 64, 0);   // 每段真走 20 格
+                if (bot.entity.position.x >= 40) bot.entities = { 1: cow };
+            } },
+        clearControlStates() {} };
+    await quickMeal(bot, { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } },
+        { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 90000 });
+    assert.equal(killed, 0, `no leg killed by a stale stop flag (gotos=${gotos}, killed=${killed})`);
+    assert.ok(bot.entity.position.x >= 40, 'actually walked out and saw the cow');
+});

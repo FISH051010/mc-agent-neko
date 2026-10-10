@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { scoutForAnimal, pickHuntTarget } from './quickMeal.js';
+import { scoutForAnimal, pickHuntTarget, haltPath } from './quickMeal.js';
 const { goals } = mfp;
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -53,7 +53,7 @@ export default async function bedErrand(bot, ctx) {
             if (!s) { prog(`no more sheep in reach (wool=${woolCount(inv())})`); break; }
             prog(`${shears ? 'shear' : 'hunt'} sheep @${s.position.distanceTo(bot.entity.position).toFixed(1)}b (wool=${woolCount(inv())})`);
             try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(s.position.x), Math.floor(s.position.y), Math.floor(s.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
-            try { bot.pathfinder.stop(); } catch (e) {}
+            haltPath(bot);
             const w0 = woolCount(inv());
             if (shears) {
                 try { await skills.equip(bot, 'shears'); await bot.activateEntity(s); } catch (e) {}

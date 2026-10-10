@@ -18,6 +18,15 @@ export function hostileWithin(bot, r) {
     return Object.values(bot.entities || {}).some(e => e && e.position && HOSTILE_RE.test(e.name || '') && e.position.distanceTo(me) < r);
 }
 
+// ★T-0204 (01:37:36-01:39:37Z 实录: bedErrand 侦察 112 段 111 段 "Path was stopped", 120s 只走 22b, 探针零外部打断者):
+//   mineflayer-pathfinder 的 stop() 只置 stopPathing 标志, 等下一次 resetPath 才执行 — 没有在走的路径时标志一直留着,
+//   下一次 goto 的 setGoal→resetPath 立刻 stop → 新路径当场被杀。每段结束 stop() + 被叫停后重试前又 stop() = 永远被杀。
+//   停寻路一律用 setGoal(null): 立即清路径, 不留延迟标志。
+export function haltPath(bot) {
+    try { bot.pathfinder && bot.pathfinder.setGoal(null); } catch (e) {}
+    try { bot.clearControlStates(); } catch (e) {}
+}
+
 /** 侦察航点: 有朝向线索(见过的动物)先朝它, 否则 8 方向螺旋外扩 (24→48→72→96)。纯函数, 供测试。 */
 export function scoutWaypoints(origin, radius, toward) {
     const pts = [];
@@ -47,7 +56,7 @@ export async function waitHostileClear(bot, maxWaitMs, stepMs = 1000) {
     const t0 = Date.now();
     while (hostileWithin(bot, 16)) {
         if (Date.now() - t0 >= maxWaitMs) return false;
-        try { bot.pathfinder && bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+        haltPath(bot);
         await new Promise(r => setTimeout(r, stepMs));
     }
     return true;
@@ -151,7 +160,7 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
             const r = await race(bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(wp.x), Math.round(wp.z), 3)).then(() => 'ok', (e) => e), legMs);
             if (r && r !== 'ok') err = String((r && r.message) || r);
         } catch (e) { err = String(e && e.message || e); }
-        try { bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+        haltPath(bot);
         const q = bot.entity.position;
         moved += Math.hypot(q.x - x0, q.z - z0);
         legs++;
@@ -207,7 +216,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         const y0 = Math.round(bot.entity.position.y);
         prog(`starving underground y=${y0} food=${bot.food} — surfaceUp first (≤${Math.round((opts.surfaceMaxMs ?? 120000) / 1000)}s)`);
         await race(skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
-        try { bot.pathfinder && bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+        haltPath(bot);
         prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
         if (bot.entity.position.y - y0 >= 8) opts = { ...opts, _surfaced: true };
     }
@@ -217,7 +226,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     const rawHeld = () => RAW.reduce((s, n) => s + (inv()[n] || 0), 0);
     const food0 = bot.food;
     let gotMeat = false, ate = 0;
-    const stopBody = () => { try { bot.pvp && bot.pvp.stop && bot.pvp.stop(); } catch (e) {} try { bot.pathfinder && bot.pathfinder.stop(); } catch (e) {} try { bot.clearControlStates(); } catch (e) {} };
+    const stopBody = () => { try { bot.pvp && bot.pvp.stop && bot.pvp.stop(); } catch (e) {} haltPath(bot); try { bot.clearControlStates(); } catch (e) {} };
 
     // ① 短猎
     if (rawHeld() === 0) {
@@ -243,7 +252,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             const approach = async () => {
                 setSafeMovements(bot);
                 try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
-                try { bot.pathfinder.stop(); } catch (e) {}
+                haltPath(bot);
             };
             const d0 = target.position.distanceTo(bot.entity.position);
             await approach();
@@ -253,7 +262,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
                 const y0 = Math.round(bot.entity.position.y);
                 prog(`approach made no progress (${d0.toFixed(1)}b) underground y=${y0} — surfaceUp first (≤60s), then retry`);
                 await race(skills.customSkill(bot, 'surfaceUp', 63), Math.min(left(), 60000));
-                try { bot.pathfinder && bot.pathfinder.stop(); bot.clearControlStates(); } catch (e) {}
+                haltPath(bot);
                 prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
                 if (bot.entity.position.y - y0 >= 4) opts = { ...opts, _surfaced: true };
                 if (target.isValid !== false && left() > 5000) await approach();
