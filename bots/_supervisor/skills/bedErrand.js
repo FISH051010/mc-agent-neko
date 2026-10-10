@@ -12,6 +12,7 @@ import path from 'path';
 import mfp from 'mineflayer-pathfinder';
 import { scoutForAnimal, pickHuntTarget, haltPath, raceI, exitPitIfSealed } from './quickMeal.js';
 import { nearestSighting, scoutPlanToward } from '../../../src/agent/framework/animal_sightings.js';
+import { bedWoolReady, bestWoolColor, sheepColor, targetWoolColor } from '../../../src/agent/framework/bed_wool.js';
 const { goals } = mfp;
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -23,12 +24,20 @@ export const SCOUT_MS = 120000;
 const MAX_MS = 180000;
 
 export function woolCount(counts) { return Object.keys(counts || {}).filter(k => /_wool$/.test(k)).reduce((s, k) => s + (counts[k] || 0), 0); }
-/** 包里的材料已经够 setBed 直接做床 (床 / ≥3 羊毛 / ≥4 线→1 羊毛 + ≥2 羊毛)。 */
-export function bedMaterialsReady(counts) {
-    counts = counts || {};
-    if (Object.keys(counts).some(k => /_bed$/.test(k) && counts[k] > 0)) return true;
-    const wool = woolCount(counts), str = counts['string'] || 0;
-    return wool + Math.floor(str / 4) >= WOOL_NEEDED;
+/** 包里的材料已经够 setBed 直接做床 (床 / 某一色 ≥3 羊毛, 线÷4 折白)。★T-0219: 按同色, 混色总数凑 3 setBed 必拒。 */
+export function bedMaterialsReady(counts) { return bedWoolReady(counts); }
+const woolTag = (c) => { const b = bestWoolColor(c); return `wool=${woolCount(c)} best=${b.color || '-'}×${b.ct}`; };
+/** ★T-0219: 只打目标色的羊 (颜色未知的也算, 元数据缺失不卡死); 没有目标色 → 最近的任意羊。 */
+export function pickBedSheep(bot, counts, radius = 48, maxDy = 8) {
+    const me = bot.entity && bot.entity.position;
+    if (!me) return null;
+    const all = Object.values(bot.entities || {}).filter(e => e && e.position && SHEEP_RE.test(e.name || '')
+        && Math.abs(e.position.y - me.y) <= maxDy && Math.hypot(e.position.x - me.x, e.position.z - me.z) <= radius);
+    const want = targetWoolColor(counts, all);
+    const ok = all.filter(e => !want || sheepColor(e) === want || sheepColor(e) === null);
+    let best = null, bd = Infinity;
+    for (const e of ok) { const d = Math.hypot(e.position.x - me.x, e.position.z - me.z); if (d < bd) { bd = d; best = e; } }
+    return best;
 }
 
 const race = (p, ms) => { let t = null; return Promise.race([Promise.resolve(p).catch(() => null), new Promise(r => { t = setTimeout(r, Math.max(0, ms)); })]).finally(() => clearTimeout(t)); };
@@ -67,10 +76,10 @@ export default async function bedErrand(bot, ctx) {
         }
         const shears = (bot.inventory.items() || []).find(i => i.name === 'shears');
         let kills = 0;
-        while (woolCount(inv()) < WOOL_NEEDED && left() > 8000 && !bot.interrupt_code) {
-            const s = pickHuntTarget(bot, 48, 8, SHEEP_RE);
-            if (!s) { prog(`no more sheep in reach (wool=${woolCount(inv())})`); break; }
-            prog(`${shears ? 'shear' : 'hunt'} sheep @${s.position.distanceTo(bot.entity.position).toFixed(1)}b (wool=${woolCount(inv())})`);
+        while (!bedMaterialsReady(inv()) && left() > 8000 && !bot.interrupt_code) {
+            const s = pickBedSheep(bot, inv());
+            if (!s) { prog(`no more sheep in reach (${woolTag(inv())})`); break; }
+            prog(`${shears ? 'shear' : 'hunt'} ${sheepColor(s) || '?'} sheep @${s.position.distanceTo(bot.entity.position).toFixed(1)}b (${woolTag(inv())})`);
             try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNear(Math.floor(s.position.x), Math.floor(s.position.y), Math.floor(s.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
             haltPath(bot);
             const w0 = woolCount(inv());
@@ -83,9 +92,9 @@ export default async function bedErrand(bot, ctx) {
             if (skills.pickupNearbyItems) await raceI(bot, skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
             if (woolCount(inv()) <= w0 && kills >= 6) { prog('6 kills without wool — stop'); break; }
         }
-        if (!bedMaterialsReady(inv())) { prog(`not enough wool (${woolCount(inv())}/${WOOL_NEEDED}) — honest fail`); return { failed: true, reason: 'wool-short' }; }
+        if (!bedMaterialsReady(inv())) { prog(`not enough same-color wool (${woolTag(inv())}, need ${WOOL_NEEDED}) — honest fail`); return { failed: true, reason: 'wool-short' }; }
     }
-    prog(`materials ready (wool=${woolCount(inv())}) — setBed: craft + place + set spawn`);
+    prog(`materials ready (${woolTag(inv())}) — setBed: craft + place + set spawn`);
     const ok = await skills.customSkill(bot, 'setBed').catch(() => false);
     prog(`setBed → ${ok}`);
     return ok === true ? true : { failed: true, reason: 'setBed-failed' };

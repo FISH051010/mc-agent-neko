@@ -26,6 +26,7 @@ import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR } from './food_floor.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
+import { bedWoolReady } from './bed_wool.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
@@ -2112,7 +2113,7 @@ export function keepInventoryOff() {
 /** 床料路径"就在眼前": 背包已有床/≥3 羊毛, 或 48 格内看得见羊 (setBed 猎羊→羊毛→床)。 */
 export function woolPathVisible(bot) {
     try {
-        if (invCount(bot, /_bed$/) >= 1 || invCount(bot, /_wool$/) >= 3) return true;
+        if (invCount(bot, /_bed$/) >= 1 || bedWoolReady(invCounts(bot))   /* ★T-0219 同色 */) return true;
         const me = bot.entity && bot.entity.position;
         if (!me) return false;
         return Object.values(bot.entities || {}).some(e => e && e.name === 'sheep' && e.position && e.position.distanceTo(me) <= 48);
@@ -2146,7 +2147,7 @@ export function bedErrandScoutOk(world, bot) {
 export function bedErrandFeasible(bot) {
     try {
         // pack paths need no hunt (NOT woolPathVisible: its 48b sheep clause ignores setBed's food gate)
-        if (invCount(bot, /_bed$/) >= 1 || invCount(bot, /_wool$/) >= 3 || invCount(bot, /^string$/) >= 4) return true;
+        if (invCount(bot, /_bed$/) >= 1 || bedWoolReady(invCounts(bot))   /* ★T-0219 同色 */ || invCount(bot, /^string$/) >= 4) return true;
         const me = bot.entity && bot.entity.position;
         if (!me) return false;
         const ents = Object.values(bot.entities || {});
