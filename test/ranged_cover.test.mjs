@@ -59,6 +59,18 @@ test('T-0182 C383: 击退/坠落位移不算有人掌舵 — 位移必须伴随�
     assert.equal(effectivelyOwned([{ t: 9000, x: 0, y: 0, z: 0, drv: false }], now), true, 'window not full yet → no early verdict');
 });
 
+test('T-0182 #11: armoredSoloBrawl 让 shouldFlee 不逃 (16b 判据) ⇒ self_defense 挨打索敌半径也必须覆盖 16b', async () => {
+    const { armoredSoloBrawl } = await import('../src/agent/combat_gates.js');
+    const sk = { name: 'skeleton', position: new Vec3(14, 64, 0) };
+    const bot = {
+        entity: { position: new Vec3(0, 64, 0) }, entities: { 1: sk },
+        inventory: { slots: { 5: { name: 'iron_helmet' } }, items: () => [{ name: 'stone_sword' }] },
+    };
+    assert.equal(armoredSoloBrawl(bot), true, 'skeleton at 14b counts as the solo brawl → shouldFlee will not flee');
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(src, /const range = recentlyHurt \? \(armoredSoloBrawl\(bot\) \? 16 : 12\) : 5;/, 'self_defense reach matches the brawl radius');
+});
+
 test('T-0182 #24: self_defense 的 ranged-unreachable-trap 让位分支在被射时必须自己接手 (垫块 → 回撤), 不能裸 return', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const i = src.indexOf('DISENGAGE ranged-unreachable-trap mob=');

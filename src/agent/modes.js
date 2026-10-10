@@ -3342,7 +3342,9 @@ const modes_list = [
             const recentlyHurt = Date.now() - bot.lastDamageTime < 2500;
             // ★C360 挨打必还手: 刚被打中 → 臂展内的黑名单 mob 立即恢复可打 (真威胁不豁免)。
             if (recentlyHurt) unblacklistAttackers(bot, 'self_defense');
-            const range = recentlyHurt ? 12 : 5;
+            // ★T-0182 #11: armoredSoloBrawl (16b 内单怪) 让 shouldFlee 不逃 — 接收方 self_defense 的索敌半径必须同样覆盖
+            //   16b, 否则 12–16b 的骷髅射过来时"不逃也不打"。
+            const range = recentlyHurt ? (armoredSoloBrawl(bot) ? 16 : 12) : 5;
             // EXCLUDE creepers — meleeing one = it detonates = death ("Fighting creeper!"
             // was a suicidal conflict with self_preservation's back-off reflex). Creepers are
             // handled ONLY by self_pres (sprint to >9 blocks). self_defense never engages them.
