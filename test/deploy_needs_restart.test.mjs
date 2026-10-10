@@ -26,3 +26,11 @@ test('needs-restart: kernelDriver → main (re-arm); botwatch/ticket-server/watc
     assert.deepEqual(cli.needs, []);
     assert.equal(classifyRestart(['some/unknown/runtime.js']).targets[0], 'check', 'unknown → manual check, never silently hot');
 });
+
+test('needs-restart: patches/*.patch / package(-lock).json → reinstall (先 npm install 再重启), 不再漏判 (7a05fda T-0207)', () => {
+    const r = classifyRestart(['patches/mineflayer-pathfinder+2.4.5.patch', 'bots/_supervisor/CHANGELOG.md', 'test/pathfinder_stop_residue.test.mjs']);
+    assert.deepEqual(r.targets, ['reinstall']);
+    assert.equal(r.hotOnly, false);
+    assert.deepEqual(classifyRestart(['package-lock.json']).targets, ['reinstall']);
+    assert.deepEqual(classifyRestart(['package.json']).targets, ['reinstall']);
+});

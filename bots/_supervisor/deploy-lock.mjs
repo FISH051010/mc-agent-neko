@@ -94,6 +94,8 @@ export function classifyRestart(files) {
     for (const f of files || []) {
         const p = String(f).replace(/\\/g, '/');
         if (NO_RUNTIME_RE.test(p)) { none.push(p); continue; }
+        // ★(监工转 worker-stuck 发现, 7a05fda T-0207 被漏判): patch-package 补丁/依赖变更 — 普通重启不够, 先 npm install 重打补丁
+        if (/^patches\/[^/]+\.patch$/.test(p) || /^package(-lock)?\.json$/.test(p)) { needs.push({ target: 'reinstall', file: p, why: '依赖/patch-package 补丁: 先 npm install (必要时删 node_modules/<包> 让补丁重打), 再重启 main' }); continue; }
         if (p === 'bots/_supervisor/skills/kernelDriver.js') { needs.push({ target: 'main', file: p, why: 'kernelDriver 是顶层 sticky 循环, 死亡不重载 (重启 main 或 cancel re-arm)' }); continue; }
         if (/^bots\/_supervisor\/skills\/[^/]+\.js$/.test(p)) { hot.push(p); continue; }
         if (/^src\//.test(p) || /^(main\.js|settings\.js|package\.json|profiles\/)/.test(p)) { needs.push({ target: 'main', file: p, why: 'src/入口模块进程启动时加载 (skill 的 import 也拿缓存旧版)' }); continue; }
@@ -159,13 +161,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         const shas = rest.filter(a => !a.startsWith('--') && !Object.values(f).includes(a));
         const files = new Set();
         for (const s of shas) {
-            const args = s.includes('..') ? ['diff', '--name-only', s] : ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', s];
+            // merge 提交: diff-tree 默认给合并 diff (无冲突时为空, 7a05fda 被漏判) → 对第一父提交求 diff
+            let isMerge = false; try { isMerge = gitOut(['rev-list', '--parents', '-n', '1', s], repo).split(' ').length > 2; } catch (e) {}
+            const args = s.includes('..') ? ['diff', '--name-only', s] : isMerge ? ['diff', '--name-only', s + '^1', s] : ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', s];
             try { gitOut(args, repo).split(/\r?\n/).filter(Boolean).forEach(x => files.add(x)); } catch (e) { console.log(`? cannot read ${s}`); }
         }
         const r = classifyRestart([...files]);
         if (!r.needs.length) console.log(r.hot.length ? `✓ hot-reload only (${r.hot.length} skill file(s): ${r.hot.join(', ')}) — no restart` : '✓ no runtime files changed — no restart');
         else {
-            console.log(`✗ RESTART REQUIRED: ${r.targets.join(' + ')}`);
+            console.log(r.targets.includes('reinstall') ? `✗ REINSTALL + RESTART: ${r.targets.join(' + ')}` : `✗ RESTART REQUIRED: ${r.targets.join(' + ')}`);
+            if (r.targets.includes('reinstall')) console.log('  run: npm install   (patch-package 重打补丁; 若补丁未生效先删 node_modules/<包> 再 npm install), 然后持锁重启 main');
             for (const n of r.needs) console.log(`  - [${n.target}] ${n.file} — ${n.why}`);
             if (r.hot.length) console.log(`  (hot-reloaded too: ${r.hot.join(', ')})`);
             process.exitCode = 2;
