@@ -793,7 +793,9 @@ export function proposeTasks(world, bot) {
         let _latch;
         if (!foodInstincts && bot) {
             bot._foodFloorLatch = updateFoodFloorLatch(bot._foodFloorLatch, { food: vitals.food, counts: invCounts(bot), hp: vitals.hp,
-                animalNear: animalInRange(_animal, _bp, _bp ? _bp.y : NaN) });
+                animalNear: animalInRange(_animal, _bp, _bp ? _bp.y : NaN),
+                // ★T-0210: 入夜前补餐 (tod) / 床待做先补餐 (石器+有剑+还没床)
+                tod: time && time.tod, bedPending: !bedKnown(bot) && hasStoneTierPick(w) && !swordMissing(invCounts(bot)) });
             _latch = bot._foodFloorLatch;
         }
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,

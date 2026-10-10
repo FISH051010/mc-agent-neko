@@ -82,9 +82,20 @@ export function animalInRange(animal, botPos, botY) {
 /** 会话锁存 (纯函数; 状态由调用方挂在 bot._foodFloorLatch)。 */
 // ★T-0134 (18:40:50Z 死亡复盘): 锁存只在内存 → 18:38 重启后丢失, food 15 不 ≤6 不再触发, hp 停在 1 (food<18 不回血)
 //   → 一次挖出窒息即死、铁装全丢。触发也要看"回不了血": hp<10 且 food<18 同样开会话 — 状态可由 hp/food 重建, 不怕重启。
-export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, now = Date.now() }) {
+// ★T-0210 (监工, 10:21-10:26 实录: 白天 food 一直 8-9, 卡在 GET_BED 门 food≥10 与 FOOD_FLOOR 门 food≤6 之间, 两件都不做,
+//   挖到黄昏 food 才掉到 6, 而 FOOD_FLOOR 只在白天 → 饿着过夜, 明早更低): 两个新触发, 都以会话形式补到 18 —
+//   ①入夜前补餐: tod 9000-12000 (黄昏前约 2min) 且 food<14; ②床待做且 food<10: 先补餐再找羊 (不让两个都不做)。
+export const PRE_DUSK_TOD_LO = 9000, PRE_DUSK_TOD_HI = 12000, PRE_DUSK_FOOD = 14, BED_PENDING_FOOD = 10;
+export function latchTrigger({ food, hp, tod, bedPending }) {
+    if (food <= FOOD_FLOOR) return 'starving';
+    if (cannotRegen(hp, food)) return 'regen';
+    if (Number.isFinite(tod) && tod >= PRE_DUSK_TOD_LO && tod < PRE_DUSK_TOD_HI && food < PRE_DUSK_FOOD) return 'dusk';
+    if (bedPending && food < BED_PENDING_FOOD) return 'bed';
+    return null;
+}
+export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, tod, bedPending, now = Date.now() }) {
     const L = latch || { active: false, kills: 0, since: 0 };
-    if (!L.active) return (food <= FOOD_FLOOR || cannotRegen(hp, food)) ? { active: true, kills: 0, since: now } : L;
+    if (!L.active) { const reason = latchTrigger({ food, hp, tod, bedPending }); return reason ? { active: true, kills: 0, since: now, reason } : L; }
     const cooked = countMatching(counts, COOKED_RE);
     const fed = food >= FOOD_RELEASE;
     if (L.kills >= SESSION_KILL_CAP || (fed && (cooked >= STOCK_COOKED || !animalNear)))
@@ -113,7 +124,9 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
         : (skyOpen === false || (Number.isFinite(botY) && botY < 62) || !!(depthBand && depthBand !== 'surface'));
     // ★监工加急 #2 + 拍板: 侦察只在 food≤6 时做 (锁存期间 food 已回 7-17 且附近没动物 → 不提, 不为存粮侦察)。
     // ★T-0188 补: "回不了血" (hp≤12 且 food<18) 且包里零可吃 也要侦察/先上浮 — 这是为回血不是存粮 (07:15 hp11 food11 地下零动物 → 不提 → 带 11 血下矿)。
-    const huntNeed = food <= FOOD_FLOOR || (cannotRegen(hp, food) && countMatching(counts, EDIBLE_RE) === 0);
+    // ★T-0210: 入夜前补餐 / 床待做补餐 两种会话也侦察 (目标吃到 18, 复用目击记忆的定向侦察) — 包里有吃的就不必去猎
+    const plannedMeal = !!(latch && latch.active && (latch.reason === 'dusk' || latch.reason === 'bed')) && countMatching(counts, EDIBLE_RE) === 0;
+    const huntNeed = food <= FOOD_FLOOR || (cannotRegen(hp, food) && countMatching(counts, EDIBLE_RE) === 0) || plannedMeal;
     const needScout = huntNeed && !animalOk && rawMeat === 0;
     const surfaceFirst = underground && (starving || needScout);
     const scout = huntNeed && !surfaceFirst && !animalOk && rawMeat === 0;
