@@ -23,7 +23,6 @@ test('T-0183: the void branch relocates (tunnel, else surface pathfinder) once p
     const seg = src.slice(i, j);
     assert.match(seg, /if \(loopRelocates < 1\) \{/);
     assert.match(seg, /const _tun = planRelocateTunnel\(bn, cx, cy, cz\);/);
-    assert.match(seg, /else if \(openSkyAbove\(bn, cx, cy, cz\) \|\| \(bot\._mobility && bot\._mobility\.enclosed === false\)\) \{/);
-    assert.match(seg, /_moved = await goToColumn\(bot, skills, _dest\);/);   // ★23:06 re-fix: aim at a solid column (T-0193 bounded)
+    assert.match(seg, /_moved = await relocateFallback\(bot, skills, bn, log_, /);   // ★T-0193: solid-column walk (surface+underground), surface-only moveAway
     assert.match(seg, /voidHops = 0; noProg = 0;\s*\r?\n\s*continue;/);
 });

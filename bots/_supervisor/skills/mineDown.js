@@ -143,13 +143,14 @@ const SOLID_COL_OFFSETS = (() => {
     for (let dx = -24; dx <= 24; dx++) for (let dz = -24; dz <= 24; dz++) { const d = Math.hypot(dx, dz); if (d >= 6 && d <= 24) out.push([dx, dz, d]); }
     return out.sort((a, b) => a[2] - b[2]);
 })();
-export function planSolidColumn(bn, cx, cy, cz) {
+export function planSolidColumn(bn, cx, cy, cz, skip = null) {
     const nm = (b) => (b && b.name) || 'air';
     const fluid = (b) => FLUID.test(nm(b));
     const solid = (b) => !!(b && b.boundingBox === 'block' && !fluid(b));
     const open = (b) => !solid(b) && !fluid(b);
     for (const [dx, dz] of SOLID_COL_OFFSETS) {
         const x = cx + dx, z = cz + dz;
+        if (skip && skip.has(`${x},${z}`)) continue;   // ★T-0193 already tried and unreachable
         for (const dy of [0, 1, -1, 2, -2, 3, -3]) {
             const y = cy + dy;
             if (!open(bn(x, y, z)) || !open(bn(x, y + 1, z))) continue;
@@ -187,12 +188,20 @@ export async function goToColumn(bot, skills, dest, ms = 20000) {
 export async function relocateFallback(bot, skills, bn, log_, why, { ms = 20000 } = {}) {
     const p = bot.entity.position;
     const cx = Math.floor(p.x), cy = Math.round(p.y), cz = Math.floor(p.z);
-    const dest = planSolidColumn(bn, cx, cy, cz);
-    if (dest) {
-        const ok = await goToColumn(bot, skills, dest, ms);
-        log_(`relocate: ${why} — path to solid column ${dest.x},${dest.y},${dest.z} ${ok ? 'arrived' : 'not reached'}`);
-        return ok;
+    // ★T-0193 (live 01:23:48-59: the nearest column was a sealed cave, 'not reached' ×3 → 3 strikes): try the next
+    //   candidates too (≤3, within the same overall time budget); an unreachable one fails fast (noPath).
+    const skip = new Set();
+    const t0 = Date.now();
+    let dest = planSolidColumn(bn, cx, cy, cz, skip);
+    const hadColumn = !!dest;
+    for (let n = 0; dest && n < 3 && Date.now() - t0 < ms; n++) {
+        const ok = await goToColumn(bot, skills, dest, Math.max(1000, ms - (Date.now() - t0)));
+        log_(`relocate: ${why} — path to solid column ${dest.x},${dest.y},${dest.z} ${ok ? 'arrived' : 'not reached'}${n ? ` (candidate ${n + 1})` : ''}`);
+        if (ok) return true;
+        skip.add(`${dest.x},${dest.z}`);
+        dest = planSolidColumn(bn, cx, cy, cz, skip);
     }
+    if (hadColumn) return false;
     if (openSkyAbove(bn, cx, cy, cz) || (bot._mobility && bot._mobility.enclosed === false)) {
         log_(`relocate: ${why} — surface, no solid column found; moveAway`);
         try { await skills.moveAway(bot, 10); } catch (e) {}
@@ -931,15 +940,11 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 if (_tun && await walkDugPath(bot, skills, Vec3, bn, _tun.path)) {
                     _moved = true;
                     log_(`void: no safe column within 4b — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz}`);
-                } else if (openSkyAbove(bn, cx, cy, cz) || (bot._mobility && bot._mobility.enclosed === false)) {
-                    const _dest = planSolidColumn(bn, cx, cy, cz);
-                    if (_dest) {
-                        _moved = await goToColumn(bot, skills, _dest);   // ★T-0193 bounded walk
-                        const _p = bot.entity.position;
-                        const _left = Math.hypot(_p.x - (_dest.x + 0.5), _p.z - (_dest.z + 0.5));
-                        log_(`void: surface relocate to solid column ${_dest.x},${_dest.y},${_dest.z} (${Math.round(Math.hypot(_dest.x - cx, _dest.z - cz))}b) — ${_moved ? 'arrived' : 'stopped ' + _left.toFixed(1) + 'b short'}`);
-                    } else log_(`void: surface — no column with 5 solid below within 24b`);
-                } else log_(`void: no tunnel line${_tun ? ' (walk stopped: ' + (bot._walkDugFail || '?') + ')' : ''} and not under open sky`);
+                } else {
+                    // ★T-0193 (live 01:23:45 'void: no tunnel line and not under open sky' → abort): surface or underground,
+                    //   walk to a reachable solid column (≤3 candidates, bounded); surface-only moveAway as last resort.
+                    _moved = await relocateFallback(bot, skills, bn, log_, `void, no tunnel line${_tun ? ' (walk stopped: ' + (bot._walkDugFail || '?') + ')' : ''}`);
+                }
                 if (_moved) {
                     const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
                     sx = _r2.sx; sz = _r2.sz;

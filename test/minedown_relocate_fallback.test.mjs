@@ -43,6 +43,26 @@ test('T-0193: wiring — START relocate and the void branch both go through the 
     assert.match(src, /if \(_fbOk\) \{ const _t0 = Date\.now\(\); while \(!bot\.entity\.onGround/);
     assert.match(src, /if \(movedB >= \(_fbOk \? 4 : 6\) && footingOk && clean2\) \{/);
     assert.match(src, /await relocateFallback\(bot, skills, bn, log_, 'no dry solid 9-cell tunnel line at this level'\);/);
-    assert.match(src, /_moved = await goToColumn\(bot, skills, _dest\);/);
+    assert.match(src, /_moved = await relocateFallback\(bot, skills, bn, log_, `void, no tunnel line/);   // ★T-0193: surface & underground, ≤3 reachable candidates
     assert.doesNotMatch(src, /falling back to moveAway/);
+});
+
+// Live 10-10 01:23:48/57/59: 'path to solid column 22,36,-1 not reached' ×2 + '23,35,-3 not reached' — the nearest
+// open-with-solid-floor column underground is often a sealed cave the pathfinder can't reach; one try then fail = 3 strikes.
+test('T-0193: an unreachable column is skipped and the next candidate tried (≤3)', async () => {
+    const { planSolidColumn } = await import('../bots/_supervisor/skills/mineDown.js');
+    const k = (x, y, z) => `${x},${y},${z}`;
+    const open = new Set();
+    for (const [x, z] of [[2, 6], [2, 7], [9, 0]]) { open.add(k(x, 48, z)); open.add(k(x, 49, z)); }   // three candidate pockets
+    const bn = (x, y, z) => open.has(k(x, y, z)) ? { name: 'cave_air', boundingBox: 'empty' } : { name: 'stone', boundingBox: 'block' };
+    const first = planSolidColumn(bn, 0, 48, 0);
+    const second = planSolidColumn(bn, 0, 48, 0, new Set([`${first.x},${first.z}`]));
+    assert.notDeepEqual([second.x, second.z], [first.x, first.z]);
+    const bot = mkBot();
+    bot.entity.position = { x: 0.5, y: 48, z: 0.5 };
+    const tried = [];
+    const skills = { goToPosition: async (b, x, y, z) => { tried.push(`${x},${z}`); if (tried.length === 3) { b.entity.position = { x: x + 0.5, y, z: z + 0.5 }; } } };
+    const ok = await relocateFallback(bot, skills, bn, () => {}, 'test');
+    assert.equal(ok, true);
+    assert.equal(new Set(tried).size, 3, `three distinct candidates: ${tried}`);
 });

@@ -3102,6 +3102,8 @@
 
 - **★C413-S mineDown T-0180 破洞封口后同派发换向/换址(T-0203)**（2026-10-10，worker-stuck，T-0203）: 实录 10-10 01:18:47/50/55 GO_UNDERGROUND @0,65,-14 白天地表 — 'cavity breach + hostile ≤16b … sealed, not entering (T-0180)' 三个朝向各占一次派发, dug=1 failed ×3 → 冷却 5min (与 T-0162 流体 / T-0183 空洞同型)。修: T-0180 封口 + 记朝向后, 同派发 rotateAwayFromAborted 换向 (≤3, 'cavity turn N/3'); 四向皆破 → relocateFallback 换址一次 (共用 loopRelocates); T-0180 封口/不进入语义不变。测试 test/minedown_cavity_reheading.test.mjs。
 
+- **★C414-S 换址实心列多候选 + 空洞分支地下也走实心列(T-0193 续)**（2026-10-10，worker-stuck，T-0193）: 实录 10-10 01:23:45 'void: no tunnel line and not under open sky' → abort; 01:23:48/57/59 START 'path to solid column 22,36,-1 / 23,35,-3 not reached' ×3 (地下最近的'脚下实心开放格'常是封闭洞穴, 寻路 noPath 秒退) → GO_UNDERGROUND 冷却。修: planSolidColumn 接受 skip 集; relocateFallback 按距离依次试 ≤3 个候选 (同一 20s 总预算, 不可达即排除换下一个); 空洞分支隧道不可行时不再限地表, 统一走 relocateFallback。更新 T-0183/T-0193 钉子。
+
 ---
 
 ---

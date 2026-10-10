@@ -39,7 +39,7 @@ test('T-0183: a tree canopy is not a roof — leaves/logs above still count as o
 
 test('T-0183: surface void relocate walks to the planned solid column (not a random moveAway)', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
-    assert.match(src, /const _dest = planSolidColumn\(bn, cx, cy, cz\);/);
-    assert.match(src, /_moved = await goToColumn\(bot, skills, _dest\);/);   // ★T-0193: bounded walk
+    assert.match(src, /let dest = planSolidColumn\(bn, cx, cy, cz, skip\);/);   // inside relocateFallback (T-0193)
+    assert.match(src, /const ok = await goToColumn\(bot, skills, dest, /);
     assert.match(src, /openSkyAbove\(bn, cx, cy, cz\) \|\| \(bot\._mobility && bot\._mobility\.enclosed === false\)/);
 });
