@@ -14,17 +14,17 @@ const registry = require('minecraft-data')('1.21.4');
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'exit-pit-'));
 fs.mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
 process.chdir(home);
-const { default: quickMeal, sealedNow } = await import('../bots/_supervisor/skills/quickMeal.js');
+const { default: quickMeal, sealedNow, exitPitIfSealed } = await import('../bots/_supervisor/skills/quickMeal.js');
 const { default: bedErrand } = await import('../bots/_supervisor/skills/bedErrand.js');
 
 const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, offset(dx, dy, dz) { return V(this.x + dx, this.y + dy, this.z + dz); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
 
 // 封闭坑: 只有允许挖方块的寻路才走得出去 (挖开一格 → 走到 6 格外); 不许挖 → goto 秒回零移动 (实录的 "0 unreachable / no move")。
-function rig({ mobility, inv = {}, digWorks = true, walkable = false }) {
+function rig({ mobility, inv = {}, digWorks = true, walkable = false, wallX = null, entities = {} }) {
     const legs = [];
     let canDig = false;
-    const bot = { food: 8, health: 18, registry, entity: { position: V(0, 40, 0) }, entities: {}, _mobility: mobility,
-        blockAt: () => ({ name: 'stone', skyLight: 0 }),
+    const bot = { food: 8, health: 18, registry, entity: { position: V(0, 40, 0) }, entities, _mobility: mobility,
+        blockAt: (q) => (wallX != null && Math.floor(q.x) === wallX) ? { name: 'stone', skyLight: 0, boundingBox: 'block' } : { name: 'stone', skyLight: 0 },
         inventory: { items: () => Object.entries(inv).map(([name, count]) => ({ name, count })), slots: [] },
         pathfinder: { stop() {}, setGoal() {},
             setMovements(mv) { canDig = !!mv.canDig; },
@@ -99,4 +99,15 @@ test('T-0215 补: bedErrand 侦察零位移 → 强制出坑, 出来了返回 ok
     const r2 = rig({ mobility: { state: 'FREE', enclosed: true, exits: [[0, -1]] }, digWorks: false });
     const res2 = await bedErrand(r2.bot, r2.ctx);
     assert.equal(res2.failed, true, JSON.stringify(res2));
+});
+
+test('T-0222: 墙后够不着的骷髅 (无视线, 6b) 不挡出坑 — 照常挖出去; 同一只骷髅有视线 → 等/延后 (不往射击线里爬)', async () => {
+    const sk = { name: 'skeleton', type: 'hostile', position: V(6.5, 40, 0.5), height: 1.95 };
+    const walled = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] }, wallX: 3, entities: { 7: sk } });
+    const r1 = await quickMeal(walled.bot, walled.ctx, { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 20000 });
+    assert.equal(walled.legs[0] && walled.legs[0].canDig, true, `dug out despite the walled skeleton (${JSON.stringify(r1)})`);
+    assert.notEqual(r1.deferred, true);
+    const open = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] }, entities: { 7: { ...sk } } });
+    const r2 = await exitPitIfSealed(open.bot, { legMs: 50 });
+    assert.equal(r2.hostile, true, 'skeleton in view → wait then defer');
 });

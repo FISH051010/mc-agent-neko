@@ -9,13 +9,14 @@ import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
 import { HUNTABLE_RE, skyOpenAt } from '../../../src/agent/framework/food_floor.js';
+import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';
 const { goals, Movements } = mfp;
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
 
+// ★T-0222 (监工统一, worker-stuck 原语): "有怪就等/让位" 只算可达或有视线的威胁 — 03:57→04:10 墙后够不着的骷髅
+//   把 surfaceFirst / 出坑 / 侦察全冻在 y13。hostileWithin 被 exitPit / waitHostileClear / 侦察 / 上浮前共用, 换这一处即全换。
 export function hostileWithin(bot, r) {
-    const me = bot.entity && bot.entity.position;
-    if (!me) return false;
-    return Object.values(bot.entities || {}).some(e => e && e.position && HOSTILE_RE.test(e.name || '') && e.position.distanceTo(me) < r);
+    return hostileActionableNear(bot, r) > 0;
 }
 
 // ★T-0204 (01:37:36-01:39:37Z 实录: bedErrand 侦察 112 段 111 段 "Path was stopped", 120s 只走 22b, 探针零外部打断者):

@@ -40,11 +40,21 @@ test('T-0221: y13 地下, 羊在头顶地表 (dy≈56, 3D 距离 <64) → 不可
     assert.equal(bedErrandFeasible(level), true);
 });
 
-test('T-0220: 16 格内有敌对 (够不着的骷髅也算) → 不提 GET_BED, 已承诺的立即释放 (isGoalDone 同谓词)', () => {
+test('T-0220: 16 格内有视线可达的敌对 (在射的骷髅) → 不提 GET_BED, 已承诺的立即释放 (isGoalDone 同谓词)', () => {
     const shot = makeBot({ wooden_pickaxe: 2, white_wool: 3 }, [['sheep', 20, 0], ['skeleton', 12, 6, 70]]);
     assert.equal(bedProposable(world(), shot), false);
     assert.equal(beds(world(), shot).length, 0);
     assert.equal(isGoalDone('GET_BED', world(), shot), true);
     const calm = makeBot({ wooden_pickaxe: 2, white_wool: 3 }, [['sheep', 20, 0]]);
     assert.equal(isGoalDone('GET_BED', world(), calm), false);
+});
+
+test('T-0222: 墙后够不着的骷髅 (无视线) 不挡 GET_BED; 同一只骷髅有视线 → 挡 (hostile_reach 同谓词)', () => {
+    const bot = makeBot({ wooden_pickaxe: 2, white_wool: 3 }, [['sheep', 20, 0], ['skeleton', 8, 0, 64]]);
+    bot.entities[2].type = 'hostile';
+    bot.blockAt = (q) => (Math.floor(q.x) === 4 ? { name: 'stone', boundingBox: 'block' } : { name: 'air', boundingBox: 'empty' });
+    assert.equal(bedProposable(world(), bot), true, 'walled skeleton ignored');
+    assert.equal(beds(world(), bot).length, 1);
+    bot.blockAt = () => ({ name: 'air', boundingBox: 'empty' });
+    assert.equal(bedProposable(world(), bot), false, 'skeleton in view blocks');
 });

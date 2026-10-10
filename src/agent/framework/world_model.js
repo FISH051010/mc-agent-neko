@@ -27,6 +27,7 @@ import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, sw
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR } from './food_floor.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
+import { hostileActionableNear } from './hostile_reach.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
@@ -2131,7 +2132,6 @@ export function bedErrandScoutOk(world, bot) {
 
 export const SHEEP_HUNT_DY = 12;
 export const BED_HOSTILE_RADIUS = 16;
-const BED_HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|pillager|vindicator|bogged|breeze/;
 /** ★T-0220 (监工, 04:04:44-04:05:21Z): GET_BED 只剩一个执行者 bedErrand — 可行路径 = bedErrand 真能走的:
  *  ①包里有床/同色≥3 羊毛 (含线÷4 折白) → 直接 setBed; ②白天、10 格内无敌对、同一高度带 (|dy|≤SHEEP_HUNT_DY) 有羊 (food≥6 时 64 格, 否则 12 格)。
  *  旧 setBed 专属的蜘蛛取线 / ≥4 线路径 bedErrand 不走, 删 (否则又是"提了必拒")。
@@ -2144,20 +2144,19 @@ export function bedErrandFeasible(bot) {
         const tod = bot.time && Number.isFinite(bot.time.timeOfDay) ? bot.time.timeOfDay : null;
         if (tod != null && tod >= 12800 && tod <= 23000) return false;
         const ents = Object.values(bot.entities || {});
-        if (ents.some(e => e && BED_HOSTILE_RE.test(e.name || '') && e.position && e.position.distanceTo(me) <= 10)) return false;
+        if (hostileActionableNear(bot, 10) > 0) return false;   // ★T-0222 镜像 setBed (worker-stuck 已换同谓词)
         const food = Number.isFinite(bot.food) ? bot.food : 20;
         const reach = food >= 6 ? 64 : 12;
         return ents.some(e => e && e.name === 'sheep' && e.position && e.position.distanceTo(me) <= reach && Math.abs(e.position.y - me.y) <= SHEEP_HUNT_DY);
     } catch (e) { return false; }
 }
 
-/** ★T-0220 唯一的 GET_BED 谓词 (提案门 + isGoalDone 同源): 未知床 + 有镐 + 16 格内无敌对 (够不着的骷髅照样在射, 不提床) +
+/** ★T-0220 唯一的 GET_BED 谓词 (提案门 + isGoalDone 同源): 未知床 + 16 格内无可达/有视线的敌对 (★T-0222 hostile_reach; 在射的骷髅有视线照样挡) +
  *  (侦察找羊条件成立 || bedErrand 当场可行路径成立)。 */
 export function bedProposable(w, bot) {
     try {
         if (bedKnown(bot)) return false;
-        const me = bot && bot.entity && bot.entity.position;
-        if (me && Object.values(bot.entities || {}).some(e => e && BED_HOSTILE_RE.test(e.name || '') && e.position && e.position.distanceTo(me) <= BED_HOSTILE_RADIUS)) return false;
+        if (bot && bot.entity && hostileActionableNear(bot, BED_HOSTILE_RADIUS) > 0) return false;   // ★T-0222 只算可达/有视线 (墙后骷髅不挡床)
         if ((w && w.threat && w.threat.actionable) > 0) return false;
         return bedErrandScoutOk(w, bot) || bedErrandFeasible(bot);
     } catch (e) { return false; }
