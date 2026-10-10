@@ -38,7 +38,10 @@ test('T-0193: a hung pathfinder walk is bounded and stopped', async () => {
 
 test('T-0193: wiring — START relocate and the void branch both go through the bounded fallbacks', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
-    assert.match(src, /if \(!_ok\) await relocateFallback\(bot, skills, bn, log_, 'tunnel walk stopped'\);/);
+    assert.match(src, /if \(!_ok\) _fbOk = await relocateFallback\(bot, skills, bn, log_, 'tunnel walk stopped'\);/);
+    // live 00:35:52: arrived at the column but judged 'relocate failed (moved=5.1b footingOk=false)'
+    assert.match(src, /if \(_fbOk\) \{ const _t0 = Date\.now\(\); while \(!bot\.entity\.onGround/);
+    assert.match(src, /if \(movedB >= \(_fbOk \? 4 : 6\) && footingOk && clean2\) \{/);
     assert.match(src, /await relocateFallback\(bot, skills, bn, log_, 'no dry solid 9-cell tunnel line at this level'\);/);
     assert.match(src, /_moved = await goToColumn\(bot, skills, _dest\);/);
     assert.doesNotMatch(src, /falling back to moveAway/);

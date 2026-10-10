@@ -3054,6 +3054,8 @@
 
 - **★C411-S mineDown 返回契约: 圆石增量也算进度(T-0198)**（2026-10-10，worker-stuck，T-0198）: 实录 10-10 00:26:42→00:27:38 NIGHT_STONE_BOOTSTRAP mineDown @y67 挖下 23 块到 y64, 同点第 3 次楔死 → wedge-final moveAway 回升到 y68 → (entryY-endY)=-1 判零进度 → failed:true 吃第 3 个 strike → 冷却 5min, 而夜间取圆石的目的已达成。修: dispatchProgressed 纯函数 (下降 ≥1 / wedge-final ≥3, 或矿石增量, 或 cobblestone+cobbled_deepslate 增量 ≥3); 零世界变化的热循环仍 failed。测试 test/minedown_cobble_progress.test.mjs。
 
+- **★C412-S START 换址后校验认可"已到达实心列"(T-0193 续)**（2026-10-10，worker-stuck，T-0193）: 实录 10-10 00:35:52 'relocate: no dry solid 9-cell tunnel line — path to solid column -24,25,12 arrived' 紧接 'relocate failed (moved=5.1b footingOk=false cleanHeading=true)' — 到达时还在走 (onGround 假), 且实心列距起点 ≥6b 减 2.5b 到达容差后可 <6b → 实际换址成功却诚实失败吃 strike。修: relocateFallback 报到达时等 ≤1s 落地再判 footing, 移动门槛 6→4b (仅限已验证实心列的到达); 隧道/其他路径不变。更新 minedown_relocate_fallback / minedown_relocate_tunnel 钉子。
+
 ---
 
 ---

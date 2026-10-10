@@ -372,21 +372,26 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 const before = bot.entity.position.clone();
                 // ★T-0161: underground the pathfinder moveAway never moved (0/∞ historically) — tunnel out instead.
                 const _tun = planRelocateTunnel(bn, Math.floor(before.x), Math.round(before.y), Math.floor(before.z));
+                let _fbOk = false;   // ★T-0193 the column walk reported arrival at a 5-solid-below column
                 if (_tun) {
                     const _ok = await walkDugPath(bot, skills, Vec3, bn, _tun.path);
                     log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length} — ${_ok ? 'arrived' : 'walk stopped early: ' + (bot._walkDugFail || '?')}`);
-                    if (!_ok) await relocateFallback(bot, skills, bn, log_, 'tunnel walk stopped');
+                    if (!_ok) _fbOk = await relocateFallback(bot, skills, bn, log_, 'tunnel walk stopped');
                 } else {
                     // ★T-0193: moveAway underground moved 0.2b / hung 43s (live 00:04:25-30) — column walk or fast fail
-                    await relocateFallback(bot, skills, bn, log_, 'no dry solid 9-cell tunnel line at this level');
+                    _fbOk = await relocateFallback(bot, skills, bn, log_, 'no dry solid 9-cell tunnel line at this level');
                 }
+                // ★T-0193 post-check (live 00:35:52: 'path to solid column … arrived' then 'relocate failed (moved=5.1b
+                //   footingOk=false)' — still stepping at arrival, and the column is ≥6b from the start minus the 2.5b
+                //   arrival tolerance). Let the body settle ≤1s and accept ≥4b for a verified column arrival.
+                if (_fbOk) { const _t0 = Date.now(); while (!bot.entity.onGround && Date.now() - _t0 < 1000) await new Promise(r => setTimeout(r, 100)); }
                 const p2 = bot.entity.position;
                 const movedB = Math.hypot(p2.x - before.x, p2.z - before.z);
                 const feetB = bn(Math.floor(p2.x), Math.floor(p2.y) - 1, Math.floor(p2.z));
                 const footingOk = feetB && feetB.boundingBox === 'block' && !FLUID.test(nm(feetB)) && !!bot.entity.onGround;
                 const avoid2 = bot._mineDownFluidAvoid.filter(a => Date.now() - a.at < 600000 && Math.hypot(a.x - p2.x, a.z - p2.z) < 8);
                 const clean2 = [[1, 0], [0, 1], [-1, 0], [0, -1]].find(([cx, cz]) => !avoid2.some(a => a.sx === cx && a.sz === cz));
-                if (movedB >= 6 && footingOk && clean2) {
+                if (movedB >= (_fbOk ? 4 : 6) && footingOk && clean2) {
                     sx = clean2[0]; sz = clean2[1];
                     rb.count++; rb.at = Date.now();
                     // suppress the bed-anchor pull below for ~90s — else it immediately pathfinds us
