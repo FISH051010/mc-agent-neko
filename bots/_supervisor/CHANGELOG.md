@@ -12,7 +12,14 @@
 
 ---
 
-## C378. ★破入洞穴三件套: 挖穿有怪空腔→封口弃向; 地下逃跑沿来路回撤; 无路可逃时不跳崖（branchMine.js 热加载 + modes.js/mobility_geom.js 需重启,T-0180 复发,worker-death,⏳待重启）
+## C379. ★破口封堵抽成共享原语 skills.sealCavityBreach, mineDown 每步同样调用（skills.js 需重启; mineDown/branchMine 热加载,T-0180,worker-death,⏳待重启）
+
+**证据**(监工): C378 的破口封堵只加在 branchMine; death #11(T-0180 原始)是 mineDown 向下挖破入有水有怪的洞穴 —— 同一安全判据只覆盖了一个入口(重力总闸的同款教训)。
+**改动**: skills.js `cavityBreachAt(blockAt,p,dx,dz,{yLo})`(前方两格为中心 3×3×3, 纵向 yLo..yLo+2 相对脚, 空气/水 ≥8) + `sealCavityBreach(bot,dx,dz,{yLo,radius=16,tag})`(16b 内有敌对 且 破口 → resolveCapBlock 料补封前方开放格(yLo..+1, positioning:false) + 记 `_mineDownFluidAvoid` 回避 + 返回 {breached,sealed,mat})。branchMine 改调原语(yLo=0; 原语未加载时保留 C378 内联兜底); mineDown 每个阶梯步在前进前调原语(yLo=-1: 阶梯下行, 带从脚下一格起), 破口 → rememberAbortedHeading + 中止。
+**可证伪预测**: 下矿挖穿有怪洞穴出 `mineDown: broke into a cavity … sealed N … (T-0180)` / mineDown DONE abort `cavity breach + hostile ≤16b … not entering (T-0180)`。
+**回滚**: revert, 重启 main.js。回归 seal_cap_geometry 'T-0180①: shared cavity-breach primitive…'(含 death #11 阶梯下方水洞 yLo 区分)。
+
+## C378. ★破入洞穴三件套: 挖穿有怪空腔→封口弃向; 地下逃跑沿来路回撤; 无路可逃时不跳崖（branchMine.js 热加载 + modes.js/mobility_geom.js 需重启,T-0180 复发,worker-death,🟡已上线 23:59:53Z）
 
 **证据**: death #12 10-09 23:55:25Z cause=unknown @-1,-7,-30 夜 0 甲 石剑, 背包 raw_iron 29 全失。branchMine 在 y10-14 挖铁破入钟乳石洞(dig dripstone_block)内有僵尸+骷髅; 23:55:11→13 y12.8→4 坠落 -5hp; 23:55:19 交战 hp5.7; 23:55:21-24 self_preservation forward,sprint 冲向洞穴深处 y1.2→-1.2→死(~8 格落差/尖钟乳石)。监工: T-0180 复发, 约定的① 必做 + ③。
 **机理**: ① branchMine 的夜间敌对检查 y<50 直接返回 null, 地下无"破口"概念, 挖穿天然空腔照走。③ sprintFlee 地下沿"挨打前的行进方向"冲 —— 那正是空腔方向(未知落差)。另: chooseFleeHeading 全向不通时的兜底"直冲+跳"不看直冲方向是不是悬崖 → 冲下 8 格。

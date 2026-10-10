@@ -6469,6 +6469,46 @@ export function drowningPriority({ headInWater, feetInWater = false, oxygen }) {
 }
 
 /**
+ * ★T-0180 ① 共享原语 (监工: 同一安全判据放到所有挖掘入口共用的一层 — death #11 mineDown 向下 / #12 branchMine 横挖
+ * 都是挖穿有水有怪的天然洞穴)。判据: 前进方向两格为中心的 3×3×3 盒 (纵向 yLo..yLo+2, 相对脚) 内空气/水 ≥8 格。
+ * 自挖的 1×2 隧道/阶梯最多贡献几格, 真洞穴才填满盒子。
+ */
+const CAVITY_OPEN_RE = /^(air|cave_air|void_air|water|flowing_water)$/;
+export function cavityBreachAt(blockAt, p, dx, dz, { yLo = 0, threshold = 8 } = {}) {
+    const cx = p.x + dx * 2, cz = p.z + dz * 2;
+    let open = 0;
+    for (let ox = -1; ox <= 1; ox++) for (let oy = 0; oy <= 2; oy++) for (let oz = -1; oz <= 1; oz++) {
+        const b = blockAt(new Vec3(cx + ox, p.y + yLo + oy, cz + oz));
+        if (CAVITY_OPEN_RE.test((b && b.name) || 'air')) open++;
+    }
+    return open >= threshold;
+}
+/**
+ * 执行原语: 刚挖开的方向通向天然空腔 且 radius 内有敌对 → 用封顶料补封前方 (yLo..+1 的开放格, 不寻路),
+ * 记入 bot._mineDownFluidAvoid (mineDown/branchMine 的朝向回避记忆)。人类: 挖穿一个全是怪的洞 → 先堵上, 换个方向挖。
+ * @returns {Promise<{breached:boolean, sealed:number, mat:string|null}>}
+ */
+export async function sealCavityBreach(bot, dx, dz, { yLo = 0, radius = 16, tag = 'dig' } = {}) {
+    const p = bot.entity.position.floored();
+    const bt = (q) => bot.blockAt(q);
+    const hostile = Object.values(bot.entities || {}).some(e => { try { return e && e !== bot.entity && e.position && mc.isHostile(e) && e.position.distanceTo(bot.entity.position) <= radius; } catch (er) { return false; } });
+    if (!hostile || !cavityBreachAt(bt, p, dx, dz, { yLo })) return { breached: false, sealed: 0, mat: null };
+    const mat = resolveCapBlock(bot);
+    let sealed = 0;
+    if (mat) {
+        for (let y = p.y + Math.min(0, yLo); y <= p.y + 1; y++) {
+            const c = bot.blockAt(new Vec3(p.x + dx, y, p.z + dz));
+            if (c && CAVITY_OPEN_RE.test(c.name || '')) {
+                try { if (await placeBlock(bot, mat, p.x + dx, y, p.z + dz, 'side', true, { positioning: false })) sealed++; } catch (e) {}
+            }
+        }
+    }
+    try { (bot._mineDownFluidAvoid = bot._mineDownFluidAvoid || []).push({ x: bot.entity.position.x, z: bot.entity.position.z, sx: dx, sz: dz, at: Date.now() }); } catch (e) {}
+    log(bot, `${tag}: broke into a cavity with a hostile ≤${radius}b — sealed ${sealed} cell(s) with ${mat || 'nothing'}, abandoning heading ${dx},${dz} (T-0180)`);
+    return { breached: true, sealed, mat };
+}
+
+/**
  * ★T-0172 ③ 重力族总闸判据 (death #3/#7/#9 + 普查: 11 处"挖头顶/挖了往上爬"调用点无重力检查 —
  * pillarUp/goToSurface/stepEdgeAssist/placeBlockNearby 垫柱/chopWood digToSurface/edge_unstick/unstuck…)。
  * 被挖格在 bot 身体所占列 (碰撞箱 ±0.3) 的脚上方 2..4 格, 且它本身或其上 3 格内有重力块 → 挖了整列

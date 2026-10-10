@@ -934,6 +934,19 @@ export default async function mineDown(bot, ctx, opts = {}) {
             log_(`gravity column at ${fx},${cy - 1},${fz} drained — stepping in (T-0158)`);
         }
 
+        // ★T-0180 ① (shared primitive, death #11 shape): the step just dug toward a natural cavity with a hostile
+        //   around (stair descends → band starts one below the feet) → plug it, remember the heading, stop here.
+        if (typeof skills.sealCavityBreach === 'function') {
+            try {
+                const br = await skills.sealCavityBreach(bot, sx, sz, { yLo: -1, tag: 'mineDown' });
+                if (br.breached) {
+                    rememberAbortedHeading(bot, sx, sz);
+                    abort = `cavity breach + hostile ≤16b toward ${sx},${sz} — sealed ${br.sealed}, not entering (T-0180)`;
+                    break;
+                }
+            } catch (e) {}
+        }
+
         // Walk forward; the bot falls 1 block into the cleared step. Low-level (no pathfinder).
         try {
             await bot.lookAt(new Vec3(fx + 0.5, cy - 0.5, fz + 0.5), true);

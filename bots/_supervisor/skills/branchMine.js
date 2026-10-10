@@ -908,6 +908,16 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
         //   mob-filled cave (death #12). Human: you hear/see a cave full of mobs → wall it off and mine elsewhere.
         try {
             const fp = bot.entity.position.floored();
+            // shared primitive (skills.sealCavityBreach, also used by mineDown); inline fallback only until main reloads skills.js
+            if (typeof skills.sealCavityBreach === 'function') {
+                const br = await skills.sealCavityBreach(bot, dx, dz, { yLo: 0, tag: 'branchMine' });
+                if (br.breached) {
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [branchMine] ★cavity breach + hostile ≤16b @${fp.x},${fp.y},${fp.z} heading ${dx},${dz} — sealed ${br.sealed} with ${br.mat || '-'}, backing off (T-0180)\n`); } catch (e) {}
+                    motion('branchMine.tunnel.stop', { reason: 'cavity-breach-hostile', step: i + 1, length, sealed: br.sealed });
+                    return runProgress();
+                }
+                throw new Error('no-breach');   // skip the inline fallback below
+            }
             const _bn = (x, y, z) => bot.blockAt(new Vec3(x, y, z));
             const _hostile16 = Object.values(bot.entities || {}).some(e => { try { return e && e !== bot.entity && e.position && mc && mc.isHostile && mc.isHostile(e) && e.position.distanceTo(bot.entity.position) <= 16; } catch (e2) { return false; } });
             if (_hostile16 && cavityBreach(_bn, fp, dx, dz)) {

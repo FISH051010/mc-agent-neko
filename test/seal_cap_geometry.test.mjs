@@ -331,3 +331,15 @@ test('T-0180③: underground flee backtracks along cells we walked, never back i
     assert.equal(backtrackTarget(crumbs, me, { x: -10, z: 0 }), null, 'the way back is where the mob is → no backtrack');
     assert.equal(backtrackTarget([], me, null), null);
 });
+
+test('T-0180①: shared cavity-breach primitive — own tunnel/stair is not a cavity; a cave ahead (incl. one level down) is', async () => {
+    const { cavityBreachAt } = await import('../src/agent/library/skills.js');
+    const p = new Vec3(0, 10, 0);
+    const tunnel = (q) => ({ name: (q.z === 0 && q.x <= 1 && (q.y === 10 || q.y === 11)) ? 'air' : 'stone' });
+    const caveLevel = (q) => ({ name: (q.x >= 1 && q.x <= 4 && q.y >= 9 && q.y <= 13) ? 'cave_air' : 'stone' });
+    const caveBelow = (q) => ({ name: (q.x >= 1 && q.x <= 4 && q.y >= 6 && q.y <= 9) ? 'water' : 'stone' });   // death #11: flooded cave under a descending stair
+    assert.equal(cavityBreachAt(tunnel, p, 1, 0), false);
+    assert.equal(cavityBreachAt(caveLevel, p, 1, 0), true);
+    assert.equal(cavityBreachAt(caveBelow, p, 1, 0, { yLo: 0 }), false, 'branchMine band misses a cave below the stair');
+    assert.equal(cavityBreachAt(caveBelow, p, 1, 0, { yLo: -1 }), true, 'mineDown band (one below the feet) catches it');
+});
