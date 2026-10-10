@@ -106,6 +106,20 @@ test('T-0223 death #20: 地下 1 宽隧道被近战怪追 → 转身垫块堵隧
     assert.equal(tunnelWallOffWanted(tunnel, me, { x: 25.6, y: 13, z: 28.5 }), false, 'too close to place between');
     assert.equal(tunnelWallOffWanted(tunnel, me, { x: 24.3, y: 15, z: 28.5 }), false, 'different level');
     const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
-    const sf = m.slice(m.indexOf('sprintFlee: async function'), m.indexOf('const cr = this.nearestCreeper(bot, 12);', m.indexOf('sprintFlee: async function')) + 2500);
+    const _s0 = m.indexOf('sprintFlee: async function'); const sf = m.slice(_s0, m.indexOf('// 有目标且已接近', _s0));
     assert.match(sf, /tunnelWallOffWanted\(_solid, me, _mm\.position\)[\s\S]*skills\.coverFromShooter\(bot, _mm/);
+});
+test('T-0226 death #22: 逃跑中被射手打中 → 先挡视线 (挡住就停跑); 射手贴脸或近战怪在追时不停下垫块', async () => {
+    const { fleeCoverFirst } = await import('../src/agent/mobility_geom.js');
+    assert.equal(fleeCoverFirst({ shooterDist: 4.6, meleeNear: false }), true, 'death #22 04:51:13');
+    assert.equal(fleeCoverFirst({ shooterDist: 1.2, meleeNear: false }), false, 'point-blank: no room between');
+    assert.equal(fleeCoverFirst({ shooterDist: 6, meleeNear: true }), false, 'a zombie chasing — do not stop');
+    assert.equal(fleeCoverFirst({ shooterDist: 20, meleeNear: false }), false);
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const s = m.indexOf('sprintFlee: async function');
+    const loop = m.slice(m.indexOf('const cr = this.nearestCreeper(bot, 12);', s), m.indexOf('// 有目标且已接近', s));
+    const cover = loop.indexOf('skills.coverFromShooter(bot, _sh');
+    assert.ok(cover > 0, 'sprintFlee tries cover');
+    assert.ok(cover < loop.indexOf('tunnelWallOffWanted('), 'cover check runs before moving on');
+    assert.match(loop, /if \(_cv && _cv\.covered\) break;/);
 });

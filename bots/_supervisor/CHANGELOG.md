@@ -12,7 +12,15 @@
 
 ---
 
-## C397. ★有出口的洞穴里被骷髅射 → 追打, 不再按"被困"让位 + 上浮危险判据覆盖 16b 内射手（combat_gates.js 需重启; surfaceUp.js 热加载,T-0224,worker-death,⏳待重启）
+## C398. ★逃跑中被射手打中 → 先挡视线, 挡住就停跑（modes.js/mobility_geom.js 需重启,T-0226 death #22 逃生部分,worker-death,⏳待重启）
+
+**证据**: death #22 04:51:25 y14 黄昏, 石剑 0 甲。04:51:13 中箭 4.6b (hp12) → self_preservation sprintFlee 持身, act 全程 mode:self_preservation, 9s 4 箭 12→8→7→4→0 (骷髅 5.6→2.4b)。progress 无 `shot while disengaged` = C382 的 coverFromShooter 从没执行 —— 它挂在 self_defense 的 ranged-unreachable-trap 让位分支, 而 self_preservation 持身时 self_defense 这一拍轮不到。在射程内冲刺 = 继续当靶子。
+**改动**: sprintFlee 每拍 (1.5s 限频): 2.5s 内挨过打且 16b 内有射手 → mobility_geom.fleeCoverFirst({shooterDist, meleeNear}) (射手 1.5–16b 且 4b 内无近战怪追) → 停步 skills.coverFromShooter, 挡住 → 结束逃跑躲掩体后; 挡不住 → 继续跑。排在隧道封堵/移动之前。
+**可证伪预测**: 被射逃跑时出现 `shot while fleeing by skeleton … → cover first: placed …(T-0226)`; 不再出现被骷髅一路追射至死且无任何挡箭尝试。
+**未解 (上报)**: 同窗 ctrl `forward,back,right,sneak,sprint` + path=1 — branchMine 的寻路与 sprintFlee 同时驱动 (sprintFlee 入口消费了 executor 的 interrupt, 子技能没看到)。
+**回滚**: revert, 重启。回归 ranged_cover 'T-0226 death #22'。
+
+## C397. ★有出口的洞穴里被骷髅射 → 追打, 不再按"被困"让位 + 上浮危险判据覆盖 16b 内射手（combat_gates.js 需重启; surfaceUp.js 热加载,T-0224,worker-death,✅已上线 04:42:02Z 79ab4df）
 
 **证据**: death #21 04:37:12 y14 洞穴, 石剑 0 甲。04:36:27/35/45/53 `DISENGAGE ranged-unreachable-trap mob=FREE enclosed=true` ×4 (有出口), 04:36:54 被射 hp12 → C382 挡箭只垫上 1 块 (placement-failed) → 回撤, 04:36:59 掉崖 y23→13 入水; 04:37:00 replenishKit 又派 surfaceUp, 射手在 8b 外 → 上浮照爬; 04:37:04 −5, 04:37:12 骷髅 2.2b 射死。22s 中 4 箭。
 **改动**: ① combat_gates.rangedUnreachableTrap: trapped = 困态 (POCKET/ENTOMBED/SEALED) 或 (有顶 且 零水平出口); 旧 `enclosed ||` 把有出口的洞穴当被困 (C353 本意是无出口口袋)。有出口 → self_defense 照常追打 (挨打索敌 12b, armoredSoloBrawl 时 16b)。② surfaceUp.surfaceUpDangerYield: 刚挨打时 16b 内的射手也算危险。

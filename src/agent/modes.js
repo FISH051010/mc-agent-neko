@@ -28,7 +28,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { hostileActionable } from './framework/hostile_reach.js';
@@ -819,6 +819,25 @@ const modes_list = [
                 const cr = this.nearestCreeper(bot, 12);
                 if (hs.length === 0 && !cr) break;                               // 威胁清除 → 收手 (常规循环恢复→重新寻路奔目标)
                 const me = bot.entity.position;
+                // ★T-0226 death #22 (04:51:13–25, 骷髅 4 箭 12→0): C382 的挡箭只挂在 self_defense 让位分支, 而身体一直在 sprintFlee 手里 →
+                //   挡箭从没执行。在射程内冲刺 = 继续当靶子: 刚被射手打中 → 先挡视线 (coverFromShooter), 挡住就停跑躲在掩体后。
+                try {
+                    if (Date.now() - (bot.lastDamageTime || 0) < 2500 && Date.now() - (this._fleeCoverAt || 0) > 1500) {
+                        let _sh = null, _sd = Infinity;
+                        for (const e of Object.values(bot.entities || {})) {
+                            if (!e || !e.position || !/skeleton|stray|pillager/i.test(e.name || '')) continue;
+                            const d = e.position.distanceTo(me); if (d < 16 && d < _sd) { _sd = d; _sh = e; }
+                        }
+                        if (_sh && fleeCoverFirst({ shooterDist: _sd, meleeNear: hs.some(e => e && e.position && !/skeleton|stray|pillager|creeper/i.test(e.name || '') && e.position.distanceTo(me) < 4) })) {
+                            this._fleeCoverAt = Date.now();
+                            try { bot.clearControlStates(); } catch (e) {}
+                            let _cv = null;
+                            try { _cv = await skills.coverFromShooter(bot, _sh, { tag: 'flee-cover' }); } catch (e) {}
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] shot while fleeing by ${_sh.name} ${_sd.toFixed(1)}b hp=${Math.round(bot.health)} → cover first: ${_cv ? `${_cv.why} placed=${_cv.placed}` : 'error'} (T-0226)\n`); } catch (e) {}
+                            if (_cv && _cv.covered) break;   // behind cover — stop being a moving target
+                        }
+                    }
+                } catch (e) {}
                 // ★T-0223 death #20 (04:22:34): underground, a melee mob chasing us down a 1-wide tunnel (often our own dead-end
                 //   mine) → turn and wall it off (2 blocks between us), the human move; running to the tunnel's end = cornered.
                 try {

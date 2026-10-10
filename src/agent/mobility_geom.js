@@ -155,6 +155,15 @@ export function tunnelWallOffWanted(solidAt, me, mob) {
     return true;
 }
 
+/**
+ * ★T-0226 death #22: 逃跑中被射手打中 → 先挡视线再说。不挡的情形: 射手 <1.5b (中间放不下, 交给近战) 或
+ * 4b 内有近战怪在追 (停下垫块会被近战怪贴上 — 那时继续跑/堵隧道)。
+ */
+export function fleeCoverFirst({ shooterDist, meleeNear }) {
+    if (!Number.isFinite(shooterDist) || shooterDist < 1.5 || shooterDist >= 16) return false;
+    return !meleeNear;
+}
+
 /** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */
 export function pickCreeperRunDir(cands) {
     const okTerrain = (cands || []).filter(c => c && c.ok);
