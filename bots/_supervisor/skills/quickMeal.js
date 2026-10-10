@@ -84,7 +84,7 @@ async function hostileDecision(bot) {
     return { action: 'away', h: h2 || h1 };
 }
 
-// ★T-0090 诊断 (监工: 00:58:26Z "scout: 70 legs, 0 unreachable, 69 stopped, moved 17b in 90.2s", hostiles=0 — 有东西持续打断 pathfinder):
+// ★T-0199 诊断 (监工: 00:58:26Z "scout: 70 legs, 0 unreachable, 69 stopped, moved 17b in 90.2s", hostiles=0 — 有东西持续打断 pathfinder):
 //   侦察期间临时包住 bot.pathfinder.stop / setGoal, 按"第一个非 quickMeal / 非 pathfinder 库 / 非 node 内部"的调用帧归因计数,
 //   记首次的 _bodyOwner / supervised; 侦察结束还原并写一行汇总 (限频: 只汇总, 不逐条刷)。纯诊断, 不改行为。
 export function callerKey(stack) {
@@ -118,7 +118,7 @@ function installStopProbe(bot) {
 async function scoutForAnimal(bot, opts) {
     const probe = installStopProbe(bot);
     try { return await scoutForAnimalInner(bot, opts); }
-    finally { probe.restore(); const s = probe.summary(); if (s) prog(`scout interrupters (T-0090 probe): ${s}`); }
+    finally { probe.restore(); const s = probe.summary(); if (s) prog(`scout interrupters (T-0199 probe): ${s}`); }
 }
 
 async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {

@@ -88,7 +88,7 @@ test('T-0191: 危急 (food≤3) 猎到生猪排 → 先生吃一块再烤 (不�
     assert.ok(iEat >= 0 && (iCook < 0 || iEat < iCook), `ate raw before cooking: ${order}`);
 });
 
-test('T-0090 诊断: 侦察期间外部 pathfinder.stop 被归因到调用者; 自身 stop 不计; 结束后还原原函数', async () => {
+test('T-0199 诊断: 侦察期间外部 pathfinder.stop 被归因到调用者; 自身 stop 不计; 结束后还原原函数', async () => {
     const { callerKey } = await import('../bots/_supervisor/skills/quickMeal.js');
     const fake = 'Error: stopProbe\n    at pf.stop (/x/bots/_supervisor/skills/quickMeal.js:110:9)\n    at Object.update (/x/src/agent/modes.js:4321:30)\n    at tick (/x/src/agent/modes.js:9000:5)';
     assert.equal(callerKey(fake), 'Object.update@modes.js:4321');
@@ -104,5 +104,5 @@ test('T-0090 诊断: 侦察期间外部 pathfinder.stop 被归因到调用者; �
     await quickMeal(bot, { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } },
         { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 24, scoutMs: 3000 });
     assert.equal(bot.pathfinder.stop, stopRef, 'restored');
-    assert.ok(/scout interrupters \(T-0090 probe\)/.test(fs.readFileSync(logp, 'utf8')), 'summary logged');
+    assert.ok(/scout interrupters \(T-0199 probe\)/.test(fs.readFileSync(logp, 'utf8')), 'summary logged');
 });
