@@ -3137,6 +3137,8 @@
 
 - **★C416-S 含水层换址找"干竖井"(T-0184, 监工指派)**（2026-10-10，worker-stuck，T-0184）: COOLDOWN-CHURN GO_UNDERGROUND ×3; 01-02h mineDown abort 'fluid near stair cell' ×11 @-31,39,-62 — 换向和 9b 隧道都留在同一片含水层。修: planDryTunnel = 沿基本方向 6..16b 横向隧道 (侧邻/头顶防水同 planRelocateTunnel), 终点须"干竖井": 半径 2 格内从脚下到 targetY 无流体 (列湿度记忆化, 最坏数万次 blockAt), 取最短; 含水层分支与 START 换址优先用它, 找不到再退 9b 隧道/实心列。日志带 '(dry shaft)'。测试 test/minedown_dry_shaft.test.mjs, 更新 T-0161/T-0162 钉子。
 
+- **★C417-S replenishKit ① 上浮不论昼夜都避开近怪(T-0212, T-0211 的 replenishKit 半边; worker-tier 报)**（2026-10-10，worker-stuck，T-0212）: death #18 10-10 02:37:11→32 — replenishKit START 'y=33 night=false hostiles16=2' → ① surfaceUp (跳过门只认 night+hostiles) → 拂晓亡灵未晒死, 上浮途中僵尸 1.7/2.4b 贴身致死。修: surfaceUpHostileGate — 16 格内有敌对先原地等 ≤15s (每秒复查), 仍在则跳过上浮 (地下折板/补镐照做), 去掉 night 条件; 与 quickMeal (T-0211) 同策略。测试 test/replenish_surface_hostile.test.mjs。
+
 ---
 
 ---

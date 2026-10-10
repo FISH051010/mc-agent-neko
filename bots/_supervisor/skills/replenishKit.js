@@ -62,6 +62,20 @@ export async function reclaimTable(bot, { skills, world }, { maxMs = 6000 } = {}
     return has();
 }
 
+/** ★T-0212 (death #18 02:37:32: 'night=false hostiles16=2' → ① surfaceUp anyway → zombies 1.7/2.4b mid-climb at dawn):
+ *  never climb a shaft into nearby hostiles, day or night. Wait ≤maxWaitMs (re-check each stepMs) for them to clear;
+ *  still there → don't climb (the underground steps — planks/sticks/pick — still run). Mirrors quickMeal (T-0211). */
+export async function surfaceUpHostileGate({ hostilesNear, wait, maxWaitMs = 15000, stepMs = 1000, stop = () => false }) {
+    let n = hostilesNear();
+    let waited = 0;
+    while (n > 0 && waited < maxWaitMs && !stop()) {
+        await wait(stepMs);
+        waited += stepMs;
+        n = hostilesNear();
+    }
+    return { ok: n === 0, hostiles: n, waitedMs: waited };
+}
+
 export default async function replenishKit(bot, ctx, opts = {}) {
     const { skills, world, log } = ctx;
     const BUDGET_MS = 300000;                     // 5min 硬预算
@@ -197,10 +211,14 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     // ★2026-07-07 别把安全的地下 bot 顶到夜间地表送死 (用户实观: 地底安全→莫名跑地表→半个shelter→等死)。
     //   步②③ 已有 night+hostile 守卫, 但上浮步①原先无条件执行=爬进夜怪堆, 且爬上去也因 night 跳过 chopWood
     //   =纯送死。夜+近怪时跳过上浮, 留在地下用手里 log 折板/折棍/补镐(见 159-160: 地下仍可干活)。add-only。
-    if (!onSurface() && isNight() && hostilesNear(16) > 0) {
-        prog(`replenishKit: ① SKIP surfaceUp — night+hostiles16=${hostilesNear(16)} (安全地下别爬进夜怪堆送死; 地下补镐即可)`);
+    // ★T-0212: the night-only gate let a dawn climb go straight into 2 zombies (death #18) — gate on hostiles alone.
+    let _upClear = true;
+    if (!onSurface() && hostilesNear(16) > 0) {
+        const _upGate = await surfaceUpHostileGate({ hostilesNear: () => hostilesNear(16), wait: (ms) => new Promise(r => setTimeout(r, ms)), stop });
+        _upClear = _upGate.ok;
+        if (!_upClear) prog(`replenishKit: ① SKIP surfaceUp — hostiles16=${_upGate.hostiles} still near after ${_upGate.waitedMs}ms (T-0212; 别往怪堆里爬, 地下补镐即可)`);
     }
-    if (!onSurface() && !(isNight() && hostilesNear(16) > 0)) {
+    if (!onSurface() && _upClear) {
         if (stop() || overBudget()) return settle('stopped-before-surface');
         const yb = bot.entity.position.y;
         prog(`replenishKit: ① underground (y=${Math.round(yb)}) → surfaceUp target 63, budget 90s (skill-side deadline)`);
