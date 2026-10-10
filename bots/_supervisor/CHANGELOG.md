@@ -12,7 +12,14 @@
 
 ---
 
-## C390. ★kernel 承诺翻转中断在反射持身时推迟 (不再每秒杀掉 self_defense 接战) + 近战怪走近先换武器（kernelDriver.js 顶层 sticky + modes.js 需重启,T-0206 战斗部分,worker-death,⏳待重启）
+## C391. branchMine 读破口回避记忆: 不再反复朝刚封掉的有怪空腔开隧道（branchMine.js 热加载,T-0180,worker-death,已合入即生效）
+
+**证据**: 02:22:50 / 02:23:43 / 02:24:55 @-35,36,-64 heading -1,0 三次 `cavity breach … backing off` —— sealCavityBreach 把方向写进 bot._mineDownFluidAvoid, 但 branchMine 选隧道方向 (矿石朝向/yaw) 从不读它, 每次派发又朝同一空腔挖。
+**改动**: branchMine 选完 heading 后过 mineDown.rotateAwayFromAborted (T-0139 共享, 8b 内 10min TTL); 四向全被弃 → 本处不开隧道 (`all-headings-aborted`)。
+**可证伪预测**: 同一点同一方向的 cavity breach 不再重复; 日志 heading src 带 `+avoid`。
+**回滚**: revert (热加载即回滚)。回归 branchmine_breach 'T-0180: branchMine reads the abort memory'。
+
+## C390. ★kernel 承诺翻转中断在反射持身时推迟 (不再每秒杀掉 self_defense 接战) + 近战怪走近先换武器（kernelDriver.js 顶层 sticky + modes.js 需重启,T-0206 战斗部分,worker-death,✅已上线 02:20:06Z 259f87b）
 
 **证据**: death #16。01:43:19–41 commitment 每秒翻 GET_BED→MIGRATE, kernel 每秒置全局 `bot.interrupt_code=true` 要打断 bedErrand; 但 defendSelf 每 500ms 见此旗即 `pvp.stop()` 退出 → self_defense 01:43:23–25 只接战 2.4s, T-0199 探针同窗口 PVP.stop×9 / setGoal×9。另: 01:43:17–22 僵尸 15b→5.3b 走近, bot 空手 (held=empty) 站着 (未挨打索敌 5b), 01:43:23/24 被先手 −3 −3 (10.2→4.2)。核实 goal 互抢: 接战窗口内无其他技能 setGoal (探针里 PVP 是 scout 的打断者而非被打断者), 真正的打断源是全局 interrupt 旗。
 **改动**: ① kernelDriver.flipInterruptAllowed: bot._bodyOwner.kind==='mode' 时不置 interrupt_code, 记 `interrupt deferred: reflex … holds the body (T-0206)`, 下一秒复查 (反射放手后照常中断子技能)。② self_defense: 无目标但 ≤8b 有近战怪且手上不是剑/斧 → 换武器 (3s 限频, 挖掘中不换, 不夺身体)。

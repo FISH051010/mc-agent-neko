@@ -10,6 +10,7 @@
 import fs from 'fs';
 import mfp from 'mineflayer-pathfinder';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
+import { rotateAwayFromAborted } from './mineDown.js';
 const { goals: BM_GOALS, Movements: BM_MOVES } = mfp;
 
 // ★2026-07-05 铜矿除名 (durability leak 实锤: 227 raw_copper ≈ 75 次破坏 ≈ 半根石镐耐久
@@ -868,6 +869,17 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
             if (wantIron && pool.length === 0) pool = ((await world.getNearestBlocksAsync(bot, ORES, 16, 24)) || []).filter(b => b && ORES.includes(b.name));
             const h = await pickOreHeading(me, bot.entity.position, pool, _oreReachableBM);
             if (h) { dx = h.dx; dz = h.dz; headingSrc = h.src; }
+        } catch (e) {}
+        // ★T-0180 (02:22:50 / 02:23:43 实录: 同一点 -35,36,-64 同一方向 -1,0 连判两次有怪空腔): 破口回避记忆
+        //   branchMine 只写不读 → 下一次派发又朝刚封掉的空腔挖。与 mineDown 共用 rotateAwayFromAborted (T-0139)。
+        try {
+            const _r = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, dx, dz);
+            if (_r.exhausted) {
+                log(bot, `branchMine: every heading within 8b was aborted recently (cavity/fluid) — not tunnelling here (T-0180)`);
+                motion('branchMine.tunnel.stop', { reason: 'all-headings-aborted' });
+                return runProgress();
+            }
+            if (_r.rotated) { dx = _r.sx; dz = _r.sz; headingSrc += '+avoid'; }
         } catch (e) {}
         log(bot, `branchMine heading ${dx},${dz} src=${headingSrc}`);
         motion('branchMine.tunnel.heading', { dx, dz, src: headingSrc });
