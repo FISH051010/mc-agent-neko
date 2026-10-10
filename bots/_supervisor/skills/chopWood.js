@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
+import { kernelYieldRequested } from './surfaceUp.js';   // ★T-0197 kernel commitment-flip stamp (T-0181)
 const _CHOP_PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const _dbg = (s) => { try { fs.appendFileSync(_CHOP_PROG, `[${new Date().toISOString()}] [chopDBG] ${s}\n`); } catch (e) {} };
 // ★perf 2026-07-09: death_log.jsonl grows all session and was re-read+split every main-loop iteration
@@ -970,7 +971,10 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
     //   adv=0.0b ★IN-WATER + WET-WORKSITE escape STALE-BOT 刷了 75s+。修: 认 bot._poisoned —— 毒化时
     //   一次性置真的普通属性 (幽灵只能清 interrupt_code=false, 清不掉 _poisoned), 是唯一【跨实例】可靠
     //   信号。折进所有既有让位点 (_superseded), 任一 iter 顶即刻 return, 幽灵 ≤1 iter 自杀。
-    const _superseded = () => { try { return !!bot._poisoned || bot._chopGen !== _gen; } catch (e) { return false; } };
+    // ★T-0197 (live 00:26:03→34: kernel flipped REPLENISH_KIT→TOOL_UPKEEP, chopWood ran 5 more iters/31s): the kernel's
+    //   flip stamp is a caller "stop" too — every existing yield point picks it up.
+    const _cwEnteredAt = Date.now();
+    const _superseded = () => { try { return !!bot._poisoned || bot._chopGen !== _gen || kernelYieldRequested(bot, _cwEnteredAt); } catch (e) { return false; } };
     // ★走格子扫荡 (用户实拍×2: 挖了树不捡 — item_collecting 模式在 achieve 期间是被禁用的,
     // 所以掉落必须由我们显式走过去踩格子捡): walk onto each dropped item entity within r.
     // (e.objectType dropped 2026-07-02: prismarine-entity deprecated it and every access
