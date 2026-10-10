@@ -12,7 +12,14 @@
 
 ---
 
-## C389. 寻路把伤害型可穿过方块 (甜浆果丛/凋零玫瑰/细雪/灵魂火) 当不安全格（skills.js 需重启,T-0205,worker-death,⏳待重启）
+## C390. ★kernel 承诺翻转中断在反射持身时推迟 (不再每秒杀掉 self_defense 接战) + 近战怪走近先换武器（kernelDriver.js 顶层 sticky + modes.js 需重启,T-0206 战斗部分,worker-death,⏳待重启）
+
+**证据**: death #16。01:43:19–41 commitment 每秒翻 GET_BED→MIGRATE, kernel 每秒置全局 `bot.interrupt_code=true` 要打断 bedErrand; 但 defendSelf 每 500ms 见此旗即 `pvp.stop()` 退出 → self_defense 01:43:23–25 只接战 2.4s, T-0199 探针同窗口 PVP.stop×9 / setGoal×9。另: 01:43:17–22 僵尸 15b→5.3b 走近, bot 空手 (held=empty) 站着 (未挨打索敌 5b), 01:43:23/24 被先手 −3 −3 (10.2→4.2)。核实 goal 互抢: 接战窗口内无其他技能 setGoal (探针里 PVP 是 scout 的打断者而非被打断者), 真正的打断源是全局 interrupt 旗。
+**改动**: ① kernelDriver.flipInterruptAllowed: bot._bodyOwner.kind==='mode' 时不置 interrupt_code, 记 `interrupt deferred: reflex … holds the body (T-0206)`, 下一秒复查 (反射放手后照常中断子技能)。② self_defense: 无目标但 ≤8b 有近战怪且手上不是剑/斧 → 换武器 (3s 限频, 挖掘中不换, 不夺身体)。
+**可证伪预测**: 接战中 commitment 翻转时出现 `interrupt deferred`, combat_log 不再见同一接战被 DISENGAGE/ENGAGE 秒级循环; 近战怪靠近时 held 已是剑。
+**回滚**: revert, 重启。回归 kernel_driver 'T-0206 death #16 战斗/先手'。
+
+## C389. 寻路把伤害型可穿过方块 (甜浆果丛/凋零玫瑰/细雪/灵魂火) 当不安全格（skills.js 需重启,T-0205,worker-death,✅已上线 01:46:49Z 8e30eae）
 
 **证据**: death #16 01:43:45 cause sweet_berry_bush。01:43:24 僵尸打到 hp4 → 01:43:26–30 寻路冲刺 (path=1) 穿浆果丛 → vitals 01:43:30 hp≈0 → 原地站 15s → 01:43:45 migrate 起步再蹭一下即死。mineflayer-pathfinder Movements.blocksToAvoid 默认只有 fire/cobweb/lava。
 **改动**: hardenMovements (由 _NoScaffoldMovements 构造钩调用, 覆盖所有 new pf.Movements 含热加载技能) 把 sweet_berry_bush/wither_rose/powder_snow/soul_fire 加进 blocksToAvoid; 不进 blocksCantBreak — 唯一路线上的浆果丛会被挖掉 (瞬挖), 不会无路。

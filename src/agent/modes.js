@@ -3393,6 +3393,20 @@ const modes_list = [
                     }
                 } catch (e) {}
             }
+            // ★T-0206 death #16 先手: 01:43:17–22 僵尸 15b→5.3b 走过来, bot 空手站着 (未挨打索敌只有 5b), 01:43:23 被先手 −3。
+            //   人类看见怪走近就先把剑拿在手上 — 只换手持物, 不夺身体; 正在挖时不换 (会打断挖掘)。
+            if (!enemy && hasWeapon && !bot.targetDigBlock && Date.now() - (this._preEquipAt || 0) > 3000) {
+                try {
+                    const _closing = world.getNearestEntityWhere(bot, e => mc.isHostile(e) && !/creeper|skeleton|stray|pillager|witch/i.test(e.name || ''), 8);
+                    const _held = bot.heldItem ? bot.heldItem.name : '';
+                    if (_closing && !/_sword$|_axe$/.test(_held)) {
+                        this._preEquipAt = Date.now();
+                        const _w = bot.inventory.items().filter(i => /_sword$|_axe$/.test(i.name) && !/pickaxe/.test(i.name))
+                            .sort((a, b) => (/_sword$/.test(b.name) ? 1 : 0) - (/_sword$/.test(a.name) ? 1 : 0))[0];
+                        if (_w) bot.equip(_w, 'hand').catch(() => {});
+                    }
+                } catch (e) {}
+            }
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
             // ★T-0182 (普查 #13/#23): count the swarm with the SAME reach/height-filtered set self_preservation uses
             //   (shouldFlee's "can win"/"swarmed" decision). Raw mc.isHostile counted walled/elevated mobs here but

@@ -99,6 +99,10 @@ export function reflexBusy(bot) {
 //   各有自己的触发判据 (无武器豁免 / 不挨打不逃 / creeper hold 结束…), 与 world_model 的 actionable 口径不一。
 //   反射持身 (bot._bodyOwner.kind==='mode') → 照让; 连续 ACTIONABLE_YIELD_MS 无任何反射持身 → 恢复派发
 //   (子技能自带 hostile 门, 如 quickMeal "scout paused"; 挨打后 C376 兜底照常)。
+/** 承诺翻转中断 (全局 interrupt_code) 只在没有反射 mode 持身时发 — 否则它同时杀掉反射 (defendSelf 见旗即退)。 */
+export function flipInterruptAllowed(bot) {
+    return !(bot && bot._bodyOwner && bot._bodyOwner.kind === 'mode');
+}
 export const ACTIONABLE_YIELD_MS = 8000;
 export function actionableYieldHeld(bot, now = Date.now()) {
     const reflexHolding = !!(bot._bodyOwner && bot._bodyOwner.kind === 'mode');
@@ -301,6 +305,16 @@ export default async function kernelDriver(bot, ctx) {
                     const kindFlip = nc.kind && nc.kind !== startKind;
                     const idFlip = (nc.id != null && startId != null && nc.id !== startId);   // Phase C: head swapped (maybe same skill)
                     if (kindFlip || idFlip) {
+                        // ★T-0206 death #16 战斗部分: interrupt_code 是全局旗 — self_defense 的 defendSelf 每 500ms 见旗即 pvp.stop()
+                        //   退出。01:43:19–41 commitment 每秒翻转 → 每秒打断接战 (T-0199 探针 PVP.stop×9)。反射持身时推迟,
+                        //   反射放手后下一秒再中断子技能 (子技能此刻也没在动身体)。
+                        if (!flipInterruptAllowed(bot)) {
+                            if (Date.now() - (bot._flipDeferLogAt || 0) > 5000) {
+                                bot._flipDeferLogAt = Date.now();
+                                prog(`commitment flipped ${startKind || '?'}→${nc.kind} — interrupt deferred: reflex ${bot._bodyOwner.name} holds the body (T-0206)`);
+                            }
+                            return;
+                        }
                         flipped = true;
                         prog(`commitment flipped ${startKind || '?'}${startId ? '/' + startId : ''}→${nc.kind}${nc.id ? '/' + nc.id : ''} mid-child → interrupt ${c.skill} to re-dispatch`);
                         bot._commitFlipAt = Date.now();   // ★T-0181: tells interrupt-shielding children (surfaceUp) this is the caller, not a reflex

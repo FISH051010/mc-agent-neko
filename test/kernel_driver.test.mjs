@@ -44,6 +44,27 @@ test('T-0182 #34: actionable 威胁让位须有反射持身 — 8s 无任何 mod
     assert.equal(calm._actionableIdleSince, 0, 'threat gone → window reset');
 });
 
+test('T-0206 death #16 战斗: 反射 mode 持身时 kernel 的承诺翻转中断 (全局 interrupt_code) 必须推迟 — 否则每秒杀掉 defendSelf', async () => {
+    const fs = await import('node:fs');
+    const { flipInterruptAllowed } = await import('../bots/_supervisor/skills/kernelDriver.js');
+    assert.equal(flipInterruptAllowed({ _bodyOwner: { name: 'mode:self_defense', kind: 'mode' } }), false);
+    assert.equal(flipInterruptAllowed({ _bodyOwner: { name: 'kernel:bedErrand', kind: 'skill' } }), true);
+    assert.equal(flipInterruptAllowed({ _bodyOwner: null }), true);
+    const kd = fs.readFileSync(new URL('../bots/_supervisor/skills/kernelDriver.js', import.meta.url), 'utf8');
+    const w = kd.slice(kd.indexOf('if (kindFlip || idFlip) {'), kd.indexOf('bot.interrupt_code = true;', kd.indexOf('if (kindFlip || idFlip) {')));
+    assert.match(w, /if \(!flipInterruptAllowed\(bot\)\)[\s\S]*return;/, 'gate sits before raising interrupt_code');
+    const sk = fs.readFileSync(new URL('../src/agent/library/skills.js', import.meta.url), 'utf8');
+    const ds = sk.slice(sk.indexOf('export async function defendSelf'), sk.indexOf('// ───────────────────────── DIG PRIMITIVES'));
+    assert.match(ds, /if \(bot\.interrupt_code\) \{\s*bot\.pvp\.stop\(\);/, 'premise: defendSelf bails on the global flag (why the kernel must not raise it mid-fight)');
+});
+
+test('T-0206 death #16 先手: self_defense 在近战怪 ≤8b 走近时先换武器 (不夺身体, 挖掘中不换)', async () => {
+    const fs = await import('node:fs');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(m, /if \(!enemy && hasWeapon && !bot\.targetDigBlock && Date\.now\(\) - \(this\._preEquipAt \|\| 0\) > 3000\)/);
+    assert.match(m, /_closing && !\/_sword\$\|_axe\$\/\.test\(_held\)[\s\S]{0,400}bot\.equip\(_w, 'hand'\)/);
+});
+
 test('T-0101: famine stall (food<=2, no lethal threat) overrides POCKET/threat yield so GET_FOOD can dispatch', () => {
     // 9h 实锤: creeper hunger hold — food=0 in a sealed box, reflexBusy kept yielding → 冻 150min 饿死.
     const starving = { food: 0, canRegen: false };
