@@ -157,6 +157,7 @@ export function noopEscapePlan(w, kind) {
 // strike nor reset); success resets the kind's streak. Streaks live on the bot (survive hot-reload).
 export const DISPATCH_FAIL_LIMIT = 3;
 export const DISPATCH_COOLDOWN_MS = 300000;
+export const FLIP_FORCE_HALT_MS = 2000;   // ★T-0206 承诺翻转后子任务 2s 不退 → 强制交出身体
 const SUPERVISOR_CANCEL_WINDOW_MS = 30000;
 export function isDispatchFailure(res, threw) {
     return !!threw || res === false || !!(res && typeof res === 'object' && (res.ok === false || res.failed === true));
@@ -297,7 +298,7 @@ export default async function kernelDriver(bot, ctx) {
             // an emergency HOLD — raise interrupt_code so the child (migrate/mineDown/… all honor
             // it) bails promptly and we re-dispatch the NEW goal, instead of blocking to completion
             // and running the wrong task into the night. The loop-top consumes the interrupt.
-            let flipped = false;
+            let flipped = false, firstFlipAt = 0, forcedHalt = false;
             const _watch = setInterval(() => {
                 try {
                     const nc = bot._commitment;
@@ -314,6 +315,17 @@ export default async function kernelDriver(bot, ctx) {
                                 prog(`commitment flipped ${startKind || '?'}→${nc.kind} — interrupt deferred: reflex ${bot._bodyOwner.name} holds the body (T-0206)`);
                             }
                             return;
+                        }
+                        if (!firstFlipAt) firstFlipAt = Date.now();
+                        // ★T-0206 (death #16 01:43:33-41Z: 翻转后 bedErrand 8 秒不退, 位置钉死 act/ctrl 皆空, 僵尸贴身):
+                        //   子任务 2s 内不退 → 强制停寻路 + 松开按键交出身体 (setGoal(null) 立即生效, 不用 stop() 的延迟标志),
+                        //   让反射/新承诺立刻能驾驶; 不再干等子任务自己理会 interrupt_code。只做一次。
+                        //   反射持身时上面 flipInterruptAllowed 已 return (不打断也不接管, 监工协调: 否则 defendSelf 见旗即 pvp.stop); 计时从首次允许打断起。
+                        if (!forcedHalt && flipped && Date.now() - firstFlipAt >= FLIP_FORCE_HALT_MS) {
+                            forcedHalt = true;
+                            try { bot.pathfinder && bot.pathfinder.setGoal(null); } catch (e) {}
+                            try { bot.clearControlStates(); } catch (e) {}
+                            prog(`child ${c.skill} ignored interrupt ${Math.round((Date.now() - firstFlipAt) / 1000)}s after flip → force halt (setGoal(null)+clearControlStates), body released (T-0206)`);
                         }
                         flipped = true;
                         prog(`commitment flipped ${startKind || '?'}${startId ? '/' + startId : ''}→${nc.kind}${nc.id ? '/' + nc.id : ''} mid-child → interrupt ${c.skill} to re-dispatch`);

@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { scoutForAnimal, pickHuntTarget, haltPath } from './quickMeal.js';
+import { scoutForAnimal, pickHuntTarget, haltPath, raceI } from './quickMeal.js';
 const { goals } = mfp;
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -44,6 +44,7 @@ export default async function bedErrand(bot, ctx) {
         if (!sheep) {
             sheep = await scoutForAnimal(bot, { radius: 48, maxDy: 8, scoutRadius: SCOUT_RADIUS, scoutMs: SCOUT_MS, targetRe: SHEEP_RE });
             if (sheep === 'hostile') { prog('scout deferred: hostile near'); return { deferred: true, reason: 'hostile-near' }; }
+            if (bot.interrupt_code) { haltPath(bot); prog('interrupted during scout — exit'); return false; }   // ★T-0206: 打断按 unwind 处理
             if (!sheep) { prog('no sheep found'); return { failed: true, reason: 'no-sheep' }; }
         }
         const shears = (bot.inventory.items() || []).find(i => i.name === 'shears');
@@ -52,16 +53,16 @@ export default async function bedErrand(bot, ctx) {
             const s = pickHuntTarget(bot, 48, 8, SHEEP_RE);
             if (!s) { prog(`no more sheep in reach (wool=${woolCount(inv())})`); break; }
             prog(`${shears ? 'shear' : 'hunt'} sheep @${s.position.distanceTo(bot.entity.position).toFixed(1)}b (wool=${woolCount(inv())})`);
-            try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(s.position.x), Math.floor(s.position.y), Math.floor(s.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
+            try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNear(Math.floor(s.position.x), Math.floor(s.position.y), Math.floor(s.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
             haltPath(bot);
             const w0 = woolCount(inv());
             if (shears) {
                 try { await skills.equip(bot, 'shears'); await bot.activateEntity(s); } catch (e) {}
             } else {
-                await race(skills.attackEntity(bot, s, true), Math.min(left(), 25000));
+                await raceI(bot, skills.attackEntity(bot, s, true), Math.min(left(), 25000));
                 kills++;
             }
-            if (skills.pickupNearbyItems) await race(skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
+            if (skills.pickupNearbyItems) await raceI(bot, skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
             if (woolCount(inv()) <= w0 && kills >= 6) { prog('6 kills without wool — stop'); break; }
         }
         if (!bedMaterialsReady(inv())) { prog(`not enough wool (${woolCount(inv())}/${WOOL_NEEDED}) — honest fail`); return { failed: true, reason: 'wool-short' }; }

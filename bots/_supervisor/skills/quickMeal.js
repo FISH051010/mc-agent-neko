@@ -56,6 +56,7 @@ export async function waitHostileClear(bot, maxWaitMs, stepMs = 1000) {
     const t0 = Date.now();
     while (hostileWithin(bot, 16)) {
         if (Date.now() - t0 >= maxWaitMs) return false;
+        if (bot.interrupt_code) return false;   // ★T-0206
         haltPath(bot);
         await new Promise(r => setTimeout(r, stepMs));
     }
@@ -138,6 +139,7 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
     const wps = scoutWaypoints(origin, scoutRadius, scoutToward);
     for (let wi = 0; wi < wps.length; wi++) {
         if (Date.now() - t0 > scoutMs) break;
+        if (bot.interrupt_code) { haltPath(bot); prog('scout interrupted (commitment flipped) — exit'); return null; }   // ★T-0206
         let wp = wps[wi];
         const hd = await hostileDecision(bot);
         if (hd.action === 'yield') {
@@ -157,7 +159,7 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
         const p0 = bot.entity.position, x0 = p0.x, z0 = p0.z;
         let err = null;
         try {
-            const r = await race(bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(wp.x), Math.round(wp.z), 3)).then(() => 'ok', (e) => e), legMs);
+            const r = await raceI(bot, bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(wp.x), Math.round(wp.z), 3)).then(() => 'ok', (e) => e), legMs);
             if (r && r !== 'ok') err = String((r && r.message) || r);
         } catch (e) { err = String(e && e.message || e); }
         haltPath(bot);
@@ -205,6 +207,15 @@ const race = (p, ms) => {
     const deadline = new Promise(r => { timer = setTimeout(r, Math.max(0, ms)); });
     return Promise.race([Promise.resolve(p).catch(() => null), deadline]).finally(() => clearTimeout(timer));   // 不留悬挂计时器
 };
+// ★T-0206 (death #16 01:43:33-41Z: commitment 每秒翻 GET_BED→MIGRATE, bedErrand 8 秒不退, 原地无人驾驶被僵尸打):
+//   等待一律可被 interrupt_code 打断 — 每 200ms 轮询, 被打断立即返回 'interrupted' (≤1s 退出)。
+export const raceI = (bot, p, ms) => {
+    let t = null, iv = null;
+    return Promise.race([Promise.resolve(p).catch(() => null), new Promise(r => {
+        t = setTimeout(r, Math.max(0, ms));
+        iv = setInterval(() => { if (bot && bot.interrupt_code) r('interrupted'); }, 200);
+    })]).finally(() => { clearTimeout(t); clearInterval(iv); });
+};
 
 export default async function quickMeal(bot, ctx, opts = {}) {
     const { skills, world } = ctx;
@@ -215,7 +226,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 62 && skyOpenAt(bot) !== true) {
         const y0 = Math.round(bot.entity.position.y);
         prog(`starving underground y=${y0} food=${bot.food} — surfaceUp first (≤${Math.round((opts.surfaceMaxMs ?? 120000) / 1000)}s)`);
-        await race(skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
+        await raceI(bot, skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
         haltPath(bot);
         prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
         if (bot.entity.position.y - y0 >= 8) opts = { ...opts, _surfaced: true };
@@ -251,7 +262,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         if (target.position.distanceTo(bot.entity.position) > 3.5) {
             const approach = async () => {
                 setSafeMovements(bot);
-                try { await race(bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
+                try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
                 haltPath(bot);
             };
             const d0 = target.position.distanceTo(bot.entity.position);
@@ -261,7 +272,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             if (d0 - target.position.distanceTo(bot.entity.position) < 2 && bot.entity.position.y < 62 && skyOpenAt(bot) !== true && !opts._surfaced) {
                 const y0 = Math.round(bot.entity.position.y);
                 prog(`approach made no progress (${d0.toFixed(1)}b) underground y=${y0} — surfaceUp first (≤60s), then retry`);
-                await race(skills.customSkill(bot, 'surfaceUp', 63), Math.min(left(), 60000));
+                await raceI(bot, skills.customSkill(bot, 'surfaceUp', 63), Math.min(left(), 60000));
                 haltPath(bot);
                 prog(`surfaced y ${y0}→${Math.round(bot.entity.position.y)}`);
                 if (bot.entity.position.y - y0 >= 4) opts = { ...opts, _surfaced: true };
@@ -273,9 +284,9 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             }
             prog(`approached ${target.name} → ${target.position.distanceTo(bot.entity.position).toFixed(1)}b`);
         }
-        await race(skills.attackEntity(bot, target, true), Math.min(left(), 25000));
+        await raceI(bot, skills.attackEntity(bot, target, true), Math.min(left(), 25000));
         stopBody();
-        if (skills.pickupNearbyItems) await race(skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
+        if (skills.pickupNearbyItems) await raceI(bot, skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
         gotMeat = rawHeld() > r0;
         if (!gotMeat) prog(`hunt yielded no meat (target escaped / out of reach)`);
         // ★监工拍板: 会话猎杀计数 (world_model 锁存 SESSION_KILL_CAP=6 只后释放, 防打光一片再漫游)
@@ -289,7 +300,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         const rawSafe = ['porkchop', 'beef', 'mutton', 'rabbit'].find(n => (inv()[n] || 0) > 0);
         if (rawSafe) {
             prog(`critical (hp=${Math.round(bot.health)} food=${bot.food}) — eat 1 raw ${rawSafe} now, cook the rest`);
-            try { await race(skills.consume(bot, rawSafe), 5000); ate++; } catch (e) {}
+            try { await raceI(bot, skills.consume(bot, rawSafe), 5000); ate++; } catch (e) {}
         }
     }
 
@@ -300,7 +311,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             const n = inv()[raw] || 0;
             if (!n || left() < 12000) continue;
             prog(`cook ${n} ${raw} (fuel=${fuel})`);
-            await race(skills.customSkill(bot, 'smeltSafe', raw, n), left() - 2000);
+            await raceI(bot, skills.customSkill(bot, 'smeltSafe', raw, n), left() - 2000);
         }
         stopBody();
     }
@@ -310,7 +321,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         const c = inv();
         const pick = COOKED.find(n => c[n] > 0) || ['beef', 'porkchop', 'mutton', 'rabbit'].find(n => c[n] > 0);
         if (!pick) break;
-        try { await race(skills.consume(bot, pick), Math.min(left(), 5000)); ate++; } catch (e) { break; }
+        try { await raceI(bot, skills.consume(bot, pick), Math.min(left(), 5000)); ate++; } catch (e) { break; }
     }
     prog(`done food ${food0}→${bot.food} ate=${ate} gotMeat=${gotMeat} in ${Math.round((Date.now() - t0) / 1000)}s`);
     if (ate > 0 || gotMeat || bot.food > food0) return { ok: true, ate, gotMeat, food: bot.food };
