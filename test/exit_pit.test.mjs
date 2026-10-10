@@ -14,7 +14,7 @@ const registry = require('minecraft-data')('1.21.4');
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'exit-pit-'));
 fs.mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
 process.chdir(home);
-const { default: quickMeal, sealedNow, exitPitIfSealed } = await import('../bots/_supervisor/skills/quickMeal.js');
+const { default: quickMeal, sealedNow, exitPitIfSealed, EXIT_AVOID_COST } = await import('../bots/_supervisor/skills/quickMeal.js');
 const { default: bedErrand } = await import('../bots/_supervisor/skills/bedErrand.js');
 
 const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, offset(dx, dy, dz) { return V(this.x + dx, this.y + dy, this.z + dz); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
@@ -27,7 +27,7 @@ function rig({ mobility, inv = {}, digWorks = true, walkable = false, wallX = nu
         blockAt: (q) => (wallX != null && Math.floor(q.x) === wallX) ? { name: 'stone', skyLight, boundingBox: 'block' } : { name: 'stone', skyLight },
         inventory: { items: () => Object.entries(inv).map(([name, count]) => ({ name, count })), slots: [] },
         pathfinder: { stop() {}, setGoal() {},
-            setMovements(mv) { canDig = !!mv.canDig; },
+            setMovements(mv) { canDig = !!mv.canDig; (bot._mvs = bot._mvs || []).push(mv); },
             goto: async (g) => {
                 legs.push({ canDig, goal: g.constructor.name });
                 if (canDig && !digWorks) return;
@@ -125,4 +125,18 @@ test('T-0215 补2 (04:22:02Z "moved 2.7b, dy -4.0"): 地表开顶坑横向段横
     const r = rig({ mobility: { state: 'FREE', enclosed: false, exits: [] }, skyLight: 15, dropOnDig: true });
     const ex = await exitPitIfSealed(r.bot, { legMs: 50 });
     assert.equal(ex.exited, false, JSON.stringify(ex));
+});
+
+test('T-0215 补3 (death #21): 出坑时 16 格内敌对 (墙后无视线也算) 周围划回避区 — 远程 8 格内不许挖、走 +1000; 没有敌对就不加', async () => {
+    const sk = { name: 'skeleton', type: 'hostile', position: V(6.5, 40, 0.5), height: 1.95 };
+    const r = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] }, wallX: 3, entities: { 7: sk } });
+    await exitPitIfSealed(r.bot, { legMs: 50 });
+    const mv = r.bot._mvs.find(m => m.canDig);
+    assert.ok(mv && mv.exclusionAreasStep.length === 1 && mv.exclusionAreasBreak.length === 1, 'avoid zone installed');
+    const near = { position: V(6, 44, 0) }, far = { position: V(-10, 48, 0) };
+    assert.equal(mv.exclusionAreasBreak[0](near), EXIT_AVOID_COST, 'cannot dig within 8b of the skeleton');
+    assert.equal(mv.exclusionAreasStep[0](far), 0);
+    const quiet = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] } });
+    await exitPitIfSealed(quiet.bot, { legMs: 50 });
+    assert.equal(quiet.bot._mvs.find(m => m.canDig).exclusionAreasStep.length, 0);
 });

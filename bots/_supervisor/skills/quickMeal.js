@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
 import { HUNTABLE_RE, skyOpenAt } from '../../../src/agent/framework/food_floor.js';
-import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';
+import { hostileActionableNear, isHostileEntity } from '../../../src/agent/framework/hostile_reach.js';
 const { goals, Movements } = mfp;
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
 
@@ -68,11 +68,26 @@ class GoalRiseBy extends goals.Goal {
     heuristic(node) { return Math.max(0, this.y - node.y); }
     isEnd(node) { return node.y >= this.y; }
 }
+const EXIT_RANGED_RE = /^(skeleton|stray|bogged|pillager|witch|blaze|ghast|evoker|breeze)$/;
+export const EXIT_AVOID_COST = 1000;
 export async function exitPitIfSealed(bot, { legMs = 8000, force = false } = {}) {
     if (!force && !sealedNow(bot)) return { needed: false, exited: false, moved: 0 };
     if (hostileWithin(bot, 8) && !(await waitHostileClear(bot, 15000))) return { needed: true, exited: false, moved: 0, hostile: true };
     const p0 = bot.entity.position, x0 = p0.x, y0 = p0.y, z0 = p0.z;
-    try { const mv = new Movements(bot); mv.canDig = true; mv.allow1by1towers = true; mv.allowParkour = false; mv.maxDropDown = 2; mv.liquidCost = 1000; bot.pathfinder.setMovements(mv); } catch (e) {}
+    // ★T-0215 补3 (death #21, 04:36:48Z 'exit pit: out (moved 9.7b, dy 5.0)' → 1s 后 4.5b 被骷髅射中): 出坑前那只骷髅在墙后
+    //   无视线 (T-0222 不算威胁), 但出坑是边挖边走 ~10 格 — 挖开就改了视线, 等于挖进它的射程。会改地形的动作不能只看"此刻视线":
+    //   16 格内所有敌对 (不论视线) 周围划回避区 (远程 8 格 / 近战 4 格), 走与挖都 +1000 代价, 让 pathfinder 挖往远离怪的方向。
+    const threats = Object.values(bot.entities || {}).filter(e => e && e !== bot.entity && e.position && isHostileEntity(e) && e.position.distanceTo(p0) <= 16)
+        .map(e => ({ x: e.position.x, y: e.position.y, z: e.position.z, r: EXIT_RANGED_RE.test(e.name || '') ? 8 : 4 }));
+    try {
+        const mv = new Movements(bot); mv.canDig = true; mv.allow1by1towers = true; mv.allowParkour = false; mv.maxDropDown = 2; mv.liquidCost = 1000;
+        if (threats.length) {
+            const avoid = (b) => { const q = b && b.position; if (!q) return 0; for (const t of threats) if (Math.hypot(q.x + 0.5 - t.x, q.y - t.y, q.z + 0.5 - t.z) <= t.r) return EXIT_AVOID_COST; return 0; };
+            mv.exclusionAreasStep.push(avoid); mv.exclusionAreasBreak.push(avoid);
+        }
+        bot.pathfinder.setMovements(mv);
+    } catch (e) {}
+    if (threats.length) prog(`exit pit: avoiding ${threats.length} hostile zone(s) while digging out`);
     let moved = 0;
     // ★T-0215 补2 (death #20, 04:22:02Z 'exit pit: out (moved 2.7b, dy -4.0)'): 地下的横向段不受高度约束, 横移中掉进下方
     //   3 怪洞穴 (hp7 food2) → 被围死; 且掉下去还被判出坑。地下出坑 = 往上 (+8, 不成再 +4), 绝不走横向段;
