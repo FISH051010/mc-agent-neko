@@ -92,6 +92,34 @@ export function eatFloor(bot, holder, claimant) {
     } catch (e) { return false; }
 }
 
+/**
+ * ★T-0182 #33 危险救援地板 — 让位必须以"接收方此刻确实在掌舵"为前提。holder 是受监督技能
+ * (ws:* / watchdog:* / kernel:*), 它们不响应挨打/溺水; claimant 是救命反射 (self_defense /
+ * self_preservation / mobility)。矩阵无此对时旧路径是 pending (LLM 在路上, holder 保留) →
+ * 4s 超时 → 'holder' 负缓存 30s —— 实录 22:25 ws:* vs mode:mobility 连续 3 次 llm-fallback
+ * holder; watchdog:*(escapePlan 搬家) vs self_defense 矩阵无行同理。挨打/水下缺氧时 34s 无人
+ * 掌舵就是死。判据: 3s 内真掉血, 或头在水里且 O2<12 (头在水里时 O2 是新鲜的; 陆上 O2 会陈旧,
+ * 故必须有头部水方块佐证)。放在矩阵之后: 人工/种子规则 (如 kernel:nightShelter vs mobility
+ * = holder, 自愿封顶) 仍优先; 放在 LLM 缓存之前: 负缓存不能续命。
+ */
+const RESCUE_CLAIMANT_RE = /^mode:(self_defense|self_preservation|mobility)$/;
+const DANGER_HURT_MS = 3000;
+export function dangerRescueFloor(bot, holder, claimant) {
+    try {
+        if (!bot || !holder || !claimant) return false;
+        if (holder.kind === 'mode') return false;
+        if (!RESCUE_CLAIMANT_RE.test(String(claimant.name || ''))) return false;
+        if (Date.now() - (bot.lastDamageTime || 0) < DANGER_HURT_MS) return true;
+        const p = bot.entity && bot.entity.position;
+        if (p && typeof bot.blockAt === 'function') {
+            const head = bot.blockAt(p.offset(0, 1, 0));
+            const o2 = Number(bot.oxygenLevel);
+            if (head && /water/.test(head.name || '') && Number.isFinite(o2) && o2 < 12) return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
 /** bot 挂载的仲裁器状态 (红线: 无模块级可变状态)。 */
 function st(bot) {
     if (!bot) return null;
@@ -292,6 +320,9 @@ export function resolve(holder, claimant, ctx = {}) {
         // 2.5 调度让位地板 (T-0080) — 在 LLM 缓存之前: 一条 30s 的超时负缓存 'holder' 也会续命死锁
         if (dispatchYieldFloor(bot, holder, claimant))
             return logVerdict(bot, holder, claimant, 'claimant', 'floor', 'dispatch-yield', ctx);
+        // 2.6 危险救援地板 (T-0182 #33) — 同理在 LLM 缓存之前: 挨打/溺水时 30s 'holder' 负缓存 = 无人掌舵
+        if (dangerRescueFloor(bot, holder, claimant))
+            return logVerdict(bot, holder, claimant, 'claimant', 'floor', 'danger-rescue', ctx);
 
         // 3. LLM 短期缓存 (persist:false 的裁决 / 超时负缓存)
         const s = st(bot);
