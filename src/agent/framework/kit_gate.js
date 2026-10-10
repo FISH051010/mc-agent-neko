@@ -33,6 +33,11 @@ function withPlanks(wants, counts) {
     if (!logs.length) return wants;
     return [[logs[0].replace(/_log$/, '_planks'), Math.ceil((need - planks) / 4)], ...wants];
 }
+// ★T-0217 (监工 03:21Z: 零镐+food 0 地下 POCKET, TOOL_UPKEEP@94.5 清单 stone_pickaxe×2(+剑) 占着身体, hp 掉到 0): 饿着时零镐维修
+//   只要一把石镐就够挖穿上浮 → 清单削到 1 把镐、不带剑, 其余等吃饱再补 (isGoalDone 同口径: 饿着且 picks≥1 即放手)。
+export function starvingUpkeepTrim(wants) {
+    return (wants || []).filter(([n]) => n !== 'stone_sword').map(([n, k]) => n === 'stone_pickaxe' ? [n, 1] : [n, k]);
+}
 export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
     counts = counts || {};
     const cobble = (counts['cobblestone'] || 0) + (counts['cobbled_deepslate'] || 0);

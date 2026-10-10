@@ -23,8 +23,8 @@ import * as tq from './task_queue.js';
 import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
-import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE } from './food_floor.js';
+import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR } from './food_floor.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
@@ -1446,12 +1446,14 @@ export function proposeTasks(world, bot) {
     //   REPLENISH_KIT@67 压不过夜链@94 且先上浮(徒手挖 45 格石), 夜链还在派徒手 mineDown。人类: 原地拍台做两把石镐, 几秒的事。
     //   零镐且计划里真能造出石镐 → 提 TOOL_UPKEEP@94.5 (压过夜链 91-94, 让位 HOLD@95); 有镐时照旧 @47。
     const _picklessUpkeep = (kit.picks || 0) === 0;
-    if (overworld && (kit.picks >= 1 || _picklessUpkeep) && !threat.actionable
+    // ★T-0217: 有镐但饿着 → 不提 (isGoalDone 同口径会秒判 done = 空转派发); 先吃, 吃饱再补
+    if (overworld && (kit.picks >= 1 || _picklessUpkeep) && !threat.actionable && !(kit.picks >= 1 && vitals.food <= FOOD_FLOOR)
         && needsToolUpkeep({ sufficientForUnderground: kit.sufficientForUnderground, pickTier: kit.pickTier, counts: invCounts(bot) })) {
         const tableCarried = invCount(bot, /^crafting_table$/) >= 1;
         // ★T-0060: wants/affordability live in kit_gate.toolUpkeepPlan (shared with isGoalDone). It drops an
         // unaffordable stone pick when the wood-only remainder (table/sticks) alone restores the descent gate.
-        const { wants } = toolUpkeepPlan({ picks: kit.picks, pickTier: kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) });
+        let { wants } = toolUpkeepPlan({ picks: kit.picks, pickTier: kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) });
+        if (_picklessUpkeep && vitals.food <= FOOD_FLOOR) wants = starvingUpkeepTrim(wants);   // ★T-0217: 饿着只补一把镐就还身体给 FOOD_FLOOR
         const materialsOk = wants.length > 0 && (!_picklessUpkeep || wants.some(([n]) => n === 'stone_pickaxe'));
         if (wants.length && materialsOk) {
             push({ kind: PROPOSAL_KIND.TOOL_UPKEEP, priority: _picklessUpkeep ? PICKLESS_UPKEEP_PRIORITY : 47, skill: 'craftChain',
@@ -1638,6 +1640,8 @@ export function isGoalDone(kind, world, bot) {
                 latch: bot && !foodInstinctsEnabled() ? bot._foodFloorLatch : undefined });
         case PROPOSAL_KIND.TOOL_UPKEEP:
             // ★T-0060: done = gate restored OR nothing affordable left to craft (same口径 as the proposal).
+            // ★T-0217: 饿着 (food≤FOOD_FLOOR) 且已有一把镐 → 放手, 让 FOOD_FLOOR 上浮觅食 (镐等吃饱再补)
+            if (((w.kit && w.kit.picks) || 0) >= 1 && w.vitals && w.vitals.food != null && w.vitals.food <= FOOD_FLOOR) return true;
             return !needsToolUpkeep({ sufficientForUnderground: !!(w.kit && w.kit.sufficientForUnderground), pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot) })
                 || toolUpkeepPlan({ picks: (w.kit && w.kit.picks) || 0, pickTier: w.kit && w.kit.pickTier, counts: invCounts(bot), woodUnits: woodUnits(bot) }).wants.length === 0;
         // ★P0-1 REPLENISH_KIT done = 补给基线的迟滞释放: 总镐数>=2 且 planksEq>=8。触发是 <2/<4
