@@ -95,8 +95,17 @@ export function backtrackTarget(crumbs, me, threat, { maxRise = 3 } = {}) {
  * creepers: [{x,y,z,isTarget}] ; p0 {x,y,z} ; (rx,rz) 单位方向
  * @returns {{hard, soft, minProjected, worst}}
  */
-export function creeperCorridorAssess(creepers, p0, rx, rz) {
+export function creeperCorridorAssess(creepers, p0, rx, rz, melee = []) {
     let hard = false, soft = false, minProjected = Infinity, worst = null;
+    // ★T-0218 (death #19): 后撤也要背离贴身近战怪 — ≤3b 的近战怪在这条路上 (朝它跑 toward>0.25, 或 6 步投影擦身 <1.5b) = hard。
+    for (const m of melee || []) {
+        const d0 = Math.hypot(m.x - p0.x, m.z - p0.z);
+        if (d0 > 3) continue;
+        const toward = d0 < 0.001 ? 1 : (rx * (m.x - p0.x) + rz * (m.z - p0.z)) / d0;
+        let proj = Infinity;   // where we WILL be along the lane, not where we are now
+        for (const step of [1, 2, 3]) proj = Math.min(proj, Math.hypot(m.x - (p0.x + rx * step), m.z - (p0.z + rz * step)));
+        if (toward > 0.25 || proj < 1.5) { hard = true; worst = { d: d0, toward, projected: proj, level: 'hard', melee: true }; }
+    }
     for (const e of creepers || []) {
         const d0 = Math.hypot(e.x - p0.x, (e.y ?? p0.y) - p0.y, e.z - p0.z);
         if (d0 > 24) continue;
@@ -116,6 +125,18 @@ export function creeperCorridorAssess(creepers, p0, rx, rz) {
         if (lvl && (!worst || lvl === 'hard')) worst = { d: d0, toward, projected, level: lvl };
     }
     return { hard, soft, minProjected, worst };
+}
+
+/**
+ * ★T-0218 (death #19 03:43:01: self_defense 正在打 1.7b 僵尸, 8b 外苦力怕触发 self_preservation 后撤抢身体 → 背对僵尸被追打 6s −12)。
+ * 苦力怕后撤抢断近战接战的条件: 苦力怕 ≤5b 或正在点燃 (fuse) — 起爆距离 ~3b, 8b 外不急; 否则若 ≤3b 有够得着的近战怪且手里有武器,
+ * 让 self_defense 先打完贴身怪 (它才是此刻的伤害源)。无武器 → 照旧后撤 (方向由 creeperCorridorAssess 同时背离近战怪)。
+ */
+export function creeperBackoffPreempts({ creeperDist, creeperFusing, meleeNearDist, hasWeapon }) {
+    if (creeperFusing) return true;
+    if (Number.isFinite(creeperDist) && creeperDist <= 5) return true;
+    if (hasWeapon && Number.isFinite(meleeNearDist) && meleeNearDist <= 3) return false;
+    return true;
 }
 
 /** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */

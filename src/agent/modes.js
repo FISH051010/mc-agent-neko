@@ -28,7 +28,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, unownedDangerThreshold, effectivelyOwned, lowHpHoldRecovers, bunkerTooLate, BUNKER_TOO_LATE_B, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
@@ -2188,7 +2188,30 @@ const modes_list = [
                     await skills.wait(bot, 3000);
                 });
             }
-            else if (this.creeperBackoffTarget(bot)) {
+            else if (this.creeperBackoffTarget(bot) && (() => {
+                // ★T-0218 (death #19): a creeper 8b away is not urgent (it detonates at ~3b); a zombie at 1.7b IS the damage
+                //   source. Don't preempt an armed melee fight unless the creeper is ≤5b or fusing (creeperBackoffPreempts).
+                try {
+                    const _me = bot.entity.position;
+                    const _c = this.creeperBackoffTarget(bot) || this.nearestCreeper(bot);
+                    const _cd = _c && _c.position ? _c.position.distanceTo(_me) : Infinity;
+                    const _md = _c && _c.metadata ? _c.metadata : [];
+                    const _fusing = Number(_md[16]) === 1 || _md[18] === true;
+                    let _meleeD = Infinity;
+                    for (const e of Object.values(bot.entities || {})) {
+                        if (!e || e === bot.entity || !e.position || !mc.isHostile(e) || /creeper|skeleton|stray|pillager|witch/i.test(e.name || '')) continue;
+                        if (Math.abs(e.position.y - _me.y) > 2) continue;
+                        _meleeD = Math.min(_meleeD, e.position.distanceTo(_me));
+                    }
+                    const _armed = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name || '') && !/pickaxe/.test(i.name || ''));
+                    const _pre = creeperBackoffPreempts({ creeperDist: _cd, creeperFusing: _fusing, meleeNearDist: _meleeD, hasWeapon: _armed });
+                    if (!_pre && Date.now() - (this._creeperYieldLogAt || 0) > 5000) {
+                        this._creeperYieldLogAt = Date.now();
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] creeper ${_cd.toFixed(1)}m not fusing — melee mob ${_meleeD.toFixed(1)}m is the threat, leaving the fight to self_defense (T-0218)\n`); } catch (e) {}
+                    }
+                    return _pre;
+                } catch (e) { return true; }
+            })()) {
                 // ===== CREEPER REFLEX (highest-priority hostile response) =============
                 // A creeper is the ONE mob you must never bunker or melee beside: stopping
                 // to dig a shelter (or trading blows) lets it close to ~3 blocks, fuse, and
@@ -2444,13 +2467,22 @@ const modes_list = [
                                 if (e && e.position && /creeper/i.test(e.name || '')) _creepers.push({ x: e.position.x, y: e.position.y, z: e.position.z, isTarget: e === c });
                             }
                         } catch (e) {}
+                        // ★T-0218: melee mobs ≤3b (same level) are hard risks too — never back off INTO the zombie.
+                        const _melee = [];
+                        try {
+                            const _mp = bot.entity.position;
+                            for (const e of Object.values(bot.entities || {})) {
+                                if (!e || e === bot.entity || !e.position || !mc.isHostile(e) || /creeper|skeleton|stray|pillager|witch/i.test(e.name || '')) continue;
+                                if (Math.abs(e.position.y - _mp.y) <= 2 && e.position.distanceTo(_mp) <= 3) _melee.push({ x: e.position.x, z: e.position.z });
+                            }
+                        } catch (e) {}
                         const _cands = [];
                         // fan incl. perpendicular (±90°) and back-quarters (±135°): the hard target check still
                         // vetoes any lane that closes on the near creeper.
                         for (const a of [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, 3 * Math.PI / 4, -3 * Math.PI / 4]) {
                             const [tx, tz] = rotate(dx, dz, a);
                             const info = inspectRunDir(tx, tz);
-                            _cands.push({ dir: [tx, tz], info, ok: !info.hazard && info.drop <= maxDrop, assess: creeperCorridorAssess(_creepers, bot.entity.position, tx, tz) });
+                            _cands.push({ dir: [tx, tz], info, ok: !info.hazard && info.drop <= maxDrop, assess: creeperCorridorAssess(_creepers, bot.entity.position, tx, tz, _melee) });
                         }
                         const _pick = pickCreeperRunDir(_cands);
                         if (_pick) {

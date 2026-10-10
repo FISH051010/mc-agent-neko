@@ -12,6 +12,13 @@
 
 ---
 
+## C395. ★苦力怕后撤不抢断武装近战接战 (除非 ≤5b 或点燃) + 后撤方向背离 ≤3b 近战怪（modes.js/mobility_geom.js 需重启,T-0218,worker-death,⏳待重启）
+
+**证据**: death #19 03:43:01 白天 0 甲 mineDown 途中: 03:42:52 self_defense 赢仲裁开打僵尸 → 03:42:55 self_preservation `Creeper 8m — backing off` 抢身体 → 背对 1.7b 僵尸后撤被追打, 03:42:59 hp5 → 死, 6s −12。8b 外苦力怕不急 (~3b 起爆), 贴身僵尸才是伤害源 = 优先级倒置。
+**改动**: ① mobility_geom.creeperBackoffPreempts({creeperDist, creeperFusing, meleeNearDist, hasWeapon}): 点燃 (metadata[16]===1 或 [18]) 或 ≤5b → 后撤; 否则有武器且 ≤3b (高差≤2) 有近战怪 → 不抢, 记 `leaving the fight to self_defense (T-0218)`; 无武器 → 照旧后撤。挂在 self_preservation 苦力怕分支入口。② creeperCorridorAssess 加 melee 参数: ≤3b 近战怪, 朝它 (toward>0.25) 或 3 步投影擦身 <1.5b → hard (复用 T-0200 扇形/分级)。
+**可证伪预测**: 远处未点燃苦力怕 + 贴身近战怪时出现 `leaving the fight to self_defense`, 不再背对近战怪后撤; 必须后撤时路线不朝/不擦近战怪。
+**回滚**: revert, 重启。回归 creeper_lane 'T-0218' ×2。
+
 ## C394. surfaceUp 重力柱侧移要整个碰撞箱出列, 同点二次侧移即放弃 + 无人掌舵兜底不为饥饿/坠落掉血收回控制（surfaceUp.js 热加载; modes.js/mobility_signals.js 需重启,T-0172 + T-0182,worker-death,⏳待重启）
 
 **证据**: (worker-stuck 报) 03:17:26→03:20:39 @109,39,-69 surfaceUp fallback `gravity column over shaft — sidestep 0,1` 反复, dig-gate `refused dig granite@109,41,-70 above own feet` ×8, 零进度。侧移循环在 floored 坐标一跨界就松键 → 碰撞箱 (±0.3) 仍压着砂砾柱那列 (dig-gate 的 overheadGravityRisk 按 ±0.3 判), bot 还会滑回。另: 03:21:23/35 food=0 饥饿掉血 hp9→7→4→1, 无怪, UNOWNED DANGER 两次 'bunker' 抢走正在上浮觅食的 quickMeal。

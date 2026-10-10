@@ -53,3 +53,23 @@ test('T-0200: self_preservation creeper backoff 接线 — 用分级判据; 无�
     assert.ok(g > 0);
     assert.match(seg.slice(g), /creeperPunchBack\(agent, c\)[\s\S]*continue;/, 'knock back then re-pick, not bunker');
 });
+
+test('T-0218: 8b 外未点燃的苦力怕不抢断武装近战接战 (death #19); ≤5b 或点燃 / 无武器 → 照旧后撤', async () => {
+    const { creeperBackoffPreempts } = await import('../src/agent/mobility_geom.js');
+    assert.equal(creeperBackoffPreempts({ creeperDist: 8, creeperFusing: false, meleeNearDist: 1.7, hasWeapon: true }), false, 'death #19: keep fighting the zombie');
+    assert.equal(creeperBackoffPreempts({ creeperDist: 4.5, creeperFusing: false, meleeNearDist: 1.7, hasWeapon: true }), true, 'creeper close');
+    assert.equal(creeperBackoffPreempts({ creeperDist: 8, creeperFusing: true, meleeNearDist: 1.7, hasWeapon: true }), true, 'fusing');
+    assert.equal(creeperBackoffPreempts({ creeperDist: 8, creeperFusing: false, meleeNearDist: 1.7, hasWeapon: false }), true, 'unarmed → run');
+    assert.equal(creeperBackoffPreempts({ creeperDist: 8, creeperFusing: false, meleeNearDist: Infinity, hasWeapon: true }), true, 'no melee fight to protect');
+});
+
+test('T-0218: 后撤方向背离 ≤3b 的近战怪 — 朝僵尸跑 / 擦身而过 = hard; 背离它不 hard', () => {
+    const zombie = { x: 1.7, z: 0 };
+    assert.equal(creeperCorridorAssess([], me, 1, 0, [zombie]).hard, true, 'straight into the zombie');
+    assert.equal(creeperCorridorAssess([], me, -1, 0, [zombie]).hard, false, 'away from it');
+    assert.equal(creeperCorridorAssess([], me, 0, 1, [{ x: 1, z: 1.2 }]).hard, true, 'brushes past within 1.5b');
+    assert.equal(creeperCorridorAssess([], me, -1, 0, [{ x: 0.9, z: 0 }]).hard, false, 'a zombie at 0.9b behind does not veto running away');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(m, /creeperCorridorAssess\(_creepers, bot\.entity\.position, tx, tz, _melee\)/);
+    assert.match(m, /else if \(this\.creeperBackoffTarget\(bot\) && \(\(\) => \{[\s\S]{0,1600}creeperBackoffPreempts\(/);
+});
