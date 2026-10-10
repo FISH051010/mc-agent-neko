@@ -12,7 +12,14 @@
 
 ---
 
-## C388. kernelDriver 对 actionable 威胁的让位须有反射持身, 8s 无人接则恢复派发（kernelDriver.js 顶层 sticky 需重启,T-0182 #34,worker-death,⏳待重启）
+## C389. 寻路把伤害型可穿过方块 (甜浆果丛/凋零玫瑰/细雪/灵魂火) 当不安全格（skills.js 需重启,T-0205,worker-death,⏳待重启）
+
+**证据**: death #16 01:43:45 cause sweet_berry_bush。01:43:24 僵尸打到 hp4 → 01:43:26–30 寻路冲刺 (path=1) 穿浆果丛 → vitals 01:43:30 hp≈0 → 原地站 15s → 01:43:45 migrate 起步再蹭一下即死。mineflayer-pathfinder Movements.blocksToAvoid 默认只有 fire/cobweb/lava。
+**改动**: hardenMovements (由 _NoScaffoldMovements 构造钩调用, 覆盖所有 new pf.Movements 含热加载技能) 把 sweet_berry_bush/wither_rose/powder_snow/soul_fire 加进 blocksToAvoid; 不进 blocksCantBreak — 唯一路线上的浆果丛会被挖掉 (瞬挖), 不会无路。
+**可证伪预测**: 寻路不再穿浆果丛; death_log 不再出现 sweet_berry_bush。
+**回滚**: revert, 重启。回归 test/path_hazard_avoid.test.mjs。
+
+## C388. kernelDriver 对 actionable 威胁的让位须有反射持身, 8s 无人接则恢复派发（kernelDriver.js 顶层 sticky 需重启,T-0182 #34,worker-death,✅已上线 01:25:09Z dcbbaf7）
 
 **证据** (普查 #34/#19/#12): reflexBusy 见 `w.threat.actionable>0` 即让位, 但接收方触发判据各异 (unarmedSoloMeleeExempt 未挨打不逃不打 / creeper hold 结束后 feedUp 不派…) → 威胁在、无人动、kernel 不派 = 站桩到挨打。
 **改动**: kernelDriver.actionableYieldHeld: bot._bodyOwner.kind==='mode' (反射持身) → 让; 否则从首次空等起 ACTIONABLE_YIELD_MS=8s 后不再让 (子技能自带 hostile 门; 挨打由 C376/C386 兜底)。威胁消失重置窗口。

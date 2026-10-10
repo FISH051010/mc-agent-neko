@@ -121,9 +121,16 @@ export function hardenMovements(bot, movements) {
         for (const name of Object.keys(byName)) {
             if (/_bed$/.test(name)) movements.blocksCantBreak.add(byName[name].id);
         }
+        // ★T-0205 death #16 (10-10 01:43:45, sweet_berry_bush): lib blocksToAvoid = fire/cobweb/lava only — a hp-4 bot was
+        //   routed straight through a berry patch (1 dmg per touch + slowdown) to hp<1. Damaging pass-through blocks
+        //   are now unsafe cells: the planner walks around them, or (canDig) breaks the bush — what a human does.
+        if (movements.blocksToAvoid instanceof Set) {
+            for (const name of _HARDEN_AVOID) if (byName[name]) movements.blocksToAvoid.add(byName[name].id);
+        }
     } catch (e) { /* fail-open: unhardened Movements still pathfinds */ }
     return movements;
 }
+export const _HARDEN_AVOID = ['sweet_berry_bush', 'wither_rose', 'powder_snow', 'soul_fire'];
 /** ★T-0154: make movements.maxDropDown / allowParkour hp-aware at read time (see lowHpMovementProfile). */
 export function installLowHpClamp(movements, bot) {
     let mdd = movements.maxDropDown, park = movements.allowParkour;
