@@ -410,7 +410,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     log_(`START pos=${Math.round(bot.entity.position.x)},${Math.round(bot.entity.position.y)},${Math.round(bot.entity.position.z)} hp=${Math.round(bot.health)} food=${bot.food} heading=${sx},${sz} targetY=${targetY}`);
     let dug = 0, ore = 0, abort = null, noProg = 0;
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
-    let fluidTurns = 0, loopRelocates = 0;   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1)
+    let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0;   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1); ★T-0203 cavity re-heading (≤3)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
     const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
 
@@ -990,6 +990,23 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 const br = await skills.sealCavityBreach(bot, sx, sz, { yLo: -1, tag: 'mineDown' });
                 if (br.breached) {
                     rememberAbortedHeading(bot, sx, sz);
+                    // ★T-0203 (live 01:18:47-56: one heading per dispatch → 3 dug=1 failures → GO_UNDERGROUND cooled): keep
+                    //   the seal / not-entering, but try another heading in THIS dispatch; all four breach → relocate once.
+                    const _rc = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
+                    if (_rc.rotated && cavityTurns < 3) {
+                        cavityTurns++;
+                        log_(`cavity turn ${cavityTurns}/3: heading ${sx},${sz} → ${_rc.sx},${_rc.sz} (breach sealed ${br.sealed}, T-0180)`);
+                        sx = _rc.sx; sz = _rc.sz; noProg = 0;
+                        continue;
+                    }
+                    if (_rc.exhausted && loopRelocates < 1) {
+                        loopRelocates++;
+                        if (await relocateFallback(bot, skills, bn, log_, 'every heading breaches a cavity with a hostile near')) {
+                            const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
+                            sx = _r2.sx; sz = _r2.sz; noProg = 0;
+                            continue;
+                        }
+                    }
                     abort = `cavity breach + hostile ≤16b toward ${sx},${sz} — sealed ${br.sealed}, not entering (T-0180)`;
                     break;
                 }
