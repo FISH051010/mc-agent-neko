@@ -50,3 +50,11 @@ export function diamondArmorReady(equippedNames, keepInvOff) {
     if (keepInvOff !== true) return true;
     return chestTierArmor(equippedNames);
 }
+
+/** ★T-0192 夜间"先甲后钻"判据 (纯函数, 原在 modes.js computeNightPlan 闭包内): 铁镐在手 + 安全 (无可动敌对、food>6、有台路、
+ *  非封死、能就地冶炼) + 防护序里有造得起的下一件 (胸>腿>铁剑>盔>靴) + 燃料或现成锭够 → 夜里冶炼造甲, 排在整夜下矿前。 */
+export function armorNightWarranted({ hasIronPick, actionable = 0, food = 20, hasTablePath, stuckMob = false, canSmeltHere, armorHave = [], rawIron = 0, ingots = 0, fuelUnits = 0 }) {
+    return !!hasIronPick && actionable === 0 && food > 6 && !!hasTablePath && !stuckMob && !!canSmeltHere
+        && !!nextProtectionPiece(armorHave, rawIron + ingots, { withSword: true })
+        && (ingots >= 4 || fuelUnits >= 4);
+}

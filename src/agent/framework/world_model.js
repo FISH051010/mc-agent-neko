@@ -30,6 +30,7 @@ import { equippedArmorNames, diamondArmorReady, nextProtectionPiece } from './ar
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
+export const NIGHT_ARMOR_PRIORITY = 94.2;   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -1270,7 +1271,9 @@ export function proposeTasks(world, bot) {
                 const rawIron = invCount(bot, /^raw_iron$/);
                 if (hasIronTierPick(w)) {
                     // ★T-0151 先甲后钻: 铁镐已到手 → 夜里接着炼完粗铁按 胸>腿>盔>靴 造甲并穿上 (craftArmor 自带冶炼+穿戴)
-                    push({ kind: TASK.NIGHT_SMELT_IRON, priority: 94, skill: 'craftArmor', args: [{ order: 'protection' }],
+                    // ★T-0192 (death #12 23:55:25Z: 一夜挖到 29 粗铁仍 0 甲被僵尸打死 — 造甲与已承诺的 DUSK_MINE_NIGHT 同 @94,
+                    //   夜计划抢占要严格更高 → 承诺钉在挖矿上): 造甲 @94.2 > 夜挖 94, 铁一够就抢下夜挖就地造甲。
+                    push({ kind: TASK.NIGHT_SMELT_IRON, priority: NIGHT_ARMOR_PRIORITY, skill: 'craftArmor', args: [{ order: 'protection' }],
                            rationale: `armor before diamonds: iron pick in hand + ${rawIron + ingots} iron — smelt & craft protection-first (chest>legs>helm>boots), wear it`,
                            hints: { tier: tier.level, iron: rawIron + ingots, night: true } });
                 } else if (ingots < 3 && rawIron > 0) {
@@ -1803,6 +1806,11 @@ export function commitGoal(bot, proposals, world) {
         if (!isNightPlan(c.kind) && !cIsEmergency) {
             const livePri = ((proposals || []).find(p => p.kind === c.kind) || {}).priority ?? 50;
             nightPre = (proposals || []).find(p => isNightPlan(p.kind) && (p.priority || 0) > livePri);
+        } else if (c.kind === TASK.DUSK_MINE_NIGHT && !cIsEmergency) {
+            // ★T-0192 (death #12: 一夜挖到 29 粗铁仍 0 甲): 夜计划之间本不互抢 (防 GO_BED/SEAL 来回翻), 但"先甲后钻"是例外 —
+            //   已承诺整夜下矿时, 造甲 (NIGHT_SMELT_IRON@≥NIGHT_ARMOR_PRIORITY, craftArmor) 抢下身体就地造甲。造完无下一件即释放,
+            //   夜计划回到下矿, 不会来回翻。
+            nightPre = (proposals || []).find(p => p.kind === TASK.NIGHT_SMELT_IRON && (p.priority || 0) >= NIGHT_ARMOR_PRIORITY);
         }
         const pre = emergency || nightPre;
         if (pre) {
