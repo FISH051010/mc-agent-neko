@@ -12,12 +12,13 @@
 
 ---
 
-## C383. 危险无人掌舵兜底: 被动位移 (击退/坠落) 不算有人掌舵（modes.js 需重启,T-0182,worker-death,⏳待重启）
+## C383. 危险无人掌舵兜底: 被动位移 (击退/坠落) 不算有人掌舵 + #11 甲兵单挑索敌半径对齐（modes.js 需重启,T-0182,worker-death,✅已上线 01:03:29Z 85796ed）
 
 **证据**: death #13 00:23:41-43 act_trace ctrl 全空 path=0, 但箭击退+落坑让 bot 3s 内移动 ~4b; reflex_watchdog 掌舵判据只看位移 ≥0.8b → 记为"有人在开"。
 **改动**: mobility_signals.effectivelyOwned(trail, now): 位移 ≥0.8b 且窗口内有某拍按着移动键或有寻路目标才算掌舵; reflex_watchdog 每拍采样 drv。
 **可证伪预测**: 挨打后 ctrl 全空被推着走 ≥3s 时出现 `★UNOWNED DANGER … taking back`。
-**回滚**: revert, 重启。回归 ranged_cover 'T-0182 C383'。
+**附 #11**: armoredSoloBrawl (穿甲+武器+16b 内仅一怪) 让 shouldFlee 不逃, 但 self_defense 挨打索敌只有 12b → 12–16b 骷髅射时不逃也不打。self_defense range 改 `recentlyHurt ? (armoredSoloBrawl ? 16 : 12) : 5`。
+**回滚**: revert, 重启。回归 ranged_cover 'T-0182 C383' / 'T-0182 #11'。
 
 ## C382. ★被远程命中时让位方必须自己接手: 垫块挡视线 → 挡不住沿面包屑回撤（modes.js/skills.js/mobility_geom.js 需重启,T-0182 #24 + T-0195 配合,worker-death,✅已上线 00:59:47Z）
 
