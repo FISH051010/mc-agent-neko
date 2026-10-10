@@ -74,17 +74,23 @@ export async function exitPitIfSealed(bot, { legMs = 8000, force = false } = {})
     const p0 = bot.entity.position, x0 = p0.x, y0 = p0.y, z0 = p0.z;
     try { const mv = new Movements(bot); mv.canDig = true; mv.allow1by1towers = true; mv.allowParkour = false; mv.maxDropDown = 2; mv.liquidCost = 1000; bot.pathfinder.setMovements(mv); } catch (e) {}
     let moved = 0;
-    const legs = [[1, 0], [0, 1], [-1, 0], [0, -1]].map(([dx, dz]) => () => new goals.GoalNearXZ(Math.round(x0 + dx * 6), Math.round(z0 + dz * 6), 1));
-    if (y0 < 62 && skyOpenAt(bot) !== true) legs.unshift(() => new GoalRiseBy(Math.floor(y0) + 8));
+    // ★T-0215 补2 (death #20, 04:22:02Z 'exit pit: out (moved 2.7b, dy -4.0)'): 地下的横向段不受高度约束, 横移中掉进下方
+    //   3 怪洞穴 (hp7 food2) → 被围死; 且掉下去还被判出坑。地下出坑 = 往上 (+8, 不成再 +4), 绝不走横向段;
+    //   横向段只给头顶见天的开顶坑。出坑 = 升高 ≥1, 或横移 ≥2 且没往下掉超过 1 格。
+    const underground = y0 < 62 && skyOpenAt(bot) !== true;
+    const legs = underground
+        ? [8, 4].map(h => () => new GoalRiseBy(Math.floor(y0) + h))
+        : [[1, 0], [0, 1], [-1, 0], [0, -1]].map(([dx, dz]) => () => new goals.GoalNearXZ(Math.round(x0 + dx * 6), Math.round(z0 + dz * 6), 1));
+    const outOfPit = () => { const dy = bot.entity.position.y - y0; return dy >= 1 || (moved >= 2 && dy >= -1); };
     for (const mkGoal of legs) {
         if (bot.interrupt_code) break;
         try { await raceI(bot, bot.pathfinder.goto(mkGoal()).catch(() => null), legMs * 2); } catch (e) {}
         haltPath(bot);
         moved = Math.hypot(bot.entity.position.x - x0, bot.entity.position.z - z0);
-        if (moved >= 2 || bot.entity.position.y - y0 >= 1) break;
+        if (outOfPit()) break;
     }
     setSafeMovements(bot);
-    const exited = moved >= 2 || bot.entity.position.y - y0 >= 1;
+    const exited = outOfPit();
     prog(`exit pit: ${exited ? 'out' : 'still stuck'} (moved ${moved.toFixed(1)}b, dy ${(bot.entity.position.y - y0).toFixed(1)})`);
     return { needed: true, exited, moved };
 }

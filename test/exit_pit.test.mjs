@@ -20,17 +20,18 @@ const { default: bedErrand } = await import('../bots/_supervisor/skills/bedErran
 const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, offset(dx, dy, dz) { return V(this.x + dx, this.y + dy, this.z + dz); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
 
 // 封闭坑: 只有允许挖方块的寻路才走得出去 (挖开一格 → 走到 6 格外); 不许挖 → goto 秒回零移动 (实录的 "0 unreachable / no move")。
-function rig({ mobility, inv = {}, digWorks = true, walkable = false, wallX = null, entities = {} }) {
+function rig({ mobility, inv = {}, digWorks = true, walkable = false, wallX = null, entities = {}, skyLight = 0, dropOnDig = false }) {
     const legs = [];
     let canDig = false;
     const bot = { food: 8, health: 18, registry, entity: { position: V(0, 40, 0) }, entities, _mobility: mobility,
-        blockAt: (q) => (wallX != null && Math.floor(q.x) === wallX) ? { name: 'stone', skyLight: 0, boundingBox: 'block' } : { name: 'stone', skyLight: 0 },
+        blockAt: (q) => (wallX != null && Math.floor(q.x) === wallX) ? { name: 'stone', skyLight, boundingBox: 'block' } : { name: 'stone', skyLight },
         inventory: { items: () => Object.entries(inv).map(([name, count]) => ({ name, count })), slots: [] },
         pathfinder: { stop() {}, setGoal() {},
             setMovements(mv) { canDig = !!mv.canDig; },
             goto: async (g) => {
                 legs.push({ canDig, goal: g.constructor.name });
                 if (canDig && !digWorks) return;
+                if (canDig && dropOnDig && g.x !== undefined) { bot.entity.position = V(g.x, 36, g.z); return; }   // 横移中掉进下方洞穴
                 if (canDig && Math.hypot(bot.entity.position.x, bot.entity.position.z) < 1 && bot.entity.position.y < 41) { bot.entity.position = g.x !== undefined ? V(g.x, 41, g.z) : V(0, g.y, 0); return; }
                 if (walkable && !canDig && g.x !== undefined) { bot.entity.position = V(g.x, 41, g.z); return; }
                 // 坑外 (或仍在坑里不许挖): 侦察段无处可去, 原地不动
@@ -110,4 +111,18 @@ test('T-0222: 墙后够不着的骷髅 (无视线, 6b) 不挡出坑 — 照常�
     const open = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] }, entities: { 7: { ...sk } } });
     const r2 = await exitPitIfSealed(open.bot, { legMs: 50 });
     assert.equal(r2.hostile, true, 'skeleton in view → wait then defer');
+});
+
+test('T-0215 补2 (death #20): 地下出坑只往上挖 (+8 再 +4), 绝不走横向段; 都挖不上去 → 未出坑', async () => {
+    const r = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] }, digWorks: false });
+    const ex = await exitPitIfSealed(r.bot, { legMs: 50 });
+    assert.equal(ex.exited, false);
+    const dig = r.legs.filter(l => l.canDig);
+    assert.deepEqual(dig.map(l => l.goal), ['GoalRiseBy', 'GoalRiseBy'], JSON.stringify(r.legs));
+});
+
+test('T-0215 补2 (04:22:02Z "moved 2.7b, dy -4.0"): 地表开顶坑横向段横移但往下掉 4 格 → 不算出坑, 继续试其余方向', async () => {
+    const r = rig({ mobility: { state: 'FREE', enclosed: false, exits: [] }, skyLight: 15, dropOnDig: true });
+    const ex = await exitPitIfSealed(r.bot, { legMs: 50 });
+    assert.equal(ex.exited, false, JSON.stringify(ex));
 });
