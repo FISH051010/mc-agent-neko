@@ -13,6 +13,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0222 one gate predicate
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 
@@ -125,7 +126,8 @@ export default async function replenishKit(bot, ctx, opts = {}) {
         } catch (e) { return false; }
     };
     const onSurface = () => { try { return bot.entity.position.y >= 55 && openAboveNoCanopy(10); } catch (e) { return false; } };
-    const hostilesNear = (r = 16) => { try { return Object.values(bot.entities).filter(e => e && e.position && e.name && HOSTILE_RE.test(e.name) && e.position.distanceTo(bot.entity.position) < r).length; } catch (e) { return 0; } };
+    // ★T-0222: count only hostiles that can actually reach/see the bot (a skeleton behind the wall froze every gate)
+    const hostilesNear = (r = 16) => hostileActionableNear(bot, r);
     const isNight = () => { try { const t = bot.time.timeOfDay; return t >= 13000 && t <= 23000; } catch (e) { return false; } };
 
     // ── 进度签名 (返回契约的地基): 任一分量上升 = 本次派发有真实进度。log 折成 planks 时

@@ -6,6 +6,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0222 one gate predicate
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const OAK_APPLE_BACKOFF = path.resolve(process.cwd(), 'bots', '_supervisor', 'oak_apple_backoff.json');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
@@ -1065,7 +1066,7 @@ async function prepNetherInner(bot, ctx) {
     const isItem = (e) => e && e.position && e.name === 'item';
     const isNight = () => { try { const t = bot.time.timeOfDay; return t >= 13000 && t <= 23000; } catch (e) { return false; } };
     const HOSTILE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|hoglin|silverfish|cave_spider|pillager|vindicator/i;
-    const hostilesNear = (r = 12) => Object.values(bot.entities).filter(e => e && e.position && e.name && HOSTILE.test(e.name) && e.position.distanceTo(bot.entity.position) < r).length;
+    const hostilesNear = (r = 12) => hostileActionableNear(bot, r);   // ★T-0222 reachable / in-view hostiles only
     const actionableThreats = (r = 8) => {
         const secured = bodyBudgetBunkerHold() && (coveredAboveNow() || containedMobilityNow());
         const me = bot.entity.position;

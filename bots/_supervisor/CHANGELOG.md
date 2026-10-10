@@ -3162,6 +3162,8 @@
 
 - **★C418-S branchMine 隧道撞流体记朝向, 下次换向(T-0216)**（2026-10-10，worker-stuck，T-0216）: 实录 10-10 03:11:01/03/06 @110,9,-71 y9 — mineDown 到层委派 branchMine, 定向矿 iron_ore@109,10,-77 的隧道首步 'clear-lava-near' → branchMine 1.2s 内 false (dug=0) ×3, 每次同一方向 → DUSK_MINE_NIGHT 冷却。T-0180 (C391) 已让 branchMine 读共享朝向记忆, 但流体受阻不写入。修: stepInto 记最近清障失败原因; 隧道步因 lava/water 失败 → rememberAbortedHeading(…, 'fluid') + 本次隧道即止 (runProgress), 下次派发朝向选择经 rotateAwayFromAborted 换向。测试 test/branchmine_fluid_heading.test.mjs。
 
+- **★C419-S 敌对门统一改用可达/视线谓词 hostile_reach(T-0222, 监工指派普查)**（2026-10-10，worker-stuck，T-0222）: 实录 10-10 03:57→04:10+ @27,13,29 y13 (hp7 food6) — 一只对 bot 无视线的地下骷髅 (self_defense 已判 ranged-unreachable-trap) 同时卡死 replenishKit 上浮门 (hostiles16)、quickMeal/exitPit (8b)、GET_BED (16b) 12min+; 各门数原始敌对数。修: 新纯函数模块 src/agent/framework/hostile_reach.js — hostileActionable(bot,e,r): ≤3b 恒算; 远程 (skeleton/stray/bogged/pillager/witch/blaze/ghast/evoker/breeze) 须视线 (眼→眼 0.4b 采样, 实心块遮挡); 近战须视线且 |dy|≤3; 未加载区块按有视线 (保守); hostileActionableNear 计数。替换: replenishKit/setBed/bankGear/prepNether 的 hostilesNear 定义 (所有调用点随之切换); world_model 观察者 threat.actionable (原 d<12&&|dy|≤4)。worker-tier 换 quickMeal/bedErrand/bedProposable/bedErrandFeasible; missionNether (回滚锚) 不动。测试 test/hostile_reach.test.mjs (墙后骷髅/有视线骷髅/同层近战/贴身/被动+出界 + replenishKit 门场景 + 接线钉)。需重启 main (modes.js)。
+
 ---
 
 ---

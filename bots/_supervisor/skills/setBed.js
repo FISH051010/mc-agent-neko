@@ -13,6 +13,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0222 one gate predicate
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const BEDF = path.resolve(process.cwd(), 'bots', '_supervisor', 'bed.json');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
@@ -23,7 +24,7 @@ export default async function setBed(bot, ctx) {
     const countMatch = (re) => { const c = inv(); return Object.keys(c).filter(n => re.test(n)).reduce((s, n) => s + c[n], 0); };
     const firstMatch = (re) => { const c = inv(); return Object.keys(c).find(n => re.test(n) && c[n] > 0); };
     const HOSTILE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
-    const hostilesNear = (r = 8) => Object.values(bot.entities).filter(e => e && e.position && e.name && HOSTILE.test(e.name) && e.position.distanceTo(bot.entity.position) < r).length;
+    const hostilesNear = (r = 8) => hostileActionableNear(bot, r);   // ★T-0222 reachable / in-view hostiles only
     const isNight = () => { try { const t = bot.time.timeOfDay; return t >= 12800 && t <= 23000; } catch (e) { return false; } };
 
     prog(`==== setBed START | beds=${countMatch(/_bed$/)} wool=${countMatch(/_wool$/)} ====`);

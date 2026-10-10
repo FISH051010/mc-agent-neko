@@ -14,6 +14,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0222 one gate predicate
 const SUP = path.resolve(process.cwd(), 'bots', '_supervisor');
 const PROG = path.join(SUP, 'progress.txt');
 const BEDF = path.join(SUP, 'bed.json');
@@ -28,7 +29,7 @@ export default async function bankGear(bot, ctx) {
     const { skills, world, log } = ctx;
     const has = (n) => world.getInventoryCounts(bot)[n] || 0;
     const HOSTILE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
-    const hostilesNear = (r = 12) => Object.values(bot.entities).filter(e => e && e.position && e.name && HOSTILE.test(e.name) && e.position.distanceTo(bot.entity.position) < r).length;
+    const hostilesNear = (r = 12) => hostileActionableNear(bot, r);   // ★T-0222 reachable / in-view hostiles only
 
     // 1) HOME ANCHOR (bed-centric). bed.json → chest.json → world spawn fallback.
     //    With no bed (this jungle has no sheep → bed.json never lands), anchor the bank at

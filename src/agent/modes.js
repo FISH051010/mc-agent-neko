@@ -31,6 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
+import { hostileActionable } from './framework/hostile_reach.js';
 import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, unownedDangerThreshold, effectivelyOwned, lowHpHoldRecovers, bunkerTooLate, BUNKER_TOO_LATE_B, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
@@ -6206,7 +6207,7 @@ const modes_list = [
                         if (/creeper/.test(e.name || '') && d < creeperDist) creeperDist = d;
                         if (/phantom/.test(e.name || '') && d < 16) phantomNear = true;
                         if (d < 10) swarm++;
-                        if (d < 12 && Math.abs(e.position.y - p.y) <= 4) actionable++;   // reachable/level threat (C34 spirit)
+                        if (d < 12 && hostileActionable(bot, e, 12)) actionable++;   // ★T-0222 reachable / in-view threat (was d<12 && |dy|<=4 — counted the skeleton behind the wall)
                     }
                 } catch (e) {}
                 // --- mobility (★Phase-3: SELF-computed so the model never shows "?" when the
