@@ -1188,7 +1188,9 @@ export function proposeTasks(world, bot) {
 
     // 4) Migration if the biome is structurally unlivable (no sheep → no bed → death-zone respawn loop).
     //    (overworld-only: migration landmarks/biome logic is overworld-semantic.)
-    if (overworld && migration.recommend && time.phase === 'day') {
+    // ★T-0206 (death #16 01:43:33Z: 僵尸贴身 → GET_BED 释放 → 承诺翻向 MIGRATE, hp 4 去发起长途迁移): 有可动敌对时不提迁移 —
+    //   那几秒归保命反射 (self_defense/self_preservation), 敌对清掉后照常提。
+    if (overworld && migration.recommend && time.phase === 'day' && !(threat.actionable > 0)) {
         // ★C347 (T-0096): STUCK-TERRAIN relocate. migration.stuckTerrain (set in modes.js) means the
         // bot is treading water in locally hostile terrain (aquifer / shattered shallow) — net mining
         // progress ≈0 while it thrashes ENTOMBED/SEALED for minutes. The biome here is LIVABLE

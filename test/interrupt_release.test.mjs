@@ -93,3 +93,14 @@ test('T-0206 + 监工协调: 反射持身 (_bodyOwner.kind=mode, 如 self_defens
     assert.equal(halts.length, 0, 'no force halt while a reflex holds the body');
     assert.equal(sawInterrupt, false, 'no global interrupt raised while a reflex holds the body');
 });
+
+test('T-0206: 有可动敌对时不提 MIGRATE (death #16: 僵尸贴身 hp4 翻向长途迁移); 敌对清掉照常提', async () => {
+    const { proposeTasks } = await import('../src/agent/framework/world_model.js');
+    const { EMPTY_WORLD } = await import('../src/agent/framework/contracts.js');
+    const mk = (actionable) => { const w = JSON.parse(JSON.stringify(EMPTY_WORLD));
+        w.time = { ...w.time, phase: 'day', isDay: true }; w.threat = { ...w.threat, actionable };
+        w.migration = { ...w.migration, recommend: true, inDeathZone: true }; return w; };
+    const bot = { inventory: { items: () => [], slots: [] }, game: { dimension: 'overworld' }, entity: { position: { x: 0, y: 70, z: 0 } } };
+    assert.ok(!proposeTasks(mk(1), bot).some(p => p.kind === 'MIGRATE'), 'hostile near → no migrate');
+    assert.ok(proposeTasks(mk(0), bot).some(p => p.kind === 'MIGRATE'), 'clear → migrate proposed');
+});
