@@ -84,7 +84,44 @@ async function hostileDecision(bot) {
     return { action: 'away', h: h2 || h1 };
 }
 
-async function scoutForAnimal(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
+// ★T-0090 诊断 (监工: 00:58:26Z "scout: 70 legs, 0 unreachable, 69 stopped, moved 17b in 90.2s", hostiles=0 — 有东西持续打断 pathfinder):
+//   侦察期间临时包住 bot.pathfinder.stop / setGoal, 按"第一个非 quickMeal / 非 pathfinder 库 / 非 node 内部"的调用帧归因计数,
+//   记首次的 _bodyOwner / supervised; 侦察结束还原并写一行汇总 (限频: 只汇总, 不逐条刷)。纯诊断, 不改行为。
+export function callerKey(stack) {
+    const frames = String(stack || '').split('\n').slice(1).map(s => s.trim());
+    const f = frames.find(s => !/quickMeal\.js|mineflayer-pathfinder|node:internal|<anonymous>|stopProbe/.test(s));
+    if (!f) return 'quickMeal(self)';
+    const m = f.match(/at (?:async )?([^\s(]+)?\s*\(?(.*?):(\d+):\d+\)?$/);
+    if (!m) return f.slice(0, 80);
+    const file = (m[2] || '').split(/[\\/]/).pop();
+    return `${m[1] || '?'}@${file}:${m[3]}`;
+}
+function installStopProbe(bot) {
+    const pf = bot && bot.pathfinder;
+    if (!pf || typeof pf.stop !== 'function') return { restore() {}, summary: () => '' };
+    const counts = new Map(); let firstOwner = null;
+    const note = (kind) => {
+        const key = `${kind}:${callerKey(new Error('stopProbe').stack)}`;
+        if (/quickMeal\(self\)$/.test(key)) return;
+        counts.set(key, (counts.get(key) || 0) + 1);
+        if (!firstOwner) { try { firstOwner = JSON.stringify({ owner: bot._bodyOwner && bot._bodyOwner.name, mob: bot._mobility && bot._mobility.state }); } catch (e) {} }
+    };
+    const origStop = pf.stop, origSet = pf.setGoal;
+    pf.stop = function (...a) { note('stop'); return origStop.apply(this, a); };
+    if (typeof origSet === 'function') pf.setGoal = function (g, ...a) { note(g ? 'setGoal' : 'setGoal(null)'); return origSet.call(this, g, ...a); };
+    return {
+        restore() { pf.stop = origStop; if (typeof origSet === 'function') pf.setGoal = origSet; },
+        summary() { const top = [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([k, n]) => `${k}×${n}`); return top.length ? `${top.join(', ')} | first ${firstOwner || '-'}` : ''; },
+    };
+}
+
+async function scoutForAnimal(bot, opts) {
+    const probe = installStopProbe(bot);
+    try { return await scoutForAnimalInner(bot, opts); }
+    finally { probe.restore(); const s = probe.summary(); if (s) prog(`scout interrupters (T-0090 probe): ${s}`); }
+}
+
+async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
     let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, moved = 0, firstErr = null;
     setSafeMovements(bot);
