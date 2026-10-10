@@ -3763,6 +3763,7 @@ const modes_list = [
                         hurtRecently: _hurt, headInWater: _headInWater, oxygen: bot.oxygenLevel,
                         exposed: _sp1.y >= 50 && !(bot._mobility && bot._mobility.enclosed),
                         threshold: unownedDangerThreshold(bot.health),
+                        hostileNear: (() => { try { return !!world.getNearestEntityWhere(bot, e => mc.isHostile(e), 10); } catch (e) { return true; } })(),
                     });
                     if (_act && now - (this._unownedActAt || 0) > 6000) {
                         this._unownedActAt = now; this._unownedSince = 0;

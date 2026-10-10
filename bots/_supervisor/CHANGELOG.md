@@ -12,7 +12,14 @@
 
 ---
 
-## C393. respawn 诊断探针 (只观测) + keepInventory 观测在死亡点附近不写（agent.js/respawn_probe.js 需重启,监工指派 death #17 异常重生,worker-death,⏳待重启）
+## C394. surfaceUp 重力柱侧移要整个碰撞箱出列, 同点二次侧移即放弃 + 无人掌舵兜底不为饥饿/坠落掉血收回控制（surfaceUp.js 热加载; modes.js/mobility_signals.js 需重启,T-0172 + T-0182,worker-death,⏳待重启）
+
+**证据**: (worker-stuck 报) 03:17:26→03:20:39 @109,39,-69 surfaceUp fallback `gravity column over shaft — sidestep 0,1` 反复, dig-gate `refused dig granite@109,41,-70 above own feet` ×8, 零进度。侧移循环在 floored 坐标一跨界就松键 → 碰撞箱 (±0.3) 仍压着砂砾柱那列 (dig-gate 的 overheadGravityRisk 按 ±0.3 判), bot 还会滑回。另: 03:21:23/35 food=0 饥饿掉血 hp9→7→4→1, 无怪, UNOWNED DANGER 两次 'bunker' 抢走正在上浮觅食的 quickMeal。
+**改动**: ① surfaceUp.hitboxInsideColumn(pos, cell): 侧移走到碰撞箱整个在新列才停 (≤2.4s, 持续对准新格中心); 没出列 → 停。② 同一起点第二次需要侧移 → 放弃本次上浮 (交还调用方)。③ unownedDangerAction 加 hostileNear (默认 true): 非溺水且 10b 内无怪 → 不收回 (饥饿/坠落/窒息掉血逃跑封坑都救不了)。
+**可证伪预测**: 不再出现同一 `sidestep` + 同格 dig-gate 拒挖的长串; 饥饿掉血时不再出现 UNOWNED DANGER bunker。
+**回滚**: revert, 重启。回归 test/surfaceup_sidestep_column.test.mjs。
+
+## C393. respawn 诊断探针 (只观测) + keepInventory 观测在死亡点附近不写（agent.js/respawn_probe.js 需重启,监工指派 death #17 异常重生,worker-death,✅已上线 02:45:21Z 55de34f）
 
 **证据**: death #17 02:37:09 后 act_trace 先落世界出生点 -1.5,65,-8.5 (proposeTasks 读 picks=0 y=65), 02:37:10 出现在死亡点 -34.5,34.5,-77.5 (同两只僵尸旁), 02:37:11 背包恢复 picks=2 logs=19 (站死亡点捡回掉落) → 23s 后 death #18。无 bed.json, cheat.txt 空, 无已知脚本 /tp (监工核查)。另: keepinv 观测 (复活 3s 比背包) 在此情形会误判"保留"。
 **改动**: src/agent/respawn_probe.js — onDeath 记死亡点; onSpawn 3s 内每 100ms + 每个 forcedMove 包采 position, 记 bot.spawnPoint/世界出生点距离/死亡点距离/bed.json → bots/_supervisor/respawn_probe.jsonl; 终点距死亡点 <16b 且无床 → progress `[respawn-probe] ★UNEXPECTED respawn at death point … seq […]`。keepinv 观测在 nearDeathPoint() 时跳过。行为零改动。

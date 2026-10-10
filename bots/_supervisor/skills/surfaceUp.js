@@ -83,6 +83,12 @@ export function sidestepOutOfGravity(blockAt, feet, span = 4) {
     return best ? best.d : null;
 }
 
+/** bot 碰撞箱 (±0.3) 完全落在 cell 这一列内 — 侧移出重力柱要以此为准, 不是脚坐标刚跨界 (T-0172 03:17 @109,39,-69)。 */
+export function hitboxInsideColumn(pos, cell, half = 0.3) {
+    return Math.floor(pos.x - half) === cell.x && Math.floor(pos.x + half) === cell.x
+        && Math.floor(pos.z - half) === cell.z && Math.floor(pos.z + half) === cell.z;
+}
+
 // ★T-0181 (live 22:46:37→22:47:58, 81s): surfaceUp clears interrupt_code to shield the climb from REFLEX pulses — which
 //   also swallowed kernelDriver's commitment-flip interrupt (kernel re-sends it every 1s while waiting). kernelDriver
 //   now stamps bot._commitFlipAt; a flip stamped after this climb began is the caller saying "stop", so the loops
@@ -1243,6 +1249,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
         return moved > 1.2 || yNow() < c0.y - 0.5;
     };
     let stuckFloor = 0;
+    const _gravSidestepFrom = {};   // ★T-0172: sidestep origin → count (a second sidestep from the same cell = we never left it)
     for (let i = 0; i < 100 && !surfaceReady() && !deadlineHit(); i++) {
         try { bot.interrupt_code = false; } catch (e) {}
         const y0 = yNow();
@@ -1262,18 +1269,29 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
                 const side = sidestepOutOfGravity(_bt, _f0);
                 motion('surfaceUp.gravity_shaft', { at: `${_f0.x},${_f0.y},${_f0.z}`, side: side ? side.join(',') : null, hp: Math.round(bot.health || 0) });
                 if (!side) { dbg(`fallback: gravity column over shaft @${_f0.x},${_f0.y},${_f0.z} and no gravity-free side column — stop (no digging up under gravel)`); break; }
+                // ★T-0172 (worker-stuck 03:17–03:20 @109,39,-69: 'sidestep 0,1' 反复 + dig-gate 同格拒挖 ×8 零进度): 同一起点第二次要侧移 =
+                //   上次没真正离开该列 (或滑回来了) → 放弃本次上浮, 交还调用方 (replenishKit/quickMeal 走地下路线)。
+                const _sk = `${_f0.x},${_f0.y},${_f0.z}`;
+                _gravSidestepFrom[_sk] = (_gravSidestepFrom[_sk] || 0) + 1;
+                if (_gravSidestepFrom[_sk] >= 2) { dbg(`fallback: gravity sidestep from ${_sk} needed twice — still under the column, abandoning this climb (T-0172)`); break; }
                 dbg(`fallback: gravity column over shaft — sidestep ${side.join(',')} (T-0172)`);
                 for (const p of [_f0.offset(side[0], 1, side[1]), _f0.offset(side[0], 0, side[1])]) {
                     const b = bot.blockAt(p);
                     if (b && b.boundingBox === 'block' && !OPEN.has(b.name)) { try { await guardedDig(b, 'gravity-sidestep'); } catch (e) {} }
                 }
+                // ★T-0172: walk until the whole hitbox (±0.3) is inside the new column — stopping the instant the feet cross
+                //   the boundary left the hitbox straddling the gravel column (dig-gate keeps refusing, bot slides back).
+                const _cell = { x: _f0.x + side[0], z: _f0.z + side[1] };
                 try {
-                    await bot.lookAt(new Vec3(_f0.x + side[0] + 0.5, _f0.y + 0.5, _f0.z + side[1] + 0.5), true);
-                    bot.setControlState('forward', true);
                     const t0 = Date.now();
-                    while (Date.now() - t0 < 1600) { await skills.wait(bot, 100); if (bot.entity.position.floored().distanceTo(_f0) >= 1) break; }
+                    while (Date.now() - t0 < 2400) {
+                        if (hitboxInsideColumn(bot.entity.position, _cell)) break;
+                        try { await bot.lookAt(new Vec3(_cell.x + 0.5, _f0.y + 0.5, _cell.z + 0.5), true); } catch (e) {}
+                        bot.setControlState('forward', true);
+                        await skills.wait(bot, 80);
+                    }
                 } finally { try { bot.clearControlStates(); } catch (e) {} }
-                if (bot.entity.position.floored().distanceTo(_f0) < 1) { dbg('fallback: gravity sidestep did not move — stop'); break; }
+                if (!hitboxInsideColumn(bot.entity.position, _cell)) { dbg(`fallback: gravity sidestep did not clear the column (pos ${bot.entity.position.x.toFixed(2)},${bot.entity.position.z.toFixed(2)}) — stop`); break; }
                 continue;
             }
         }

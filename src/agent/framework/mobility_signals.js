@@ -87,9 +87,12 @@ export function bunkerTooLate(mobs) {
 export function unownedDangerThreshold(hp) {
     return Number.isFinite(hp) && hp <= 10 ? 1500 : UNOWNED_DANGER_MS;
 }
-export function unownedDangerAction({ unownedMs, hurtRecently, headInWater, oxygen, exposed, threshold = UNOWNED_DANGER_MS }) {
+// ★03:21:23/35 实录: food=0 饥饿掉血 (hp9→4→1, 无怪) 触发 'bunker' 两次, 打断正在上浮觅食的 quickMeal — 饥饿/坠落/窒息
+//   伤害没有"威胁"可躲, 逃跑/封坑都救不了, 只会抢走去找食物的身体。hostileNear=false 且非溺水 → 不收回 (默认 true 保旧语义)。
+export function unownedDangerAction({ unownedMs, hurtRecently, headInWater, oxygen, exposed, threshold = UNOWNED_DANGER_MS, hostileNear = true }) {
     const drowning = !!headInWater && Number.isFinite(oxygen) && oxygen < 10;
     if (!(hurtRecently || drowning)) return null;
+    if (!drowning && !hostileNear) return null;
     if (!(unownedMs >= threshold)) return null;
     if (headInWater) return 'swim';
     return exposed ? 'flee' : 'bunker';
