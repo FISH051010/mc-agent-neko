@@ -3050,6 +3050,8 @@
 
 - **★C409-S kernelDriver 对"有镐的 SEALED"不再让位(T-0194)**（2026-10-10，worker-stuck，T-0194）: 实录 10-10 00:16:52→00:17:58+ 白天地下 y34 夜坑里 T-0135 SEALED 脱困期, reflexBusy 对 SEALED 让位 → kernel 零任务, mobility 在实心岩层横挖 ~23 格 (地下无"外面", 可挖满 5min 上限)。修: 同 T-0086 对有镐 POCKET 的处理, SEALED + 背包有镐 → 不让位, kernel 派任务, 任务首挖经 T-0163 working 门结束脱困期; 无镐 SEALED / ENTOMBED 照旧让位。测试 test/kernel_driver_sealed_pick.test.mjs, 更新 kernel_driver_pocket (T-0086) 断言。
 
+- **★C410-S chopWood 响应 kernel 承诺切换(T-0197)**（2026-10-10，worker-stuck，T-0197）: 实录 10-10 00:26:03→00:26:34 'commitment flipped REPLENISH_KIT→TOOL_UPKEEP mid-child' ×32 — replenishKit ② 的 chopWood 照跑 iter5..9 (dig-staircase/raw-approach) 直到无树才退。chopWood 每 iter 让位点 _superseded 只认代号/poisoned。修: _superseded 并入 kernelYieldRequested(bot, 进入时刻) (T-0181 的 _commitFlipAt 戳), 所有既有让位点下一 iter 即 YIELD。测试 test/chopwood_kernel_yield.test.mjs。
+
 ---
 
 ---
