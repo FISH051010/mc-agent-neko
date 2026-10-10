@@ -3100,6 +3100,8 @@
 
 - **★C412-S START 换址后校验认可"已到达实心列"(T-0193 续)**（2026-10-10，worker-stuck，T-0193）: 实录 10-10 00:35:52 'relocate: no dry solid 9-cell tunnel line — path to solid column -24,25,12 arrived' 紧接 'relocate failed (moved=5.1b footingOk=false cleanHeading=true)' — 到达时还在走 (onGround 假), 且实心列距起点 ≥6b 减 2.5b 到达容差后可 <6b → 实际换址成功却诚实失败吃 strike。修: relocateFallback 报到达时等 ≤1s 落地再判 footing, 移动门槛 6→4b (仅限已验证实心列的到达); 隧道/其他路径不变。更新 minedown_relocate_fallback / minedown_relocate_tunnel 钉子。
 
+- **★C413-S mineDown T-0180 破洞封口后同派发换向/换址(T-0203)**（2026-10-10，worker-stuck，T-0203）: 实录 10-10 01:18:47/50/55 GO_UNDERGROUND @0,65,-14 白天地表 — 'cavity breach + hostile ≤16b … sealed, not entering (T-0180)' 三个朝向各占一次派发, dug=1 failed ×3 → 冷却 5min (与 T-0162 流体 / T-0183 空洞同型)。修: T-0180 封口 + 记朝向后, 同派发 rotateAwayFromAborted 换向 (≤3, 'cavity turn N/3'); 四向皆破 → relocateFallback 换址一次 (共用 loopRelocates); T-0180 封口/不进入语义不变。测试 test/minedown_cavity_reheading.test.mjs。
+
 ---
 
 ---
