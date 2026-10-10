@@ -51,7 +51,14 @@ export default async function bedErrand(bot, ctx) {
             const ex = await exitPitIfSealed(bot);
             if (ex.hostile) { prog('exit pit deferred: hostile near'); return { deferred: true, reason: 'hostile-near-pit' }; }
             exitedPit = ex.exited;
+            const ps = bot.entity.position.clone();
             sheep = await scoutForAnimal(bot, { radius: 48, maxDy: 8, scoutRadius: plan.radius, scoutMs: SCOUT_MS, targetRe: SHEEP_RE, scoutToward: plan.toward });
+            // ★T-0215 补: 侦察零位移 = 判据漏判的坑 → 强制出坑; 这轮没真搜过, 不记 no-sheep 退避, 出来了就算进展让 kernel 重派
+            if (!sheep && !exitedPit && !bot.interrupt_code && ps.distanceTo(bot.entity.position) < 1) {
+                const ex2 = await exitPitIfSealed(bot, { force: true });
+                if (ex2.hostile) { prog('exit pit deferred: hostile near'); return { deferred: true, reason: 'hostile-near-pit' }; }
+                if (ex2.exited) return { ok: true, exitedPit: true };
+            }
             if (sheep === 'hostile') { prog('scout deferred: hostile near'); return { deferred: true, reason: 'hostile-near' }; }
             if (bot.interrupt_code) { haltPath(bot); prog('interrupted during scout — exit'); return false; }   // ★T-0206: 打断按 unwind 处理
             // ★T-0208 (02:01/02:03Z 实录: 96b 内两轮都没羊, 立即重派 → 3 轮×2min + 5min 冷却 ≈ 每个白天一半在找羊): 记下时间,

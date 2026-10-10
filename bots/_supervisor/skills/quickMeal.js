@@ -59,15 +59,25 @@ export function sealedNow(bot) {
     if (/ENTOMBED|POCKET/.test(st)) return true;
     return st !== 'SWIM' && Array.isArray(m.exits) && m.exits.length === 0;
 }
-export async function exitPitIfSealed(bot, { legMs = 8000 } = {}) {
-    if (!sealedNow(bot)) return { needed: false, exited: false, moved: 0 };
+// ★T-0215 补 (03:18:37Z 实录): surfaceUp 9→39 后头顶重力柱被 T-0172 闸拒挖, mobility 却是 FREE exits=[[0,-1]] (死胡同出口) →
+//   封闭判据漏判, 侦察 6 段 0.3s 全不可达。force=true (调用方见侦察零位移) 时不看判据直接出坑; 头顶不见天时先往上挖 8 格
+//   (pathfinder 默认 dontMineUnderFallingBlock, 自己绕开重力柱走台阶)。
+class GoalRiseBy extends goals.Goal {
+    constructor(y) { super(); this.y = y; }
+    heuristic(node) { return Math.max(0, this.y - node.y); }
+    isEnd(node) { return node.y >= this.y; }
+}
+export async function exitPitIfSealed(bot, { legMs = 8000, force = false } = {}) {
+    if (!force && !sealedNow(bot)) return { needed: false, exited: false, moved: 0 };
     if (hostileWithin(bot, 8) && !(await waitHostileClear(bot, 15000))) return { needed: true, exited: false, moved: 0, hostile: true };
     const p0 = bot.entity.position, x0 = p0.x, y0 = p0.y, z0 = p0.z;
     try { const mv = new Movements(bot); mv.canDig = true; mv.allow1by1towers = true; mv.allowParkour = false; mv.maxDropDown = 2; mv.liquidCost = 1000; bot.pathfinder.setMovements(mv); } catch (e) {}
     let moved = 0;
-    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+    const legs = [[1, 0], [0, 1], [-1, 0], [0, -1]].map(([dx, dz]) => () => new goals.GoalNearXZ(Math.round(x0 + dx * 6), Math.round(z0 + dz * 6), 1));
+    if (y0 < 62 && skyOpenAt(bot) !== true) legs.unshift(() => new GoalRiseBy(Math.floor(y0) + 8));
+    for (const mkGoal of legs) {
         if (bot.interrupt_code) break;
-        try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNearXZ(Math.round(x0 + dx * 6), Math.round(z0 + dz * 6), 1)).catch(() => null), legMs); } catch (e) {}
+        try { await raceI(bot, bot.pathfinder.goto(mkGoal()).catch(() => null), legMs * 2); } catch (e) {}
         haltPath(bot);
         moved = Math.hypot(bot.entity.position.x - x0, bot.entity.position.z - z0);
         if (moved >= 2 || bot.entity.position.y - y0 >= 1) break;
@@ -296,7 +306,17 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             if (ex.hostile) return { deferred: true, reason: 'hostile-near-pit' };
             if (ex.exited) opts = { ...opts, _exitedPit: true };
             prog(`starving, no animal ≤${radius}b — bounded scout ≤${opts.scoutRadius ?? 96}b/${Math.round((opts.scoutMs ?? 90000) / 1000)}s`);
+            const ps = bot.entity.position.clone();
             target = await scoutForAnimal(bot, { radius, maxDy, scoutRadius: opts.scoutRadius ?? 96, scoutMs: opts.scoutMs ?? 90000, scoutToward: opts.scoutToward });
+            // ★T-0215 补: 侦察零位移 = 判据漏判的坑 (死胡同出口/重力柱) → 强制出坑一次, 出来了再侦察一轮
+            if (!target && !opts._exitedPit && !bot.interrupt_code && ps.distanceTo(bot.entity.position) < 1) {
+                const ex2 = await exitPitIfSealed(bot, { force: true });
+                if (ex2.hostile) return { deferred: true, reason: 'hostile-near-pit' };
+                if (ex2.exited) {
+                    opts = { ...opts, _exitedPit: true };
+                    target = await scoutForAnimal(bot, { radius, maxDy, scoutRadius: opts.scoutRadius ?? 96, scoutMs: opts.scoutMs ?? 90000, scoutToward: opts.scoutToward });
+                }
+            }
             // ★监工#5: 因敌对收手 = unwind 语义, 不计 strike (返回非失败的 deferred, kernel 1.5s 后重派, 每次最多等 15s)
             if (target === 'hostile') return { deferred: true, reason: 'hostile-near' };
             prog(target ? `scout found ${target.name}` : 'scout found nothing');

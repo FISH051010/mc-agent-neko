@@ -161,5 +161,6 @@ test('T-0214: 封在坑里 (每段寻路都瞬间返回、一格不动) → 连�
         pathfinder: { stop() {}, setGoal() {}, setMovements() {}, goto: async () => { gotos++; } }, clearControlStates() {} };
     await quickMeal(bot, { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } },
         { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 90000 });
-    assert.ok(gotos <= 7, `stopped early after ${gotos} motionless legs`);
+    // T-0215: 零位移后再强制出坑一次 (地表 4 个水平方向); 侦察本身仍 ≤7 段即止
+    assert.ok(gotos <= 7 + 4, `stopped early after ${gotos} motionless legs (incl. ≤4 forced pit-exit legs)`);
 });

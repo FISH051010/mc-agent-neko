@@ -20,7 +20,7 @@ const { default: bedErrand } = await import('../bots/_supervisor/skills/bedErran
 const V = (x, y, z) => ({ x, y, z, clone() { return V(this.x, this.y, this.z); }, offset(dx, dy, dz) { return V(this.x + dx, this.y + dy, this.z + dz); }, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } });
 
 // 封闭坑: 只有允许挖方块的寻路才走得出去 (挖开一格 → 走到 6 格外); 不许挖 → goto 秒回零移动 (实录的 "0 unreachable / no move")。
-function rig({ mobility, inv = {} }) {
+function rig({ mobility, inv = {}, digWorks = true, walkable = false }) {
     const legs = [];
     let canDig = false;
     const bot = { food: 8, health: 18, registry, entity: { position: V(0, 40, 0) }, entities: {}, _mobility: mobility,
@@ -30,7 +30,9 @@ function rig({ mobility, inv = {} }) {
             setMovements(mv) { canDig = !!mv.canDig; },
             goto: async (g) => {
                 legs.push({ canDig, goal: g.constructor.name });
-                if (canDig && Math.hypot(bot.entity.position.x, bot.entity.position.z) < 1) { bot.entity.position = V(g.x, 41, g.z); return; }
+                if (canDig && !digWorks) return;
+                if (canDig && Math.hypot(bot.entity.position.x, bot.entity.position.z) < 1 && bot.entity.position.y < 41) { bot.entity.position = g.x !== undefined ? V(g.x, 41, g.z) : V(0, g.y, 0); return; }
+                if (walkable && !canDig && g.x !== undefined) { bot.entity.position = V(g.x, 41, g.z); return; }
                 // 坑外 (或仍在坑里不许挖): 侦察段无处可去, 原地不动
             } },
         clearControlStates() {} };
@@ -52,7 +54,8 @@ test('T-0215: quickMeal 封在坑里 → 先挖路出坑再侦察; 侦察没找�
     const r = rig({ mobility: { state: 'ENTOMBED', enclosed: true, exits: [] } });
     const res = await quickMeal(r.bot, r.ctx, { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 20000 });
     assert.equal(r.legs[0].canDig, true, `first leg is a dig-allowed exit (legs=${JSON.stringify(r.legs.slice(0, 3))})`);
-    assert.ok(Math.hypot(r.bot.entity.position.x, r.bot.entity.position.z) >= 2, 'walked out of the pit');
+    assert.ok(r.bot.entity.position.y >= 41, 'climbed out of the pit (underground → rise first)');
+    assert.equal(r.legs[0].goal, 'GoalRiseBy', 'underground (no sky) → first exit leg digs upward');
     assert.ok(r.legs.slice(1).every(l => !l.canDig), 'scout legs use safe (no-dig) movements');
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(res.exitedPit, true);
@@ -60,8 +63,8 @@ test('T-0215: quickMeal 封在坑里 → 先挖路出坑再侦察; 侦察没找�
     assert.match(log, /exit pit: out/);
 });
 
-test('T-0215: 不封闭 (有出口) → 不出坑, 行为照旧 (找不到 = 诚实失败)', async () => {
-    const r = rig({ mobility: { state: 'FREE', enclosed: true, exits: [[1, 0], [0, 1]] } });
+test('T-0215: 不封闭 (有出口) 且侦察走得动 → 不出坑, 行为照旧 (找不到 = 诚实失败)', async () => {
+    const r = rig({ mobility: { state: 'FREE', enclosed: true, exits: [[1, 0], [0, 1]] }, walkable: true });
     const res = await quickMeal(r.bot, r.ctx, { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 20000 });
     assert.ok(r.legs.every(l => !l.canDig), 'never digs out when not sealed');
     assert.equal(res.failed, true, JSON.stringify(res));
@@ -74,4 +77,26 @@ test('T-0215: bedErrand 封在坑里 → 先出坑再找羊; 没找到羊也返�
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(res.exitedPit, true);
     assert.ok(r.bot._bedErrandNoSheepAt > 0);
+});
+
+test('T-0215 补 (03:18:37Z): 判据漏判 (FREE exits=[[0,-1]] 死胡同, 头顶重力柱) → 侦察零位移 → 强制出坑再侦察一轮, 算进展', async () => {
+    const r = rig({ mobility: { state: 'FREE', enclosed: true, exits: [[0, -1]] } });
+    const res = await quickMeal(r.bot, r.ctx, { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 20000 });
+    const firstDig = r.legs.findIndex(l => l.canDig);
+    assert.ok(firstDig > 0, `scouted first (no-dig), then forced exit (legs=${JSON.stringify(r.legs.slice(0, 8))})`);
+    assert.ok(r.bot.entity.position.y >= 41, 'climbed out');
+    assert.ok(r.legs.slice(firstDig + 1).some(l => !l.canDig), 'scouted again after exit');
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.exitedPit, true);
+});
+
+test('T-0215 补: bedErrand 侦察零位移 → 强制出坑, 出来了返回 ok 且不记 no-sheep 退避 (这轮没真搜); 挖不出 → 照旧 failed', async () => {
+    const r = rig({ mobility: { state: 'FREE', enclosed: true, exits: [[0, -1]] } });
+    const res = await bedErrand(r.bot, r.ctx);
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.exitedPit, true);
+    assert.ok(!r.bot._bedErrandNoSheepAt, 'no backoff: scout never actually searched');
+    const r2 = rig({ mobility: { state: 'FREE', enclosed: true, exits: [[0, -1]] }, digWorks: false });
+    const res2 = await bedErrand(r2.bot, r2.ctx);
+    assert.equal(res2.failed, true, JSON.stringify(res2));
 });
