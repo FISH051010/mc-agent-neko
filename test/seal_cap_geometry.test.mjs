@@ -344,6 +344,20 @@ test('T-0180①: shared cavity-breach primitive — own tunnel/stair is not a ca
     assert.equal(cavityBreachAt(caveBelow, p, 1, 0, { yLo: -1 }), true, 'mineDown band (one below the feet) catches it');
 });
 
+test('T-0180① C387: open sky ahead is not a cavity — mineDown starting on the surface must not seal its own entrance', async () => {
+    const { cavityBreachAt } = await import('../src/agent/library/skills.js');
+    const p = new Vec3(0, 65, 0);
+    // 实录 01:18:48: 地表 y65 平地, 前方 y64..66 → 地面以上全露天
+    const surface = (q) => ({ name: q.y < 65 ? 'grass_block' : 'air' });
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0]]) assert.equal(cavityBreachAt(surface, p, dx, dz, { yLo: -1 }), false, `heading ${dx},${dz}`);
+    // 树荫下 (leaves 当顶) 也不算
+    const canopy = (q) => ({ name: q.y < 65 ? 'grass_block' : (q.y === 70 ? 'spruce_leaves' : 'air') });
+    assert.equal(cavityBreachAt(canopy, p, 1, 0, { yLo: -1 }), false);
+    // 同样的空间盖上岩顶 = 洞穴 → 判破口
+    const roofed = (q) => ({ name: q.y < 65 ? 'grass_block' : (q.y === 68 ? 'stone' : 'air') });
+    assert.equal(cavityBreachAt(roofed, p, 1, 0, { yLo: -1 }), true);
+});
+
 test('T-0195: no chestplate-tier armor (bot._cavitySealAlways) → a cavity breach is sealed even with no hostile in sight', async () => {
     const { sealCavityBreach } = await import('../src/agent/library/skills.js');
     const mk = (always) => ({

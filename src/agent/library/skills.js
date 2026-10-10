@@ -6474,15 +6474,25 @@ export function drowningPriority({ headInWater, feetInWater = false, oxygen }) {
  * ★C381: 不计 p+d 那一列 (调用方刚亲手挖开的前方格, 最多 3 格) —— 实录 00:07:33-41 mineDown 三个方向连判破口,
  * "sealed 3" 封的正是自己刚挖的 newFeet/newHead/clear; 计入它们 = 只要 5 格天然空隙就误判, 夜挖被 3 连败压 5min。
  * 只数自挖列之外的 24 格, 阈值仍 8: 真洞穴才填满。
+ * ★C387: 空格必须"有顶" (正上方 6 格内有实心块) 才算洞穴 —— 实录 01:18:48-56 mineDown 在地表 y65 起步, 前方露天空气
+ * 填满盒子 → 三个方向连判破口、把自己刚挖的口封回去 → 3 连败冷却。露天不是空腔; 真洞穴/水洞上方有岩顶。
  */
 const CAVITY_OPEN_RE = /^(air|cave_air|void_air|water|flowing_water)$/;
+const CAVITY_ROOF_SKIP_RE = /^(air|cave_air|void_air|water|flowing_water|lava|flowing_lava)$|leaves$|grass$|fern$|vine|snow$|flower|sapling|torch/;
 export function cavityBreachAt(blockAt, p, dx, dz, { yLo = 0, threshold = 8 } = {}) {
     const cx = p.x + dx * 2, cz = p.z + dz * 2;
     let open = 0;
     for (let ox = -1; ox <= 1; ox++) for (let oy = 0; oy <= 2; oy++) for (let oz = -1; oz <= 1; oz++) {
         if (ox === -dx && oz === -dz) continue;   // 自挖列 (p+d) 不算洞穴证据
-        const b = blockAt(new Vec3(cx + ox, p.y + yLo + oy, cz + oz));
-        if (CAVITY_OPEN_RE.test((b && b.name) || 'air')) open++;
+        const x = cx + ox, y = p.y + yLo + oy, z = cz + oz;
+        const b = blockAt(new Vec3(x, y, z));
+        if (!CAVITY_OPEN_RE.test((b && b.name) || 'air')) continue;
+        let roofed = false;
+        for (let k = 1; k <= 6 && !roofed; k++) {
+            const r = blockAt(new Vec3(x, y + k, z));
+            if (r && r.name && !CAVITY_ROOF_SKIP_RE.test(r.name)) roofed = true;
+        }
+        if (roofed) open++;
     }
     return open >= threshold;
 }
