@@ -31,6 +31,7 @@ import { dataPath, expandUserPath } from '../utils/paths.js';
 import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket, classifyKeepInvReply } from './world_scope.js';
 import { readJsonFileSync } from '../utils/json_io.js';
 import { deathAlertText, observeKeepInventory, countItems } from './keepinv_report.js';
+import { makeRespawnProbe } from './respawn_probe.js';
 
 // ★2026-08-07 路径统一: 本文件所有监工状态文件原来都是裸相对 'bots/_supervisor/xxx' (相对 CWD)。
 // 分发包里代码在 <包根>/app/、CWD 在 <包根>, 靠 bootstrap 的 chdir 才勉强对得上 —— 但那是兜底网,
@@ -645,6 +646,10 @@ export class Agent {
             await this.handleBotDisconnection(reason, bot);
         });
 
+        // ★respawn 诊断探针 (监工, death #17 异常重生到死亡点) — 只观测: respawn_probe.jsonl + progress '★UNEXPECTED respawn'。
+        const respawnProbe = makeRespawnProbe(bot, { fs, supPath: SUP });
+        bot.on('spawn', () => { if (isCurrentBot()) { try { respawnProbe.onSpawn(); } catch (e) {} } });
+        bot.on('death', () => { if (isCurrentBot()) { try { respawnProbe.onDeath(); } catch (e) {} } });
         // keepInventory 实测校正: 死后复活 3s, 背包为空 = 确实掉落; 数量没少 = 确实保留。
         bot.on('spawn', () => {
             if (!isCurrentBot()) return;
@@ -653,6 +658,8 @@ export class Agent {
             bot._preDeathItemCount = null;
             setTimeout(() => {
                 try {
+                    // 站在死亡点 (无床) = 可能捡回了掉落物, "没少"不是 keepInventory 证据 → 不写
+                    if (respawnProbe.nearDeathPoint()) return;
                     const post = countItems(bot);
                     const observed = observeKeepInventory(pre, post);
                     if (observed === null) return;

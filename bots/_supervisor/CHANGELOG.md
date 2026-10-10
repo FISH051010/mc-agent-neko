@@ -12,6 +12,13 @@
 
 ---
 
+## C393. respawn 诊断探针 (只观测) + keepInventory 观测在死亡点附近不写（agent.js/respawn_probe.js 需重启,监工指派 death #17 异常重生,worker-death,⏳待重启）
+
+**证据**: death #17 02:37:09 后 act_trace 先落世界出生点 -1.5,65,-8.5 (proposeTasks 读 picks=0 y=65), 02:37:10 出现在死亡点 -34.5,34.5,-77.5 (同两只僵尸旁), 02:37:11 背包恢复 picks=2 logs=19 (站死亡点捡回掉落) → 23s 后 death #18。无 bed.json, cheat.txt 空, 无已知脚本 /tp (监工核查)。另: keepinv 观测 (复活 3s 比背包) 在此情形会误判"保留"。
+**改动**: src/agent/respawn_probe.js — onDeath 记死亡点; onSpawn 3s 内每 100ms + 每个 forcedMove 包采 position, 记 bot.spawnPoint/世界出生点距离/死亡点距离/bed.json → bots/_supervisor/respawn_probe.jsonl; 终点距死亡点 <16b 且无床 → progress `[respawn-probe] ★UNEXPECTED respawn at death point … seq […]`。keepinv 观测在 nearDeathPoint() 时跳过。行为零改动。
+**可证伪预测**: 下次异常重生能从 seq 看出是 forcedMove 瞬移包 (服务端/玩家传送) 还是别的。
+**回滚**: revert, 重启。回归 test/respawn_probe.test.mjs。
+
 ## C392. ★surfaceUp 冻结战斗反射须"此刻无危险": 上浮中遇险当拍解冻 self_defense/self_preservation 并放弃上浮（surfaceUp.js 热加载,T-0169 同形第二次 death #17/#18,worker-death,已合入即生效）
 
 **证据**: death #17 02:37:09 y34 黎明: quickMeal surfaceFirst → surfaceUp, 寻路 02:37:01–02 往下掉进僵尸洞 (y34.7→30), 02:37:03–09 僵尸 0.8b 连打 17→11→8→5→0, act 全空, 手持 andesite (背包石剑) — surfaceUp 把 self_defense/self_preservation 整段 setOn(false) (只夜裸例外) 又不处理威胁 = 让位没人接 (T-0169 当时按重复 wontfix, 第二次 = 当场沉淀)。death #18 02:37:32 (在 -34,34,-77 的床重生, 同两只僵尸 id 146016/146767 就在旁边, 光身): replenishKit → surfaceUp 与 self_preservation 逃跑同时驱动身体, ctrl `forward,back,sneak,sprint` 互相抵消原地卡 4s。
