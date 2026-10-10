@@ -60,6 +60,13 @@ test('C354/T-0063: fully boxed + melee mob behind the wall but NOT hurting us �
     assert.equal(rangedUnreachableTrap(makeBot({ mobility: halfOpen, mobs: [mob('zombie', 3), mob('skeleton', 6)] })), false, 'a reachable melee target keeps the fight');
 });
 
+test('T-0224 death #21: 有顶但有出口的洞穴 (mob=FREE enclosed=true exits≥1) 不算被困 — 被骷髅射时照常追打', () => {
+    // live 04:36:27–04:37:12: 'DISENGAGE ranged-unreachable-trap mob=FREE enclosed=true' ×4, skeleton 5.1→2.2b, stone_sword in bag, 16→0.
+    const caveFree = { state: 'FREE', enclosed: true, exits: [{}] };
+    assert.equal(rangedUnreachableTrap(makeBot({ mobility: caveFree, mobs: [mob('skeleton', 5.1)], hurtAgoMs: 500 })), false);
+    assert.equal(rangedUnreachableTrap(makeBot({ mobility: { state: 'FREE', enclosed: true, exits: [] }, mobs: [mob('skeleton', 5.1)] })), true, 'roof and no exit is still a trap');
+});
+
 test('C353 restart edge: bot._mobility not yet written → falls back to bot._world.mobility', () => {
     const b = makeBot({ mobs: [mob('skeleton', 3)] });
     b._world = { mobility: { state: 'SEALED', enclosed: true, exits: [] } };

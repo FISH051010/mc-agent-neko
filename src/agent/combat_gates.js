@@ -98,7 +98,10 @@ export function rangedUnreachableTrap(bot) {
         // 这种状态下"真贴脸射手用近战打断"的假设失效(bot 出不去, 挥到的是墙)。
         const fullyBoxed = /ENTOMBED|SEALED/.test(mob) || (enclosed && noExit) || (mob === 'POCKET' && noExit);
         // 必须先"被困"才考虑 disengage(开阔地能追上去打, 不放手)。被困 = 封闭环境 或 困态状态机。
-        const trapped = enclosed || /POCKET|ENTOMBED|SEALED/.test(mob);
+        // ★T-0224 death #21 (10-10 04:37:12, 骷髅 4 箭 16→0): 旧判据 `enclosed ||` 把"有顶 + 有出口的洞穴"(mob=FREE) 也当被困 →
+        //   石剑在手、骷髅能射到她 (LOS 在)、她也走得过去, self_defense 却一直 DISENGAGE。C353 本意是"无出口口袋"。
+        //   被困 = 困态 (POCKET/ENTOMBED/SEALED) 或 有顶且零水平出口; 有出口的洞穴里照常追打。
+        const trapped = /POCKET|ENTOMBED|SEALED/.test(mob) || (enclosed && noExit);
         if (!trapped) return false;
         const p = bot.entity.position;
         const RANGED = /skeleton|stray|pillager/i;          // 射手 — 隔墙也能射 bot, 但 bot 横挥够不到它

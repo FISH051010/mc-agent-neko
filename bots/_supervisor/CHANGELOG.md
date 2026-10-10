@@ -12,6 +12,13 @@
 
 ---
 
+## C397. ★有出口的洞穴里被骷髅射 → 追打, 不再按"被困"让位 + 上浮危险判据覆盖 16b 内射手（combat_gates.js 需重启; surfaceUp.js 热加载,T-0224,worker-death,⏳待重启）
+
+**证据**: death #21 04:37:12 y14 洞穴, 石剑 0 甲。04:36:27/35/45/53 `DISENGAGE ranged-unreachable-trap mob=FREE enclosed=true` ×4 (有出口), 04:36:54 被射 hp12 → C382 挡箭只垫上 1 块 (placement-failed) → 回撤, 04:36:59 掉崖 y23→13 入水; 04:37:00 replenishKit 又派 surfaceUp, 射手在 8b 外 → 上浮照爬; 04:37:04 −5, 04:37:12 骷髅 2.2b 射死。22s 中 4 箭。
+**改动**: ① combat_gates.rangedUnreachableTrap: trapped = 困态 (POCKET/ENTOMBED/SEALED) 或 (有顶 且 零水平出口); 旧 `enclosed ||` 把有出口的洞穴当被困 (C353 本意是无出口口袋)。有出口 → self_defense 照常追打 (挨打索敌 12b, armoredSoloBrawl 时 16b)。② surfaceUp.surfaceUpDangerYield: 刚挨打时 16b 内的射手也算危险。
+**可证伪预测**: 洞穴 (mob=FREE) 里被骷髅射时出现 self_defense ENGAGE 而非 DISENGAGE ranged-unreachable-trap; 上浮途中被远处骷髅射中出现 `danger mid-climb (skeleton@>8…)`。
+**回滚**: revert, 重启。回归 combat_gates 'T-0224 death #21' + surfaceup_danger。
+
 ## C396. ★地下 1 宽隧道被近战怪追 → 转身垫两块堵路, 不再跑进死胡同（modes.js/mobility_geom.js 需重启,T-0223,worker-death,⏳待重启）
 
 **证据**: death #20 04:22:34 y13 洞穴, hp7 food3 (回不了血), 苦力怕 8.8b/骷髅/僵尸。04:22:26 T-0218 门正确让位后, self_preservation sprintFlee 地下沿面包屑回撤 → 回到自己挖的死胡同矿道, 到头左右折返 (x 27→23→26), 僵尸 2.2b 追上 hp4→1→0。(04:19:56 的 'HURT 13' 是别的 worker 重启后 combat_log 基线跳变, 非真伤害。)

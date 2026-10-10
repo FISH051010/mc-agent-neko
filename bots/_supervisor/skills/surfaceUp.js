@@ -25,7 +25,8 @@ const dbg = (s) => { try { fs.appendFileSync(DBG, `[${new Date().toISOString()}]
 export function surfaceUpDangerYield({ hurtAgoMs, hostiles }) {
     const melee = (hostiles || []).filter(h => h && !/creeper|skeleton|stray|pillager|witch|ghast|blaze/i.test(h.name || ''));
     if (melee.some(h => h.d < 3.5 && Math.abs(h.dy || 0) <= 2)) return true;            // 贴脸近战怪 — 够得着我
-    const anyNear = (hostiles || []).some(h => h && h.d < 8);
+    // ★T-0224 death #21: 骷髅在 8b 外持续射中 (04:37:04 −5) 时上浮照爬 → 射手射程 ~16b 也算
+    const anyNear = (hostiles || []).some(h => h && (h.d < 8 || (/skeleton|stray|pillager/i.test(h.name || '') && h.d < 16)));
     return Number.isFinite(hurtAgoMs) && hurtAgoMs < 2500 && anyNear;                       // 正在被怪打 (排除自身坠落/窒息)
 }
 

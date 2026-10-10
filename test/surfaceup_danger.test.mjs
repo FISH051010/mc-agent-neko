@@ -13,6 +13,8 @@ test('death #17: 贴脸近战怪 / 正在被怪打 → surfaceUp 让位; 坠落/
     assert.equal(surfaceUpDangerYield({ hurtAgoMs: 1e9, hostiles: [{ name: 'zombie', d: 10.8, dy: -4 }] }), false);
     assert.equal(surfaceUpDangerYield({ hurtAgoMs: 1e9, hostiles: [{ name: 'zombie', d: 3, dy: -5 }] }), false, 'below the shaft, cannot reach');
     assert.equal(surfaceUpDangerYield({ hurtAgoMs: 1e9, hostiles: [{ name: 'skeleton', d: 3, dy: 0 }] }), false, 'ranged has its own branch');
+    assert.equal(surfaceUpDangerYield({ hurtAgoMs: 800, hostiles: [{ name: 'skeleton', d: 11, dy: 2 }] }), true, 'T-0224 death #21: shot from beyond 8b');
+    assert.equal(surfaceUpDangerYield({ hurtAgoMs: 800, hostiles: [{ name: 'zombie', d: 11, dy: 2 }] }), false, 'a far zombie did not hit us');
 });
 
 test('death #17: 危险检查并进 deadlineHit (所有主循环都查它), 触发时先解冻 self_defense/self_preservation 再退出', () => {
