@@ -10,7 +10,7 @@
 import fs from 'fs';
 import mfp from 'mineflayer-pathfinder';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
-import { rotateAwayFromAborted } from './mineDown.js';
+import { rotateAwayFromAborted, rememberAbortedHeading } from './mineDown.js';
 const { goals: BM_GOALS, Movements: BM_MOVES } = mfp;
 
 // ★2026-07-05 铜矿除名 (durability leak 实锤: 227 raw_copper ≈ 75 次破坏 ≈ 半根石镐耐久
@@ -583,6 +583,7 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
         }
         return true;
     };
+    let lastStepFail = '';   // ★T-0216 last stepInto clear-failure reason (lava-near / water-near / …)
     const stepInto = async (feet, dx, dz, label) => {
         const nightStop = nightActionableStop(`step ${label || ''}`);
         if (nightStop) {
@@ -643,6 +644,7 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
             if (b && !open(b)) {
                 const r = await digBlock(b, label, 9000);
                 if (r !== 'ok' && r !== 'gone') {
+                    lastStepFail = r;
                     log(bot, `branchMine ${label}: failed clearing ${b.name}@${c.x},${c.y},${c.z} => ${r}`);
                     motion('branchMine.step.end', { label, ok: false, reason: `clear-${r}`, block: blockObj(b), target: { x: feet.x, y: feet.y, z: feet.z } });
                     if (bot._bodyMoveLockOwner === `branchMine:${label || 'step'}`) { bot._bodyMoveLockOwner = null; bot._bodyMoveLockUntil = 0; }
@@ -913,8 +915,20 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
         if (pickStop) { log(bot, `branchMine stop tunnel: ${pickStop} — keep the last uses to climb out`); motion('branchMine.tunnel.stop', { reason: 'pick-about-to-break', detail: pickStop, step: i + 1, length }); return runProgress(); }
         const p = bot.entity.position.floored();
         const beforePos = `${p.x},${p.z}`;
+        lastStepFail = '';
         const ok = await stepInto(new Vec3(p.x + dx, p.y, p.z + dz), dx, dz, `tunnel-step ${i + 1}/${length}`);
         if (!ok) stale++; else tunnelStepsOk++;
+        // ★T-0216 (live 03:11:01-08 @110,9,-71: heading toward iron through 'clear-lava-near', same heading every
+        //   dispatch → DUSK_MINE_NIGHT cooled): fluid ahead won't clear — remember the heading (shared memory that the
+        //   heading pick above reads, T-0180) and stop this tunnel; the next dispatch turns away.
+        if (!ok && /lava|water/.test(lastStepFail || '')) {
+            rememberAbortedHeading(bot, dx, dz, Date.now(), 'fluid');
+            log(bot, `branchMine: ${lastStepFail} ahead on heading ${dx},${dz} — heading remembered, stopping this tunnel (T-0216)`);
+            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [branchMine] ${lastStepFail} ahead on heading ${dx},${dz} — remembered, next dispatch turns away (T-0216)
+`); } catch (e) {}
+            motion('branchMine.tunnel.stop', { reason: 'fluid-ahead', detail: lastStepFail, step: i + 1, length });
+            return runProgress();
+        }
         // ★T-0180 ①: broke into a natural cavity with a hostile around → plug the breach (feet+head of the next cell
         //   toward the cave), mark the heading, and back off this tunnel instead of walking into an unexplored,
         //   mob-filled cave (death #12). Human: you hear/see a cave full of mobs → wall it off and mine elsewhere.

@@ -3146,6 +3146,8 @@
 
 - **★C417-S replenishKit ① 上浮不论昼夜都避开近怪(T-0212, T-0211 的 replenishKit 半边; worker-tier 报)**（2026-10-10，worker-stuck，T-0212）: death #18 10-10 02:37:11→32 — replenishKit START 'y=33 night=false hostiles16=2' → ① surfaceUp (跳过门只认 night+hostiles) → 拂晓亡灵未晒死, 上浮途中僵尸 1.7/2.4b 贴身致死。修: surfaceUpHostileGate — 16 格内有敌对先原地等 ≤15s (每秒复查), 仍在则跳过上浮 (地下折板/补镐照做), 去掉 night 条件; 与 quickMeal (T-0211) 同策略。测试 test/replenish_surface_hostile.test.mjs。
 
+- **★C418-S branchMine 隧道撞流体记朝向, 下次换向(T-0216)**（2026-10-10，worker-stuck，T-0216）: 实录 10-10 03:11:01/03/06 @110,9,-71 y9 — mineDown 到层委派 branchMine, 定向矿 iron_ore@109,10,-77 的隧道首步 'clear-lava-near' → branchMine 1.2s 内 false (dug=0) ×3, 每次同一方向 → DUSK_MINE_NIGHT 冷却。T-0180 (C391) 已让 branchMine 读共享朝向记忆, 但流体受阻不写入。修: stepInto 记最近清障失败原因; 隧道步因 lava/water 失败 → rememberAbortedHeading(…, 'fluid') + 本次隧道即止 (runProgress), 下次派发朝向选择经 rotateAwayFromAborted 换向。测试 test/branchmine_fluid_heading.test.mjs。
+
 ---
 
 ---
