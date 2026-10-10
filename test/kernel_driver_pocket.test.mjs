@@ -15,7 +15,7 @@ test('T-0086: a POCKET with a pickaxe in the pack is NOT reflex-busy (dig on, do
 
 test('T-0086: pickless POCKET and every other rescue state still yield to the reflex layer', () => {
     assert.equal(reflexBusy(mk('POCKET', pack('dirt'))), true);
-    for (const st of ['ENTOMBED', 'MAROONED', 'SEALED', 'SWIM', 'SWIM_STUCK']) {
+    for (const st of ['ENTOMBED', 'MAROONED', 'SWIM', 'SWIM_STUCK']) {   // SEALED+pick → T-0194 (not busy)
         assert.equal(reflexBusy(mk(st, pack('stone_pickaxe'))), true, st);
     }
 });

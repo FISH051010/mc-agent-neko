@@ -3041,6 +3041,8 @@
 
 - **★C408-S mineDown 换址退路: 地下不再 moveAway, 寻路到实心列或快速诚实失败(T-0193)**（2026-10-10，worker-stuck，T-0193）: 实录 10-10 00:04:25/30 @-5,48,7 含水层区四向皆记忆 → START lever#1 'no dry solid 9-cell line — falling back to moveAway' → moved 0.2b; 第二次 moveAway 挂起 43s 直到重启。moveAway (GoalInvert) 地下史上 0 成功。修: relocateFallback = planSolidColumn (T-0183) + goToColumn (goToPosition 20s 上限, 超时 pathfinder.stop) 沿自家通道去 6-24b 外实心列; 仅地表 (openSkyAbove / enclosed=false) 才 moveAway; 地下都不行 → 立即诚实失败。START 隧道不可行/走失败都走它; 空洞分支地表寻路也改用 goToColumn 限时。测试 test/minedown_relocate_fallback.test.mjs, 更新 T-0161/T-0183 钉子。
 
+- **★C409-S kernelDriver 对"有镐的 SEALED"不再让位(T-0194)**（2026-10-10，worker-stuck，T-0194）: 实录 10-10 00:16:52→00:17:58+ 白天地下 y34 夜坑里 T-0135 SEALED 脱困期, reflexBusy 对 SEALED 让位 → kernel 零任务, mobility 在实心岩层横挖 ~23 格 (地下无"外面", 可挖满 5min 上限)。修: 同 T-0086 对有镐 POCKET 的处理, SEALED + 背包有镐 → 不让位, kernel 派任务, 任务首挖经 T-0163 working 门结束脱困期; 无镐 SEALED / ENTOMBED 照旧让位。测试 test/kernel_driver_sealed_pick.test.mjs, 更新 kernel_driver_pocket (T-0086) 断言。
+
 ---
 
 ---

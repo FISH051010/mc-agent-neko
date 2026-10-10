@@ -68,6 +68,10 @@ export function reflexBusy(bot) {
         //   bot 抬高 1 格撤销下挖 (live 10-10 00:40/42/44/47 四连, 每次 mineDown 返回后空等 ~30s)。
         //   有镐时直接派发 commitment(挖掘/寻路自会挖穿); 无镐的 POCKET 才是真窄缝, 照旧让位给垫/挖反射。
         if (m === 'POCKET' && hasPickaxe(bot)) return false;
+        // ★T-0194 同理 SEALED (live 10-10 00:16:52→00:17:58+: 白天地下夜坑里 SEALED 脱困期, kernel 让位零任务, mobility
+        //   在 y34 实心岩层横挖 23 格+ — 地下没有"外面"可通, 可挖满 5min 上限)。有镐 = 任务自己挖就是出路; 任务一挖,
+        //   T-0163 的 working 门即结束脱困期。无镐的 SEALED 才是真困, 照旧让位给脱困反射。
+        if (m === 'SEALED' && hasPickaxe(bot)) return false;
         // ★T-0122 陈旧 mobility: bot._mobility 只在 mobility mode 的 update 里刷新 — 它被自己挂死的 burst
         //   锁住、或被排在前面的 self_preservation 长 hold 饿死时, 会停在 ENTOMBED/POCKET 不动 (live 10-10
         //   00:59→01:03 白天 4.5min、01:09→ 夜里 5min+: vitals mob=ENTOMBED 而 world_model 自算 FREE, kernelDriver
