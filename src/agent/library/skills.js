@@ -6471,13 +6471,16 @@ export function drowningPriority({ headInWater, feetInWater = false, oxygen }) {
 /**
  * ★T-0180 ① 共享原语 (监工: 同一安全判据放到所有挖掘入口共用的一层 — death #11 mineDown 向下 / #12 branchMine 横挖
  * 都是挖穿有水有怪的天然洞穴)。判据: 前进方向两格为中心的 3×3×3 盒 (纵向 yLo..yLo+2, 相对脚) 内空气/水 ≥8 格。
- * 自挖的 1×2 隧道/阶梯最多贡献几格, 真洞穴才填满盒子。
+ * ★C381: 不计 p+d 那一列 (调用方刚亲手挖开的前方格, 最多 3 格) —— 实录 00:07:33-41 mineDown 三个方向连判破口,
+ * "sealed 3" 封的正是自己刚挖的 newFeet/newHead/clear; 计入它们 = 只要 5 格天然空隙就误判, 夜挖被 3 连败压 5min。
+ * 只数自挖列之外的 24 格, 阈值仍 8: 真洞穴才填满。
  */
 const CAVITY_OPEN_RE = /^(air|cave_air|void_air|water|flowing_water)$/;
 export function cavityBreachAt(blockAt, p, dx, dz, { yLo = 0, threshold = 8 } = {}) {
     const cx = p.x + dx * 2, cz = p.z + dz * 2;
     let open = 0;
     for (let ox = -1; ox <= 1; ox++) for (let oy = 0; oy <= 2; oy++) for (let oz = -1; oz <= 1; oz++) {
+        if (ox === -dx && oz === -dz) continue;   // 自挖列 (p+d) 不算洞穴证据
         const b = blockAt(new Vec3(cx + ox, p.y + yLo + oy, cz + oz));
         if (CAVITY_OPEN_RE.test((b && b.name) || 'air')) open++;
     }

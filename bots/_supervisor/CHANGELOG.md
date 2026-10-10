@@ -12,7 +12,21 @@
 
 ---
 
-## C379. ★破口封堵抽成共享原语 skills.sealCavityBreach, mineDown 每步同样调用（skills.js 需重启; mineDown/branchMine 热加载,T-0180,worker-death,⏳待重启）
+## C381. 破口判据不计自挖列: cavityBreachAt 排除 p+d（skills.js 需重启,T-0180,worker-death,⏳待重启）
+
+**证据**: 00:07:33/37/41 mineDown @-8,39,11 三个方向 (1,0)(0,1)(0,-1) 连判 `cavity breach … sealed 3`, 封的 3 格正是本步刚挖开的 newFeet/newHead/clear(DIAG 显示挖前全是 stone)→ 3 连败 → DUSK_MINE_NIGHT 压 5min。3×3×3 盒含 p+d 列, 自挖 3 格计入 → 只需 5 格天然空隙即"≥8"。
+**改动**: cavityBreachAt 跳过 (ox,oz)=(-dx,-dz) 列, 只数其余 24 格, 阈值 8 不变。
+**可证伪预测**: 实心石里下矿不再出现 "sealed 3" 的连续多向破口; 真洞穴(前方整片空)仍触发。
+**回滚**: revert, 重启 main.js。回归 seal_cap_geometry 'T-0180① C381'(先红后绿)。
+
+## C380. ★仲裁器危险救援地板: 挨打/溺水时救命反射不再被 LLM 超时负缓存压 30s（arbiter.js 需重启,T-0182 #33,worker-death,⏳待重启）
+
+**证据**: arbitration.json log 22:25:11/22/37 `ws:* ← mode:mobility = holder (llm-fallback)` 连 3 次; 矩阵无 `watchdog:* vs mode:self_defense` 行。未命中矩阵 → pending(holder 保留) → 4s 超时 → 'holder' 负缓存 30s。受监督技能 (ws/watchdog=escapePlan 搬家) 不响应挨打/溺水 → 最长 ~34s 危险无人掌舵(T-0182 通律: 让位须以接收方此刻在掌舵为前提)。
+**改动**: arbiter.js `dangerRescueFloor(bot,holder,claimant)`: holder 非 mode、claimant ∈ {self_defense,self_preservation,mobility}、且 (3s 内掉血 或 头部水方块 && O2<12) → claimant 胜。位置: 矩阵之后(种子/人工规则如 nightShelter vs mobility=holder 仍优先), LLM 缓存之前(负缓存不能续命)。陆上陈旧 O2 无头部水佐证不触发。
+**可证伪预测**: progress.txt 出现 `[arbiter] … → claimant (floor) — danger-rescue`; 挨打/水下时不再见救命反射 `→ holder (llm-fallback)`。
+**回滚**: revert, 重启 main.js。回归 test/arbiter_danger_rescue.test.mjs(先红 2 后绿)。
+
+## C379. ★破口封堵抽成共享原语 skills.sealCavityBreach, mineDown 每步同样调用（skills.js 需重启; mineDown/branchMine 热加载,T-0180,worker-death,✅已上线 00:05:07Z; 实机 00:07:33 起触发, 但见 C381 误报修正）
 
 **证据**(监工): C378 的破口封堵只加在 branchMine; death #11(T-0180 原始)是 mineDown 向下挖破入有水有怪的洞穴 —— 同一安全判据只覆盖了一个入口(重力总闸的同款教训)。
 **改动**: skills.js `cavityBreachAt(blockAt,p,dx,dz,{yLo})`(前方两格为中心 3×3×3, 纵向 yLo..yLo+2 相对脚, 空气/水 ≥8) + `sealCavityBreach(bot,dx,dz,{yLo,radius=16,tag})`(16b 内有敌对 且 破口 → resolveCapBlock 料补封前方开放格(yLo..+1, positioning:false) + 记 `_mineDownFluidAvoid` 回避 + 返回 {breached,sealed,mat})。branchMine 改调原语(yLo=0; 原语未加载时保留 C378 内联兜底); mineDown 每个阶梯步在前进前调原语(yLo=-1: 阶梯下行, 带从脚下一格起), 破口 → rememberAbortedHeading + 中止。

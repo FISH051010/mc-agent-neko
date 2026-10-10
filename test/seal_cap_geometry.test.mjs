@@ -343,3 +343,21 @@ test('T-0180①: shared cavity-breach primitive — own tunnel/stair is not a ca
     assert.equal(cavityBreachAt(caveBelow, p, 1, 0, { yLo: 0 }), false, 'branchMine band misses a cave below the stair');
     assert.equal(cavityBreachAt(caveBelow, p, 1, 0, { yLo: -1 }), true, 'mineDown band (one below the feet) catches it');
 });
+
+test('T-0180① C381: the cells the caller just dug (p+d column) are not cavity evidence — 3 self-dug + 5 natural air ≠ breach', async () => {
+    const { cavityBreachAt } = await import('../src/agent/library/skills.js');
+    const p = new Vec3(-8, 39, 11);
+    // 实录 00:07:34 heading 0,1: mineDown 刚挖开 (-8,38..40,12) 三格, 远处只有 5 格零散空隙 → 旧判据凑满 8 = 误判破口
+    for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+        const dug = (q) => q.x === p.x + dx && q.z === p.z + dz && q.y >= 38 && q.y <= 40;
+        const sparse = new Set();
+        for (let s = -1; s <= 1; s++) sparse.add(`${p.x + 3 * dx + (dz ? s : 0)},38,${p.z + 3 * dz + (dx ? s : 0)}`);
+        sparse.add(`${p.x + 3 * dx},39,${p.z + 3 * dz}`);
+        sparse.add(`${p.x + 2 * dx},40,${p.z + 2 * dz}`);
+        const world = (q) => ({ name: dug(q) || sparse.has(`${q.x},${q.y},${q.z}`) ? 'air' : 'stone' });
+        assert.equal(cavityBreachAt(world, p, dx, dz, { yLo: -1 }), false, `heading ${dx},${dz}: own dig + 5 sparse air`);
+        // 真洞穴: 自挖列之外前方整片打开 → 仍判破口
+        const cave = (q) => ({ name: dug(q) || ((q.x - p.x) * dx + (q.z - p.z) * dz >= 2 && q.y >= 38 && q.y <= 40) ? 'air' : 'stone' });
+        assert.equal(cavityBreachAt(cave, p, dx, dz, { yLo: -1 }), true, `heading ${dx},${dz}: real cave`);
+    }
+});
