@@ -3111,6 +3111,8 @@
 
 - **★C414-S 换址实心列多候选 + 空洞分支地下也走实心列(T-0193 续)**（2026-10-10，worker-stuck，T-0193）: 实录 10-10 01:23:45 'void: no tunnel line and not under open sky' → abort; 01:23:48/57/59 START 'path to solid column 22,36,-1 / 23,35,-3 not reached' ×3 (地下最近的'脚下实心开放格'常是封闭洞穴, 寻路 noPath 秒退) → GO_UNDERGROUND 冷却。修: planSolidColumn 接受 skip 集; relocateFallback 按距离依次试 ≤3 个候选 (同一 20s 总预算, 不可达即排除换下一个); 空洞分支隧道不可行时不再限地表, 统一走 relocateFallback。更新 T-0183/T-0193 钉子。
 
+- **★C415-S 库层修 mineflayer-pathfinder stop() 残留标志(T-0207, 监工指派; T-0204 的库级根治)**（2026-10-10，worker-stuck，T-0207）: 库语义 stop() 只置 stopPathing (index.js:171), 真停在下次 resetPath — 无 path 时标志残留, 下一个 setGoal/goto 当场 stop() 清掉新 goal + emit path_stop → 'Path was stopped before it could be completed!' (bedErrand 112 段 111 段被杀; skills.customSkill 每次启动都 stop)。worker-tier 在 quickMeal/bedErrand 用 setGoal(null) 绕开。库层修 (patches/mineflayer-pathfinder+2.4.5.patch, patch-package 重新生成, 已验证可打到原版 2.4.5 且与 node_modules 一致): ① setGoal 先清残留 stopPathing (新目标取代挂起的 stop); ② stop() 无 path 时立即复位 (清 goal/astar, emit path_stop 供挂起 goto 收到), 不 fullStop/不清按键 (空闲时按键不属于寻路); 走路中保持原到下一节点再停。测试 test/pathfinder_stop_residue.test.mjs 用真实库 inject 假 bot 建模。需重启 main。
+
 ---
 
 ---
