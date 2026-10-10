@@ -88,20 +88,21 @@ async function hostileDecision(bot) {
 //   侦察期间临时包住 bot.pathfinder.stop / setGoal, 按"第一个非 quickMeal / 非 pathfinder 库 / 非 node 内部"的调用帧归因计数,
 //   记首次的 _bodyOwner / supervised; 侦察结束还原并写一行汇总 (限频: 只汇总, 不逐条刷)。纯诊断, 不改行为。
 export function callerKey(stack) {
-    const frames = String(stack || '').split('\n').slice(1).map(s => s.trim());
-    const f = frames.find(s => !/quickMeal\.js|mineflayer-pathfinder|node:internal|<anonymous>|stopProbe/.test(s));
-    if (!f) return 'quickMeal(self)';
-    const m = f.match(/at (?:async )?([^\s(]+)?\s*\(?(.*?):(\d+):\d+\)?$/);
-    if (!m) return f.slice(0, 80);
-    const file = (m[2] || '').split(/[\\/]/).pop();
-    return `${m[1] || '?'}@${file}:${m[3]}`;
+    // 去掉探针包装帧 (pf.stop / pf.setGoal, 定义在本文件) 后, 链里还有 quickMeal 自己 → 自身调用 (含经 skills.* 间接), 不计
+    const frames = String(stack || '').split('\n').slice(1).map(s => s.trim()).filter(s => !/at (?:Object\.)?(?:note|pf\.stop|pf\.setGoal)\b|stopProbe/.test(s));   // 探针自身帧 (note/包装) 不算
+    if (frames.some(s => /quickMeal\.js/.test(s))) return 'quickMeal(self)';
+    // ★T-0199 二轮 (首轮只看到 stop@customSkill / setGoal@executePathfindingPhase, 都停在 skills.js 看不出谁调的): 记外部调用链前 3 帧
+    const fmt = (f) => { const m = f.match(/at (?:async )?([^\s(]+)?\s*\(?(.*?):(\d+):\d+\)?$/); return m ? `${m[1] || '?'}@${(m[2] || '').split(/[\\/]/).pop()}:${m[3]}` : f.slice(0, 60); };
+    const chain = frames.filter(s => !/mineflayer-pathfinder|node:internal|<anonymous>/.test(s)).slice(0, 3).map(fmt);
+    return chain.length ? chain.join(' < ') : 'unknown';
 }
 function installStopProbe(bot) {
     const pf = bot && bot.pathfinder;
     if (!pf || typeof pf.stop !== 'function') return { restore() {}, summary: () => '' };
     const counts = new Map(); let firstOwner = null;
     const note = (kind) => {
-        const key = `${kind}:${callerKey(new Error('stopProbe').stack)}`;
+        const lim = Error.stackTraceLimit; Error.stackTraceLimit = 30; const st = new Error('stopProbe').stack; Error.stackTraceLimit = lim;   // 默认 10 帧不够看到 customSkill 的调用者
+        const key = `${kind}:${callerKey(st)}`;
         if (/quickMeal\(self\)$/.test(key)) return;
         counts.set(key, (counts.get(key) || 0) + 1);
         if (!firstOwner) { try { firstOwner = JSON.stringify({ owner: bot._bodyOwner && bot._bodyOwner.name, mob: bot._mobility && bot._mobility.state }); } catch (e) {} }

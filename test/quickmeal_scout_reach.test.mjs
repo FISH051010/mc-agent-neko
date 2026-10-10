@@ -91,14 +91,15 @@ test('T-0191: 危急 (food≤3) 猎到生猪排 → 先生吃一块再烤 (不�
 test('T-0199 诊断: 侦察期间外部 pathfinder.stop 被归因到调用者; 自身 stop 不计; 结束后还原原函数', async () => {
     const { callerKey } = await import('../bots/_supervisor/skills/quickMeal.js');
     const fake = 'Error: stopProbe\n    at pf.stop (/x/bots/_supervisor/skills/quickMeal.js:110:9)\n    at Object.update (/x/src/agent/modes.js:4321:30)\n    at tick (/x/src/agent/modes.js:9000:5)';
-    assert.equal(callerKey(fake), 'Object.update@modes.js:4321');
+    assert.equal(callerKey(fake), 'Object.update@modes.js:4321 < tick@modes.js:9000', 'external call chain (T-0199 round 2)');
     assert.equal(callerKey('Error: stopProbe\n    at scoutForAnimalInner (/x/bots/_supervisor/skills/quickMeal.js:150:20)'), 'quickMeal(self)');
     // 侦察里被外部打断 → 汇总日志写出打断者
     const logp = path.join(process.cwd(), 'bots', '_supervisor', 'progress.txt');
     let stopRef = null;
     const bot = { food: 3, health: 18, entity: { position: V(0, 64, 0) }, entities: {}, blockAt: () => ({ name: 'air', skyLight: 15 }),
         pathfinder: { stop() {}, setGoal() {}, setMovements() {},
-            goto: async function () { function intruder() { bot.pathfinder.stop(); } intruder(); throw new Error('Path was stopped before it could be completed!'); } },
+            // 入侵者从别的事件循环 (如 modes tick) 打断 — 栈里没有 quickMeal 帧
+            goto: async function () { await new Promise(r => setImmediate(function intruder() { bot.pathfinder.stop(); r(); })); throw new Error('Path was stopped before it could be completed!'); } },
         clearControlStates() {} };
     stopRef = bot.pathfinder.stop;
     await quickMeal(bot, { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } },
