@@ -25,7 +25,7 @@ import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt } from './food_floor.js';
-import { equippedArmorNames, diamondArmorReady, nextProtectionPiece } from './armor_gate.js';
+import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
@@ -663,6 +663,10 @@ export function proposeTasks(world, bot) {
     const push = (p) => out.push(p);
 
     const { vitals, threat, kit, time, migration, surfaceGate, mobility } = w;
+
+    // ★T-0195 (监工拍板, death #13): 无胸甲档 + keepInventory 关 → 挖掘原语破入天然空腔一律封口换向 (不等看见敌对)。
+    //   每拍由决策层写策略标记, skills.sealCavityBreach 认它; 有胸甲后自动恢复"有敌对才封"。
+    try { if (bot) bot._cavitySealAlways = cavitySealAlways(equippedArmorNames(bot), keepInventoryOff()); } catch (e) {}
 
     // ── ★ENDGAME dimension guard: ALL overworld-semantic proposals (opening/night/bed/armor/
     //    tier-chain/food/wheat/migrate/underground/bank) are ANDed with `overworld` so they are

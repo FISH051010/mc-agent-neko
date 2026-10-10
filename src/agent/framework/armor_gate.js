@@ -58,3 +58,10 @@ export function armorNightWarranted({ hasIronPick, actionable = 0, food = 20, ha
         && !!nextProtectionPiece(armorHave, rawIron + ingots, { withSword: true })
         && (ingots >= 4 || fuelUnits >= 4);
 }
+
+/** ★T-0195 (监工拍板, death #13 00:23:44Z: 1 件甲 + 石剑白天下采铁, 开放洞穴里被骷髅射杀): keepInventory=false 且没有胸甲档
+ *  (护甲点 <8 且未穿胸甲) → 采铁/夜挖只走自挖封闭隧道, 破入天然空腔即封口换向, 不看"16 格内有敌对" (暗处随时刷骷髅)。
+ *  有胸甲后恢复"有敌对才封"。策略由决策层每拍写 bot._cavitySealAlways, skills.sealCavityBreach 认它。 */
+export function cavitySealAlways(equippedNames, keepInvOff) {
+    return keepInvOff === true && !chestTierArmor(equippedNames);
+}
