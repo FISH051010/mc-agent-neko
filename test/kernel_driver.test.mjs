@@ -27,6 +27,23 @@ test('T-0083: active rescue states and actionable threats still yield to the ref
     assert.equal(reflexBusy(mkBot({ mob: 'FREE' })), false);
 });
 
+test('T-0182 #34: actionable 威胁让位须有反射持身 — 8s 无任何 mode 接手 → 恢复派发; 反射持身则一直让', async () => {
+    const { actionableYieldHeld, ACTIONABLE_YIELD_MS } = await import('../bots/_supervisor/skills/kernelDriver.js');
+    const b = mkBot({ mob: 'FREE', threat: { actionable: 1 } });
+    const t0 = 1_000_000;
+    assert.equal(actionableYieldHeld(b, t0), true, 'first sight: give the reflexes a window');
+    assert.equal(actionableYieldHeld(b, t0 + ACTIONABLE_YIELD_MS - 1), true);
+    assert.equal(actionableYieldHeld(b, t0 + ACTIONABLE_YIELD_MS + 1), false, 'nobody took the body (unarmed exemption etc.) → dispatch');
+    b._bodyOwner = { name: 'mode:self_defense', kind: 'mode' };
+    assert.equal(actionableYieldHeld(b, t0 + 60000), true, 'a reflex is driving → keep yielding');
+    b._bodyOwner = null;
+    assert.equal(actionableYieldHeld(b, t0 + 60001), true, 'window restarts after the reflex lets go');
+    const calm = mkBot({ mob: 'FREE' });
+    calm._actionableIdleSince = t0;
+    reflexBusy(calm);
+    assert.equal(calm._actionableIdleSince, 0, 'threat gone → window reset');
+});
+
 test('T-0101: famine stall (food<=2, no lethal threat) overrides POCKET/threat yield so GET_FOOD can dispatch', () => {
     // 9h 实锤: creeper hunger hold — food=0 in a sealed box, reflexBusy kept yielding → 冻 150min 饿死.
     const starving = { food: 0, canRegen: false };

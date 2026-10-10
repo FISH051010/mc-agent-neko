@@ -12,6 +12,13 @@
 
 ---
 
+## C388. kernelDriver 对 actionable 威胁的让位须有反射持身, 8s 无人接则恢复派发（kernelDriver.js 顶层 sticky 需重启,T-0182 #34,worker-death,⏳待重启）
+
+**证据** (普查 #34/#19/#12): reflexBusy 见 `w.threat.actionable>0` 即让位, 但接收方触发判据各异 (unarmedSoloMeleeExempt 未挨打不逃不打 / creeper hold 结束后 feedUp 不派…) → 威胁在、无人动、kernel 不派 = 站桩到挨打。
+**改动**: kernelDriver.actionableYieldHeld: bot._bodyOwner.kind==='mode' (反射持身) → 让; 否则从首次空等起 ACTIONABLE_YIELD_MS=8s 后不再让 (子技能自带 hostile 门; 挨打由 C376/C386 兜底)。威胁消失重置窗口。
+**可证伪预测**: 有 actionable 威胁且无 mode 持身 >8s 时 kernel 出现 dispatch (而非持续空等); 反射在打/逃时 kernel 不插手。
+**回滚**: revert, 重启。回归 kernel_driver 'T-0182 #34'。T-0182 普查条目至此全部处理。
+
 ## C387. 破口判据: 露天不是空腔 — 空格须正上方 6 格内有实心顶（skills.js 需重启,T-0180,worker-death,✅已上线 01:20:24Z a7e1f25）
 
 **证据**: 01:18:48/54/56 mineDown 在地表 y65 起步, (0,1)(1,0)(-1,0) 连判 `cavity breach … sealed 3/2/0` → 3 连败。前方地面以上是露天空气, 3×3×3 盒自然 ≥8 "空"。

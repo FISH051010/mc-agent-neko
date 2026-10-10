@@ -89,9 +89,22 @@ export function reflexBusy(bot) {
         // yielding; once they clear, the strategic layer MUST dispatch (mine/surface out). So the
         // standalone enclosed check is removed.
         const w = bot._world;
-        if (w && w.threat && w.threat.actionable) return true;
+        if (w && w.threat && w.threat.actionable) return actionableYieldHeld(bot);
+        bot._actionableIdleSince = 0;
     } catch (e) {}
     return false;
+}
+
+// ★T-0182 #34 (让位必须有人接): actionable 威胁让位的前提是反射真在接 —— 接收方 (self_defense/self_preservation)
+//   各有自己的触发判据 (无武器豁免 / 不挨打不逃 / creeper hold 结束…), 与 world_model 的 actionable 口径不一。
+//   反射持身 (bot._bodyOwner.kind==='mode') → 照让; 连续 ACTIONABLE_YIELD_MS 无任何反射持身 → 恢复派发
+//   (子技能自带 hostile 门, 如 quickMeal "scout paused"; 挨打后 C376 兜底照常)。
+export const ACTIONABLE_YIELD_MS = 8000;
+export function actionableYieldHeld(bot, now = Date.now()) {
+    const reflexHolding = !!(bot._bodyOwner && bot._bodyOwner.kind === 'mode');
+    if (reflexHolding) { bot._actionableIdleSince = 0; return true; }
+    if (!bot._actionableIdleSince) bot._actionableIdleSince = now;
+    return now - bot._actionableIdleSince < ACTIONABLE_YIELD_MS;
 }
 
 
