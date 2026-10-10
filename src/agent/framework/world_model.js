@@ -880,31 +880,16 @@ export function proposeTasks(world, bot) {
     // ★T-0202 床优先 (监工战略拍板, #13/#14/#15 45min 三连死; #5/#15 裸装夜间重生即死): 石器到手 (石镐+剑) 后的白天、food≥10、
     //   无敌对 → 主动侦察找羊做床并设重生点 (bedErrand: ≤96b/120s 有界侦察, 剪/杀取 3 羊毛 → setBed)。@66: FOOD_FLOOR@70 之后、
     //   GET_ARMOR@58 之前 (人类顺序: 吃饱 → 床 → 甲)。不看 hp (core routing 禁绝对 hp 门), food≥10 已能回血。
-    if (overworld && kit.picks >= 1 && !bedKnown(bot) && bedErrandScoutOk(w, bot)) {
-        push({ kind: PROPOSAL_KIND.GET_BED, priority: BED_ERRAND_PRIORITY, skill: 'bedErrand',
-               rationale: 'stone-tier + no bed — scout for sheep (≤96b/120s), 3 wool → bed, set spawn here (sleep the night, respawn by the bed)',
+    // ★T-0220 (监工, 04:04:44-04:05:21Z: 第二个 GET_BED 提案源派给旧 prepNether, 判据与 bedErrand 不同源 → NO-OP ×3 冷却; 当时 y13 地下
+    //   还有够不着的骷髅在射): 只留一个提案源, 永远派 bedErrand (包里床料够 → 直接 setBed; 否则猎/找羊), 唯一谓词 bedProposable
+    //   (isGoalDone 同源)。优先级: 侦察找羊条件成立 → @66 (T-0202 床优先); 否则沿用 bedProposalPriority (T-0043/T-0110 的让位)。
+    if (overworld && kit.picks >= 1 && bedProposable(w, bot)) {
+        const scout = bedErrandScoutOk(w, bot);
+        const pri = scout ? BED_ERRAND_PRIORITY : _bedPri;
+        if (pri != null) push({ kind: PROPOSAL_KIND.GET_BED, priority: pri, skill: 'bedErrand',
+               rationale: scout ? 'stone-tier + no bed — scout for sheep (≤96b/120s), 3 wool → bed, set spawn here (sleep the night, respawn by the bed)'
+                   : 'no bed — bed materials / same-height sheep in reach → bedErrand (wool → bed → set spawn)',
                hints: { bedErrand: true } });
-    } else
-    if (overworld && kit.picks >= 1 && !bedKnown(bot) && _bedPri != null && bedErrandFeasible(bot)) {   // ★T-0119: never propose a guaranteed setBed no-op   // ★T-0092 completion (worker-sync): GET_BED@50 was an UNFULFILLABLE wool-errand (no wool→no bed→bedKnown永false) that OUTRANKED GET_DIAMOND@46, so an iron-tooled+armored bot never descended for diamond. Yield GET_BED exactly when the bot is diamond-ready (mirror the GET_DIAMOND gate) so GET_DIAMOND wins → mineDiamonds descends. Safe: pure re-prioritize, does NOT gate pick/bed-MAKING (keepInventory ON so a delayed respawn-anchor loses nothing).
-        // ★T-0110 (worker-frozen 0701): RE-ENABLE the @44 yield the T-0060 note below deferred. That
-        // note's exact blocker — "@44 → GO_UNDERGROUND → mineDown NO-OP-spun → HARD-PINNED, because the
-        // stuck-relocate wasn't firing; real fix = migrate-away-from-stuck-spot + mineDown-relocate-on-
-        // no-dig" — is NOW BUILT and live: the kernelDriver NO-OP-SPIN escape relocates on any churn,
-        // and migrate minForceAdvance guarantees the relocate actually moves. So when stone-kit-ready +
-        // still PRE-iron (no iron pick, none banked), drop GET_BED below GO_UNDERGROUND@45 so the bot
-        // DESCENDS for iron instead of an unfulfillable wool-wander that blocks the entire mining chain
-        // (GET_BED@50 > GET_IRON_TOOLS@47 > GO_UNDERGROUND@45 = a bedless/woolless bot never mines).
-        // A bad descent spot now triggers escape→migrate. Full @50 returns once iron tooling is underway;
-        // keepInventory ON so the deferred respawn anchor loses nothing. (T-0060 baseline below, superseded.)
-        // Condition = simply "no iron pickaxe yet" (stone-tier). Deliberately NOT stoneKitReady — that
-        // requires cobble>=8, which drops below 8 the moment the bot seals a night bunker, flipping the
-        // yield off exactly when it's needed (live: stoneKitReady=false after a NIGHT_SEAL spent cobble).
-        // Throughout stone-tier, mining iron beats a wool-errand the bot usually can't fulfil anyway.
-        const preIronDescend = !hasIronTierPick(w);
-        push({ kind: PROPOSAL_KIND.GET_BED, priority: _bedPri, skill: 'prepNether',
-               rationale: _bedPri === 50 && preIronDescend
-                   ? 'no bed + keepInventory OFF + sheep/wool in reach — bed BEFORE descending (a bedless death drops the whole kit and respawns at bare world spawn)'
-                   : (preIronDescend ? 'no bed, but stone-kit-ready + pre-iron — DESCEND for iron first (bed deferred; keepInv ON), yield to GO_UNDERGROUND@45' : 'no bed yet — secure wool→bed as respawn anchor (mandatory, blueprint §D.3)') });
     }
 
     // 3b) ARMOR — close the chronic unarmored-death gap (86% of deaths are unarmored; bot makes an
@@ -1632,7 +1617,7 @@ export function isGoalDone(kind, world, bot) {
         // ironArmorGoalDone — a flat `<4` livelocked at e.g. boots owned + 4 iron, helmet costs 5).
         case PROPOSAL_KIND.GET_ARMOR:     return ironArmorGoalDone(w, bot) || armorCraftBlocked(w, bot);   // ★T-0157 缺台/炉/燃料即释放
         case PROPOSAL_KIND.RECLAIM_FURNACE: return !strandedFurnaceInReach(w, STRANDED_RELEASE_REACH);   // 释放门 128 > 提案门 96 (迟滞)
-        case PROPOSAL_KIND.GET_BED:       return bedKnown(bot) || (!bedErrandFeasible(bot) && !bedErrandScoutOk(w, bot));   // ★T-0178 同谓词: 入夜/无路径即释放; ★T-0202 侦察找羊路径成立时不释放
+        case PROPOSAL_KIND.GET_BED:       return !bedProposable(w, bot);   // ★T-0220 与提案门同一谓词 (含入夜/敌对/无路径释放)
         // ★tool-budget: done when the descent invariant is restored; ALSO release when the
         // materials ran out mid-craft (the gate stops proposing then — a held commitment
         // would starve the chain waiting on cobble/wood that mining/foraging must supply).
@@ -2144,30 +2129,37 @@ export function bedErrandScoutOk(world, bot) {
     } catch (e) { return false; }
 }
 
+export const SHEEP_HUNT_DY = 12;
+export const BED_HOSTILE_RADIUS = 16;
+const BED_HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|pillager|vindicator|bogged|breeze/;
+/** ★T-0220 (监工, 04:04:44-04:05:21Z): GET_BED 只剩一个执行者 bedErrand — 可行路径 = bedErrand 真能走的:
+ *  ①包里有床/同色≥3 羊毛 (含线÷4 折白) → 直接 setBed; ②白天、10 格内无敌对、同一高度带 (|dy|≤SHEEP_HUNT_DY) 有羊 (food≥6 时 64 格, 否则 12 格)。
+ *  旧 setBed 专属的蜘蛛取线 / ≥4 线路径 bedErrand 不走, 删 (否则又是"提了必拒")。
+ *  ★T-0221: y13 地下、头顶地表的羊 dy≈56 按 3D 距离也在 64 内 → 判可行 → 够不着 NO-OP ×3。 */
 export function bedErrandFeasible(bot) {
     try {
-        // pack paths need no hunt (NOT woolPathVisible: its 48b sheep clause ignores setBed's food gate)
-        if (invCount(bot, /_bed$/) >= 1 || bedWoolReady(invCounts(bot))   /* ★T-0219 同色 */ || invCount(bot, /^string$/) >= 4) return true;
+        if (invCount(bot, /_bed$/) >= 1 || bedWoolReady(invCounts(bot))) return true;
         const me = bot.entity && bot.entity.position;
         if (!me) return false;
-        const ents = Object.values(bot.entities || {});
-        const near = (re, r) => r > 0 && ents.some(e => e && re.test(e.name || '') && e.position && e.position.distanceTo(me) <= r);
-        // ★T-0119 返工 (live 10-10 01:42 food=0: 'setBed: no sheep within 12 … fit=close-only' ×3): setBed shrinks
-        //   its hunts by hunger — sheep 64b only at food>=6 (else 12b); spider 48b needs a non-wooden sword +
-        //   food>=8, 12b needs any sword + food>=6, else no spider hunt at all. Mirror those gates exactly.
-        // ★T-0178 (22:31:15-36Z 实录: 夜里 y21 有蜘蛛 + T-0170 刚造的石剑 → 判可行 → GET_BED → setBed 夜里不猎,
-        //   "no bed and could not make one" NO-OP ×3 冷却)。setBed 两条猎取路径都只在白天 (同口径 timeOfDay 12800-23000 为夜);
-        //   羊路径要 10 格内无敌对, 蜘蛛路径要 6 格内敌对 ≤2。镜像之。
         const tod = bot.time && Number.isFinite(bot.time.timeOfDay) ? bot.time.timeOfDay : null;
         if (tod != null && tod >= 12800 && tod <= 23000) return false;
-        const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|pillager|vindicator/;
-        const countNear = (re, r) => ents.filter(e => e && re.test(e.name || '') && e.position && e.position.distanceTo(me) <= r).length;
+        const ents = Object.values(bot.entities || {});
+        if (ents.some(e => e && BED_HOSTILE_RE.test(e.name || '') && e.position && e.position.distanceTo(me) <= 10)) return false;
         const food = Number.isFinite(bot.food) ? bot.food : 20;
-        if (countNear(HOSTILE_RE, 10) === 0 && near(/^sheep$/, food >= 6 ? 64 : 12)) return true;
-        const swords = (bot.inventory.items() || []).filter(i => /_sword$/.test(i.name || ''));
-        const strongSword = swords.some(i => !/^wooden_sword$/.test(i.name));
-        const spiderRange = (strongSword && food >= 8) ? 48 : (swords.length && food >= 6) ? 12 : 0;
-        return countNear(HOSTILE_RE, 6) <= 2 && near(/^spider$/, spiderRange);
+        const reach = food >= 6 ? 64 : 12;
+        return ents.some(e => e && e.name === 'sheep' && e.position && e.position.distanceTo(me) <= reach && Math.abs(e.position.y - me.y) <= SHEEP_HUNT_DY);
+    } catch (e) { return false; }
+}
+
+/** ★T-0220 唯一的 GET_BED 谓词 (提案门 + isGoalDone 同源): 未知床 + 有镐 + 16 格内无敌对 (够不着的骷髅照样在射, 不提床) +
+ *  (侦察找羊条件成立 || bedErrand 当场可行路径成立)。 */
+export function bedProposable(w, bot) {
+    try {
+        if (bedKnown(bot)) return false;
+        const me = bot && bot.entity && bot.entity.position;
+        if (me && Object.values(bot.entities || {}).some(e => e && BED_HOSTILE_RE.test(e.name || '') && e.position && e.position.distanceTo(me) <= BED_HOSTILE_RADIUS)) return false;
+        if ((w && w.threat && w.threat.actionable) > 0) return false;
+        return bedErrandScoutOk(w, bot) || bedErrandFeasible(bot);
     } catch (e) { return false; }
 }
 

@@ -33,10 +33,10 @@ test('T-0119: no sheep / wool / string / sword+spider → GET_BED is NOT propose
 test('T-0119: any real setBed path re-arms GET_BED', () => {
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1 }, [['sheep', 55, 0]])), true, 'sheep within 64');
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, white_wool: 3 })), true, 'wool in pack');
-    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, string: 4 })), true, 'string → wool');
-    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, iron_sword: 1 }, [['spider', 30, 0]])), true, 'real sword + spider within 48');
-    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, wooden_sword: 1 }, [['spider', 10, 0]])), true, 'wooden sword: close spider only');
     assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, red_bed: 1 })), true, 'bed in pack');
+    // ★T-0220: GET_BED 只派 bedErrand — setBed 专属的 ≥4 线 / 蜘蛛取线路径 bedErrand 不走, 不再算可行 (否则提了必拒)
+    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, string: 4 })), false, 'T-0220: lone string no longer a path');
+    assert.equal(hasBed(makeBot({ wooden_pickaxe: 1, iron_sword: 1 }, [['spider', 30, 0]])), false, 'T-0220: spider path dropped');
 });
 
 const hungry = (bot, food) => { bot.food = food; return bot; };
@@ -49,11 +49,11 @@ test('T-0119: setBed\'s hunger gates are mirrored — food<6 shrinks the sheep h
     assert.equal(hasBed(hungry(makeBot({ wooden_pickaxe: 1, white_wool: 3 }), 0)), true, 'wool in pack needs no hunt');
 });
 
-test('T-0178: 夜里 (timeOfDay 12800-23000) 有剑+蜘蛛 → 不可行 (setBed 只在白天猎); 白天同场景可行', () => {
-    const night = makeBot({ stone_pickaxe: 2, stone_sword: 1 }, [['spider', 20, 0]]);
+test('T-0178: 夜里 (timeOfDay 12800-23000) 有羊 → 不可行 (只在白天猎); 白天同场景可行 (T-0220: 蜘蛛路径已删, 改用羊)', () => {
+    const night = makeBot({ stone_pickaxe: 2, stone_sword: 1 }, [['sheep', 20, 0]]);
     night.time = { timeOfDay: 16000 };
-    assert.equal(bedErrandFeasible(night), false, '22:31 live: night spider + stone sword');
-    const day = makeBot({ stone_pickaxe: 2, stone_sword: 1 }, [['spider', 20, 0]]);
+    assert.equal(bedErrandFeasible(night), false, 'night: no hunt');
+    const day = makeBot({ stone_pickaxe: 2, stone_sword: 1 }, [['sheep', 20, 0]]);
     day.time = { timeOfDay: 4000 };
     assert.equal(bedErrandFeasible(day), true);
 });
@@ -68,7 +68,7 @@ test('T-0178: 羊在 64 格内但 10 格内有僵尸 → 不可行 (setBed 有�
 
 test('T-0178: 已承诺的 GET_BED 入夜即释放 (isGoalDone 与提案门同谓词)', async () => {
     const { isGoalDone } = await import('../src/agent/framework/world_model.js');
-    const b = makeBot({ stone_sword: 1 }, [['spider', 20, 0]]);
+    const b = makeBot({ stone_sword: 1 }, [['sheep', 20, 0]]);
     b.time = { timeOfDay: 16000 };
     assert.equal(isGoalDone('GET_BED', dayWorld(), b), true);
     b.time = { timeOfDay: 4000 };
