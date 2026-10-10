@@ -31,6 +31,7 @@ const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS'
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 export const NIGHT_ARMOR_PRIORITY = 94.2;   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
+export const STARVING_FOOD_FLOOR_COOLDOWN_MS = 30000;   // ★T-0201 food=0 时 FOOD_FLOOR 派发冷却上限 (续命类不干等 5min)
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
 // '../../../bots/_supervisor/…')` —— 相对**代码目录**。而 arbiter.js / llm_gate.js 是相对
@@ -1516,6 +1517,11 @@ export function proposeTasks(world, bot) {
             const primaryKind = dim === 'the_nether' ? PROPOSAL_KIND.GET_BLAZE_RODS
                               : dim === 'the_end' ? PROPOSAL_KIND.SLAY_DRAGON : null;
             if (primaryKind && cd[primaryKind] && cd[primaryKind] > now + 60000) cd[primaryKind] = now + 60000;
+            // ★T-0201 (监工加急, 01:06Z: hp 8 food 0, FOOD_FLOOR 因侦察被打断 3 连败冷却 5min → kernel 退到 replenishKit 空转,
+            //   death #14): 饿到 food=0 时觅食是续命, 冷却钳到 ≤30s (同下界主 kind 的钳制手法: 重试仍有间隔, 不热转, 但不再干等 5 分钟)。
+            //   只看 food (core routing 禁绝对 hp 门)。
+            if (Number(vitals && vitals.food) === 0 && cd[PROPOSAL_KIND.FOOD_FLOOR] && cd[PROPOSAL_KIND.FOOD_FLOOR] > now + STARVING_FOOD_FLOOR_COOLDOWN_MS)
+                cd[PROPOSAL_KIND.FOOD_FLOOR] = now + STARVING_FOOD_FLOOR_COOLDOWN_MS;
             for (let i = out.length - 1; i >= 0; i--) {
                 const u = cd[out[i].kind];
                 if (u && now < u) out.splice(i, 1);
