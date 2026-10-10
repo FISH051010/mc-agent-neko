@@ -94,3 +94,18 @@ test('T-0182 #24: self_defense 的 ranged-unreachable-trap 让位分支在被射
     assert.match(branch, /sprintFlee\(agent\)/);
     assert.match(branch, /execute\(this, agent/);
 });
+
+test('T-0223 death #20: 地下 1 宽隧道被近战怪追 → 转身垫块堵隧道; 开阔洞穴/太近/不同层不堵', async () => {
+    const { tunnelWallOffWanted } = await import('../src/agent/mobility_geom.js');
+    // 东西向 1 宽矿道 (z=28 一条, 两侧 z=27/29 实心), 僵尸从西边 2.2b 追来
+    const tunnel = (x, y, z) => z !== 28 || y < 13;
+    const me = { x: 26.5, y: 13, z: 28.5 };
+    assert.equal(tunnelWallOffWanted(tunnel, me, { x: 24.3, y: 13, z: 28.5 }), true, 'death #20 shape');
+    const cave = (x, y, z) => y < 13;
+    assert.equal(tunnelWallOffWanted(cave, me, { x: 24.3, y: 13, z: 28.5 }), false, 'open cave — walling one column does nothing');
+    assert.equal(tunnelWallOffWanted(tunnel, me, { x: 25.6, y: 13, z: 28.5 }), false, 'too close to place between');
+    assert.equal(tunnelWallOffWanted(tunnel, me, { x: 24.3, y: 15, z: 28.5 }), false, 'different level');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const sf = m.slice(m.indexOf('sprintFlee: async function'), m.indexOf('const cr = this.nearestCreeper(bot, 12);', m.indexOf('sprintFlee: async function')) + 2500);
+    assert.match(sf, /tunnelWallOffWanted\(_solid, me, _mm\.position\)[\s\S]*skills\.coverFromShooter\(bot, _mm/);
+});

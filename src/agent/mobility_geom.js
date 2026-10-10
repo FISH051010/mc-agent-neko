@@ -139,6 +139,22 @@ export function creeperBackoffPreempts({ creeperDist, creeperFusing, meleeNearDi
     return true;
 }
 
+/**
+ * ★T-0223 death #20 (10-10 04:22:34): 地下逃跑沿面包屑回撤进自己挖的死胡同矿道, 到头左右折返, 僵尸追上打死。人类在 1 宽隧道里被近战怪追:
+ * 转身在两人之间垫两块把隧道堵死。判据 (纯): 近战怪 ≤3.5b 且同层 (|dy|≤1), bot 处在朝它方向的 1 宽走廊里 —
+ * 垂直于该方向的两侧, 脚/头格都是实心。me/mob {x,y,z}; solidAt(x,y,z)→bool。
+ */
+export function tunnelWallOffWanted(solidAt, me, mob) {
+    if (!me || !mob) return false;
+    const d = Math.hypot(mob.x - me.x, mob.z - me.z);
+    if (d > 3.5 || d < 1.2 || Math.abs(mob.y - me.y) > 1) return false;
+    const ax = Math.abs(mob.x - me.x) >= Math.abs(mob.z - me.z);
+    const fx = Math.floor(me.x), fy = Math.floor(me.y), fz = Math.floor(me.z);
+    const sides = ax ? [[0, 1], [0, -1]] : [[1, 0], [-1, 0]];
+    for (const [sx, sz] of sides) for (const dy of [0, 1]) if (!solidAt(fx + sx, fy + dy, fz + sz)) return false;
+    return true;
+}
+
 /** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */
 export function pickCreeperRunDir(cands) {
     const okTerrain = (cands || []).filter(c => c && c.ok);

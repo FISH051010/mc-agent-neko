@@ -12,7 +12,14 @@
 
 ---
 
-## C395. ★苦力怕后撤不抢断武装近战接战 (除非 ≤5b 或点燃) + 后撤方向背离 ≤3b 近战怪（modes.js/mobility_geom.js 需重启,T-0218,worker-death,⏳待重启）
+## C396. ★地下 1 宽隧道被近战怪追 → 转身垫两块堵路, 不再跑进死胡同（modes.js/mobility_geom.js 需重启,T-0223,worker-death,⏳待重启）
+
+**证据**: death #20 04:22:34 y13 洞穴, hp7 food3 (回不了血), 苦力怕 8.8b/骷髅/僵尸。04:22:26 T-0218 门正确让位后, self_preservation sprintFlee 地下沿面包屑回撤 → 回到自己挖的死胡同矿道, 到头左右折返 (x 27→23→26), 僵尸 2.2b 追上 hp4→1→0。(04:19:56 的 'HURT 13' 是别的 worker 重启后 combat_log 基线跳变, 非真伤害。)
+**改动**: mobility_geom.tunnelWallOffWanted(solidAt, me, mob): 近战怪 1.2–3.5b 同层 (|dy|≤1), bot 处在朝它方向的 1 宽走廊 (垂直两侧脚/头都实心)。sprintFlee 地下每拍检查 (1.5s 限频): 成立 → 停步, skills.coverFromShooter(bot, mob) 在两者之间补脚/头格 (复用 T-0182 #24 原语), 封成即结束逃跑。
+**可证伪预测**: 地下被近战怪追时出现 `chased down a 1-wide tunnel … → wall off: placed placed=2 (T-0223)`; 不再出现在自挖矿道尽头被追打致死。
+**回滚**: revert, 重启。回归 ranged_cover 'T-0223 death #20'。
+
+## C395. ★苦力怕后撤不抢断武装近战接战 (除非 ≤5b 或点燃) + 后撤方向背离 ≤3b 近战怪（modes.js/mobility_geom.js 需重启,T-0218,worker-death,✅已上线 04:00:08Z 097a165; 实机 04:22:26 触发）
 
 **证据**: death #19 03:43:01 白天 0 甲 mineDown 途中: 03:42:52 self_defense 赢仲裁开打僵尸 → 03:42:55 self_preservation `Creeper 8m — backing off` 抢身体 → 背对 1.7b 僵尸后撤被追打, 03:42:59 hp5 → 死, 6s −12。8b 外苦力怕不急 (~3b 起爆), 贴身僵尸才是伤害源 = 优先级倒置。
 **改动**: ① mobility_geom.creeperBackoffPreempts({creeperDist, creeperFusing, meleeNearDist, hasWeapon}): 点燃 (metadata[16]===1 或 [18]) 或 ≤5b → 后撤; 否则有武器且 ≤3b (高差≤2) 有近战怪 → 不抢, 记 `leaving the fight to self_defense (T-0218)`; 无武器 → 照旧后撤。挂在 self_preservation 苦力怕分支入口。② creeperCorridorAssess 加 melee 参数: ≤3b 近战怪, 朝它 (toward>0.25) 或 3 步投影擦身 <1.5b → hard (复用 T-0200 扇形/分级)。

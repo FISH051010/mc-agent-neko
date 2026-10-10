@@ -28,7 +28,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { hostileActionable } from './framework/hostile_reach.js';
@@ -819,6 +819,26 @@ const modes_list = [
                 const cr = this.nearestCreeper(bot, 12);
                 if (hs.length === 0 && !cr) break;                               // 威胁清除 → 收手 (常规循环恢复→重新寻路奔目标)
                 const me = bot.entity.position;
+                // ★T-0223 death #20 (04:22:34): underground, a melee mob chasing us down a 1-wide tunnel (often our own dead-end
+                //   mine) → turn and wall it off (2 blocks between us), the human move; running to the tunnel's end = cornered.
+                try {
+                    if ((me.y < 50 || (bot._mobility && bot._mobility.enclosed)) && Date.now() - (this._wallOffAt || 0) > 1500) {
+                        let _mm = null, _md = Infinity;
+                        for (const e of hs) {
+                            if (!e || !e.position || /creeper|skeleton|stray|pillager|witch/i.test(e.name || '')) continue;
+                            const d = e.position.distanceTo(me); if (d < _md) { _md = d; _mm = e; }
+                        }
+                        const _solid = (x, y, z) => { const b = bot.blockAt(new Vec3(x, y, z)); return !!(b && b.boundingBox === 'block'); };
+                        if (_mm && tunnelWallOffWanted(_solid, me, _mm.position)) {
+                            this._wallOffAt = Date.now();
+                            try { bot.clearControlStates(); } catch (e) {}
+                            let _r = null;
+                            try { _r = await skills.coverFromShooter(bot, _mm, { tag: 'tunnel-wall' }); } catch (e) {}
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] chased down a 1-wide tunnel by ${_mm.name} ${_md.toFixed(1)}b hp=${Math.round(bot.health)} → wall off: ${_r ? `${_r.why} placed=${_r.placed}` : 'error'} (T-0223)\n`); } catch (e) {}
+                            if (_r && _r.covered) break;   // walled in — the pursuer can't reach us; the normal loop resumes
+                        }
+                    }
+                } catch (e) {}
                 // 最近威胁 (含 creeper) — 供"朝目标冲会不会撞进怪脸"守卫。
                 let nx = null, nz = null, nd = Infinity;
                 for (const e of hs) { if (!e || !e.position) continue; const d = e.position.distanceTo(me); if (d < nd) { nd = d; nx = e.position.x; nz = e.position.z; } }
