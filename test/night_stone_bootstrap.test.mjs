@@ -53,12 +53,14 @@ test('T-0175: 石镐到手或天亮即释放; 承诺算夜挖 (反射预防性�
     assert.ok(NIGHT_MINE_KIND_RE.test('NIGHT_STONE_BOOTSTRAP'));
 });
 
-test('T-0175: computeNightPlan 链序 — STONE_BOOTSTRAP 在整夜下矿之后、挖三填一之前, 带安全门', () => {
+// T-0196 改链序: 00:26-27Z 6 圆石 + 2 木镐时整夜下矿 (木镐+可再造即成立) 先于造石镐 → 拿木镐去挖。现在 STONE_BOOTSTRAP 在整夜下矿之前
+// (仅 !durablePick 时成立, 已有石镐+ 不影响), 冷却时由 pickFirstNotCooled 落到下矿/挖三填一。
+test('T-0175/T-0196: computeNightPlan 链序 — STONE_BOOTSTRAP 在整夜下矿之前 (木镐先升石镐), 挖三填一在后, 带安全门', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const fn = src.slice(src.indexOf('const computeNightPlan = () =>'));
-    const iMine = fn.indexOf("decision: 'MINE_THROUGH_NIGHT'"), iBoot = fn.indexOf("{ decision: 'STONE_BOOTSTRAP',"), iDig = fn.indexOf("{ decision: 'DIG_ONE_CAP',");
-    assert.ok(iMine > 0 && iBoot > iMine && iDig > iBoot, `order mine=${iMine} boot=${iBoot} dig=${iDig}`);
-    const gate = fn.slice(iBoot, iDig);
+    const iMine = fn.indexOf("{ decision: 'MINE_THROUGH_NIGHT', when"), iBoot = fn.indexOf("{ decision: 'STONE_BOOTSTRAP',"), iDig = fn.indexOf("{ decision: 'DIG_ONE_CAP',");
+    assert.ok(iBoot > 0 && iMine > iBoot && iDig > iMine, `order boot=${iBoot} mine=${iMine} dig=${iDig}`);
+    const gate = fn.slice(iBoot, iMine);
     for (const g of ['!durablePick', 'hasTablePath', '_hpOkForNightMine', 'actionable === 0', '_gravityPitTrap()'])
         assert.ok(gate.includes(g), `gate has ${g}`);
 });

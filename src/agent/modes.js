@@ -6650,18 +6650,20 @@ const modes_list = [
                           build: () => ({ decision: 'SMELT_IRON', reason: `${_ironIngotsDec >= 3 ? _ironIngotsDec + ' ingots' : _rawIronDec + ' raw_iron'} + no iron pick — lock in iron tier (persistent + iron sword/shield)`, targetY: y }) },
                         { decision: 'SMELT_IRON', when: _armorNightWarranted,
                           build: () => ({ decision: 'SMELT_IRON', reason: `armor before diamonds: iron pick + ${_rawIronDec + _ironIngotsDec} iron → craft protection-first & wear (T-0151)`, targetY: y }) },
+                        // ★T-0175 (监工, 第十四夜实录 -15,63,11: 2 木镐 + 8 板 + 3 原木整夜 DIG_ONE_CAP 零产出): 木镐预算 ~118 < 200 夜挖门。
+                        //   人类: 坑底往下挖几格拿圆石, 用木板现做台, 当场造石镐(+石剑), 整夜靠石镐挖。
+                        //   无怪 + 不在重力柱上 + 非封死 + 血/食够 (同夜挖门) 才做。(T-0185 冷却回落由 pickFirstNotCooled 统一管)
+                        // ★T-0196 (00:26:40-00:27:40Z 实录: 6 圆石 + 2 木镐 + 18 木料, 木镐+可再造让整夜下矿先成立 → 拿木镐去挖, 石镐始终没造):
+                        //   排到整夜下矿之前 — 先花几秒升石镐再挖 (有圆石当场造, 没有就下挖几格取); 已有石镐+ 则 !durablePick 不成立, 不影响。
+                        { decision: 'STONE_BOOTSTRAP',
+                          when: () => !durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
+                              && y > 20 && !/ENTOMBED|SEALED/.test(mob || '') && !_gravityPitTrap(),
+                          build: () => ({ decision: 'STONE_BOOTSTRAP', reason: `wood picks only (budget ${picksBudget}) — dig down for cobble, craft stone pick+sword in place, then mine the night`, targetY: Math.max(17, y - 6) }) },
                         // ② 镐(资源)充足 → 整夜下矿.
                         { decision: 'MINE_THROUGH_NIGHT', when: canMineWholeNight && _hpOkForNightMine,
                           build: () => ({ decision: 'MINE_THROUGH_NIGHT', reason: `pickBudget=${picksBudget}>=${cfg.mineNightPickBudget}`, targetY: 12 }) },
                         { decision: 'MINE_THROUGH_NIGHT', when: alreadyDeepEnclosed && _hpOkForNightMine,
                           build: () => ({ decision: 'MINE_THROUGH_NIGHT', reason: `already deep/enclosed y=${y} pick=${picks} — keep mining, don't surface-bootstrap`, targetY: 12 }) },
-                        // ★T-0175 (监工, 第十四夜实录 -15,63,11: 2 木镐 + 8 板 + 3 原木整夜 DIG_ONE_CAP 零产出): 木镐预算 ~118 < 200 夜挖门。
-                        //   人类: 坑底往下挖几格拿圆石, 用木板现做台, 当场造石镐(+石剑), 整夜靠石镐挖。排在挖三填一之前;
-                        //   无怪 + 不在重力柱上 + 非封死 + 血/食够 (同夜挖门) 才做, 否则照旧挖三填一封坑。(T-0185 冷却回落由 pickFirstNotCooled 统一管)
-                        { decision: 'STONE_BOOTSTRAP',
-                          when: () => !durablePick && picks >= 1 && hasTablePath && _hpOkForNightMine && food > 6 && actionable === 0
-                              && y > 20 && !/ENTOMBED|SEALED/.test(mob || '') && !_gravityPitTrap(),
-                          build: () => ({ decision: 'STONE_BOOTSTRAP', reason: `wood picks only (budget ${picksBudget}) — dig down for cobble, craft stone pick+sword in place, then mine the night`, targetY: Math.max(17, y - 6) }) },
                         // ③④ 挖三填一: 就地可挖(digOneViable), 或 ≤15格内有"可挖三填一的地面"(执行层 nightShelter relocate 去挖). 排在【黄昏远床之上】(用户令顺序).
                         //     lazy 扫描: 只在链子走到这里(近床/炼铁/下矿都没命中)时才扫, 命中即停. 硬门 picks>=1 卡在 when 里(不在扫描函数内) —
                         //     §7.3 红线: 无镐 bot 走 dig_one 会徒手挖软土把自己埋到树底 → 天亮树抬高不可达 → wood=0 bootstrap 死锁. 与 digOneViable 同守卫.
