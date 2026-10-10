@@ -12,7 +12,14 @@
 
 ---
 
-## C382. ★被远程命中时让位方必须自己接手: 垫块挡视线 → 挡不住沿面包屑回撤（modes.js/skills.js/mobility_geom.js 需重启,T-0182 #24 + T-0195 配合,worker-death,⏳待重启）
+## C383. 危险无人掌舵兜底: 被动位移 (击退/坠落) 不算有人掌舵（modes.js 需重启,T-0182,worker-death,⏳待重启）
+
+**证据**: death #13 00:23:41-43 act_trace ctrl 全空 path=0, 但箭击退+落坑让 bot 3s 内移动 ~4b; reflex_watchdog 掌舵判据只看位移 ≥0.8b → 记为"有人在开"。
+**改动**: mobility_signals.effectivelyOwned(trail, now): 位移 ≥0.8b 且窗口内有某拍按着移动键或有寻路目标才算掌舵; reflex_watchdog 每拍采样 drv。
+**可证伪预测**: 挨打后 ctrl 全空被推着走 ≥3s 时出现 `★UNOWNED DANGER … taking back`。
+**回滚**: revert, 重启。回归 ranged_cover 'T-0182 C383'。
+
+## C382. ★被远程命中时让位方必须自己接手: 垫块挡视线 → 挡不住沿面包屑回撤（modes.js/skills.js/mobility_geom.js 需重启,T-0182 #24 + T-0195 配合,worker-death,✅已上线 00:59:47Z）
 
 **证据**: death #13 00:23:44 y5 @-9,5,36 白天 shot:Skeleton d=6.4, 1 甲+石剑。00:23:32 y15 挖铁矿挖穿进洞摔到 y3 (-8hp→12); 00:23:34/42 self_defense `DISENGAGE ranged-unreachable-trap mob=POCKET/FREE enclosed=true` 让位 —— trapped 判据含 `enclosed`, 洞里有顶就算"被困"; 接手方 mobility=FREE 不动, mineDown 在 hp8/4 时还在挖铁, 00:23:41-43 ctrl 全空 → hp4→0。来路面包屑在 y15, 头顶 12 格走不回去。
 **改动**: ① skills.js `losCoverCells(blockAt, me, shooter)` 纯几何: bot 朝射手方向相邻一列 (排除碰撞箱列), 射手眼→bot 脚/眼两视线穿过该列的高度段内开放格, 自下而上, 悬空补 ≤2 支撑; <1.5b 返回 null。`coverFromShooter(bot, shooter)` 用封顶料补格 (positioning:false), 复核视线。② modes.js self_defense ranged-unreachable-trap 分支: 2.5s 内挨打且 16b 内有射手 → execute 当拍接手 (1.5s 限频): coverFromShooter, 挡不住 → self_preservation.sprintFlee (地下沿面包屑回撤)。③ mobility_geom.backtrackTarget 加 maxRise=3: 高于脚 3 格以上的面包屑 (摔下来的来路) 不当退路。④ T-0195: sealCavityBreach 认 `bot._cavitySealAlways` (worker-tier 决策层置: keepInv 关且无胸甲档) — 无胸甲时破入空腔不等看见敌对就封口换向。

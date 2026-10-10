@@ -46,6 +46,19 @@ test('T-0182 #24: 摔下来的来路在头顶 (y15 vs y3) 不是退路; 同层�
     assert.deepEqual(backtrackTarget(walked, me, { x: -2, z: 33 }), { x: -16, y: 3, z: 33 });
 });
 
+test('T-0182 C383: 击退/坠落位移不算有人掌舵 — 位移必须伴随真实驱动 (移动键/寻路目标)', async () => {
+    const { effectivelyOwned } = await import('../src/agent/framework/mobility_signals.js');
+    const now = 10000;
+    // death #13 00:23:41-43: ctrl 全空 path 0, 被箭推了 ~2b
+    const knocked = [{ t: 7000, x: -10.3, y: 4, z: 32.6, drv: false }, { t: 8000, x: -8.5, y: 5, z: 35.5, drv: false }, { t: now, x: -9, y: 5, z: 36.4, drv: false }];
+    assert.equal(effectivelyOwned(knocked, now), false);
+    const walking = knocked.map((q, i) => ({ ...q, drv: i === 1 }));
+    assert.equal(effectivelyOwned(walking, now), true, 'really walking/pathing → owned');
+    const pushingWall = [{ t: 7000, x: 0, y: 5, z: 0, drv: true }, { t: now, x: 0.1, y: 5, z: 0, drv: true }];
+    assert.equal(effectivelyOwned(pushingWall, now), false, 'keys held but going nowhere (普查 #36) → not owned');
+    assert.equal(effectivelyOwned([{ t: 9000, x: 0, y: 0, z: 0, drv: false }], now), true, 'window not full yet → no early verdict');
+});
+
 test('T-0182 #24: self_defense 的 ranged-unreachable-trap 让位分支在被射时必须自己接手 (垫块 → 回撤), 不能裸 return', () => {
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const i = src.indexOf('DISENGAGE ranged-unreachable-trap mob=');

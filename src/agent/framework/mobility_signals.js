@@ -55,6 +55,18 @@ export function taskDigBlockedByRescue({ preemptUntil, now = Date.now(), rescueT
 //   后才接。逐个修让位条件之外, 再加一道常驻兜底: 处于危险 (≤2.5s 内掉血, 或头在水里且 O2<10) 且 ≥3s 无人掌舵
 //   (无非常驻 mode active / 没在挖 / 寻路不动 / 移动键全松) → 收回控制: 水里先上游, 暴露地表逃, 地下/封闭封坑。
 export const UNOWNED_DANGER_MS = 3000;
+/**
+ * 掌舵判据 (纯): trail = 最近 3s 采样 [{t,x,y,z,drv}], drv = 该拍有移动键按住或寻路目标。
+ * 位移 ≥0.8b 且窗口内确有驱动才算有人掌舵 —— 击退/坠落/水流的被动位移不算 (death #13 00:23:40-43
+ * 箭的击退 + 落坑把 ctrl 全空的 bot 推了 ~4b, 旧判据记成"有人在开")。窗口未满 2.5s → 视为有人 (不早判)。
+ */
+export function effectivelyOwned(trail, now) {
+    if (!Array.isArray(trail) || !trail.length) return true;
+    const o = trail[0], last = trail[trail.length - 1];
+    if (now - o.t < 2500) return true;
+    const moved = Math.hypot(last.x - o.x, last.y - o.y, last.z - o.z) >= 0.8;
+    return moved && trail.some(q => q.drv);
+}
 export function unownedDangerAction({ unownedMs, hurtRecently, headInWater, oxygen, exposed, threshold = UNOWNED_DANGER_MS }) {
     const drowning = !!headInWater && Number.isFinite(oxygen) && oxygen < 10;
     if (!(hurtRecently || drowning)) return null;

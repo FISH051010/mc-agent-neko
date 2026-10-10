@@ -31,7 +31,7 @@ import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_pr
 import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
-import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
+import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, effectivelyOwned, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
@@ -3705,10 +3705,16 @@ const modes_list = [
                     // "owned" = something is EFFECTIVELY driving: real displacement (≥0.8b in the last 3s) or a dig in
                     // progress. (普查 #36: 'any mode active / any key held / pathfinder isMoving' counted a holding execute,
                     // a futile jump against a cap, or a stuck path as "owned" — exactly the gaps that kill.)
+                    // ★C383: displacement only counts when something was actually driving (key held / pathfinder goal) —
+                    //   arrow knockback + falling moved an idle bot ~4b in death #13 (effectivelyOwned).
                     const _tr = (this._ownTrail = (this._ownTrail || []).filter(q => now - q.t <= 3000));
-                    _tr.push({ t: now, x: _sp1.x, y: _sp1.y, z: _sp1.z });
-                    const _o = _tr[0];
-                    let _owned = !!_o && now - _o.t >= 2500 ? Math.hypot(_sp1.x - _o.x, _sp1.y - _o.y, _sp1.z - _o.z) >= 0.8 : true;
+                    let _drv = false;
+                    try {
+                        const _cs = bot.controlState || {};
+                        _drv = !!(_cs.forward || _cs.back || _cs.left || _cs.right || _cs.jump || _cs.sprint || (bot.pathfinder && bot.pathfinder.goal));
+                    } catch (e) {}
+                    _tr.push({ t: now, x: _sp1.x, y: _sp1.y, z: _sp1.z, drv: _drv });
+                    let _owned = effectivelyOwned(_tr, now);
                     try { if (!_owned && bot.targetDigBlock) _owned = true; } catch (e) {}
                     if (_owned || !(_hurt || _drownNow)) this._unownedSince = 0;
                     else if (!this._unownedSince) this._unownedSince = now;
