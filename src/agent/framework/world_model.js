@@ -24,7 +24,8 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE } from './food_floor.js';
+import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
@@ -798,6 +799,11 @@ export function proposeTasks(world, bot) {
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
             actionable: threat.actionable, counts: invCounts(bot), animal: _animal,
             botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch, hp: vitals.hp, skyOpen: skyOpenAt(bot) });   // ★T-0188 回不了血也侦察; ★T-0189 头顶见天不算地下
+        // ★T-0209 目击记忆: 侦察且没有新鲜猎物时, 朝最近一次见过牲畜的地方出发 (≤200b, 有目标的出行)
+        if (_ff && _ff.args && _ff.args[0] && _ff.args[0].scout && !_ff.args[0].scoutToward && _bp) {
+            const _plan = scoutPlanToward(nearestSighting(bot && bot._landmarks, HUNTABLE_RE, _bp), _ff.args[0].scoutRadius || 96);
+            if (_plan.targeted) _ff.args[0] = { ..._ff.args[0], scoutToward: _plan.toward, scoutRadius: _plan.radius };
+        }
         if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
     }
 
@@ -2126,7 +2132,8 @@ export function bedErrandScoutOk(world, bot) {
         const w = world || EMPTY_WORLD;
         return w.time && w.time.phase === 'day' && Number(w.vitals && w.vitals.food) >= BED_ERRAND_MIN_FOOD
             && !((w.threat && w.threat.actionable) > 0) && hasStoneTierPick(w) && !swordMissing(invCounts(bot))
-            && !(bot && bot._bedErrandNoSheepAt && Date.now() - bot._bedErrandNoSheepAt < BED_NO_SHEEP_BACKOFF_MS);   // ★T-0208 没羊后退避
+            && !(bot && bot._bedErrandNoSheepAt && Date.now() - bot._bedErrandNoSheepAt < BED_NO_SHEEP_BACKOFF_MS
+                 && !nearestSighting(bot._landmarks, /^sheep$/, bot.entity && bot.entity.position, { newerThan: bot._bedErrandNoSheepAt }));   // ★T-0208 没羊后退避 (只管盲搜; ★T-0209 之后又见过羊就不退避)
     } catch (e) { return false; }
 }
 

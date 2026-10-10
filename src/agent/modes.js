@@ -35,6 +35,7 @@ import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, se
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
+import { recordSightings } from './framework/animal_sightings.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -6481,6 +6482,7 @@ const modes_list = [
                                   case 4: // chest/barrel(maxDist48 count8 稀有 → 较贵) + 动物实体(便宜)
                                     if (_ids.chest) try { for (const b of await world.getNearestBlocksWhereAsync(bot, _ids.chest, 64, 8)) { const bp = b.position; reg('chest', bp.x, bp.y, bp.z); } } catch (e) {}
                                     try { for (const e of Object.values(bot.entities || {})) { if (e && /^(cow|pig|sheep|chicken|mooshroom)$/.test(e.name || '') && e.position) reg('animal', e.position.x, e.position.y, e.position.z, (e.name || '')); } } catch (e) {}
+                                    try { if (recordSightings(bot._landmarks, bot.entities, now)) dirty = true; } catch (e) {}   // ★T-0209 目击记忆 (种类+区块去重, 24h)
                                     break;
                                   case 5: // ore(maxDist16 count12 便宜) + 流浪商人(便宜) — ★task-queue Phase B 机会源
                                     if (_ids.ore) try { for (const bn of await world.getNearestBlocksWhereAsync(bot, _ids.ore, 16, 12)) { const bp = bn.position; reg('ore', bp.x, bp.y, bp.z, /diamond/.test(bn.name || '') ? 'diamond' : 'iron'); } } catch (e) {}

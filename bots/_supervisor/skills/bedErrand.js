@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
 import { scoutForAnimal, pickHuntTarget, haltPath, raceI } from './quickMeal.js';
+import { nearestSighting, scoutPlanToward } from '../../../src/agent/framework/animal_sightings.js';
 const { goals } = mfp;
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -39,10 +40,13 @@ export default async function bedErrand(bot, ctx) {
     const left = () => MAX_MS - (Date.now() - t0);
 
     if (!bedMaterialsReady(inv())) {
-        prog(`no bed/wool (wool=${woolCount(inv())} string=${inv().string || 0}) — bounded scout for sheep ≤${SCOUT_RADIUS}b/${SCOUT_MS / 1000}s`);
+        // ★T-0209 目击记忆: 记得哪儿见过羊 → 朝那里出发 (≤200b, 有目标的出行); 没有记录才 96b 盲搜
+        const sight = nearestSighting(bot._landmarks, SHEEP_RE, bot.entity.position);
+        const plan = scoutPlanToward(sight, SCOUT_RADIUS);
+        prog(`no bed/wool (wool=${woolCount(inv())} string=${inv().string || 0}) — ${plan.targeted ? `sheep last seen @${sight.x},${sight.z} (${sight.dist}b, ${Math.round(sight.ageMs / 60000)}min ago) → targeted scout ≤${plan.radius}b` : `blind scout ≤${plan.radius}b`}/${SCOUT_MS / 1000}s`);
         let sheep = pickHuntTarget(bot, 48, 8, SHEEP_RE);
         if (!sheep) {
-            sheep = await scoutForAnimal(bot, { radius: 48, maxDy: 8, scoutRadius: SCOUT_RADIUS, scoutMs: SCOUT_MS, targetRe: SHEEP_RE });
+            sheep = await scoutForAnimal(bot, { radius: 48, maxDy: 8, scoutRadius: plan.radius, scoutMs: SCOUT_MS, targetRe: SHEEP_RE, scoutToward: plan.toward });
             if (sheep === 'hostile') { prog('scout deferred: hostile near'); return { deferred: true, reason: 'hostile-near' }; }
             if (bot.interrupt_code) { haltPath(bot); prog('interrupted during scout — exit'); return false; }   // ★T-0206: 打断按 unwind 处理
             // ★T-0208 (02:01/02:03Z 实录: 96b 内两轮都没羊, 立即重派 → 3 轮×2min + 5min 冷却 ≈ 每个白天一半在找羊): 记下时间,
