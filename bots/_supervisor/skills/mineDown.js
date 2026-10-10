@@ -135,17 +135,16 @@ export function planDryTunnel(bn, cx, cy, cz, targetY, { minLen = 6, maxLen = 16
     const passable = (b) => !FLUID.test(nm(b)) && !UNBREAKABLE.test(nm(b));
     const wet = (x, y, z) => FLUID.test(nm(bn(x, y, z)));
     const yLo = Math.min(cy - 1, Math.max(-60, Number.isFinite(targetY) ? targetY : cy - 30));
+    // ★T-0184 续 (live 04:45:37: dry end column, but the stair then walked forward into water): check the cells the
+    //   STAIRCASE will occupy — layer k down is k cells further along the heading — feet+head level, radius r. Memoised.
     const memo = new Map();
-    const columnWet = (x, z) => {
-        const key = `${x},${z}`;
-        if (memo.has(key)) return memo.get(key);
-        let w = false;
-        for (let y = cy - 1; y >= yLo && !w; y--) if (wet(x, y, z)) w = true;
-        memo.set(key, w);
-        return w;
-    };
-    const shaftDry = (x, z) => {
-        for (let ox = -r; ox <= r; ox++) for (let oz = -r; oz <= r; oz++) if (columnWet(x + ox, z + oz)) return false;
+    const wetM = (x, y, z) => { const key = `${x},${y},${z}`; if (!memo.has(key)) memo.set(key, wet(x, y, z)); return memo.get(key); };
+    const stairDry = (x, z, dx, dz) => {
+        const yStop = Math.max(yLo, cy - 1 - 32);   // ≤32 layers (one dispatch descends ≤40 steps) — bounded blockAt budget
+        for (let k = 0, y = cy - 1; y >= yStop; k++, y--) {
+            const sx0 = x + dx * k, sz0 = z + dz * k;
+            for (let ox = -r; ox <= r; ox++) for (let oz = -r; oz <= r; oz++) if (wetM(sx0 + ox, y, sz0 + oz) || wetM(sx0 + ox, y + 1, sz0 + oz)) return false;
+        }
         return true;
     };
     let best = null;
@@ -158,7 +157,7 @@ export function planDryTunnel(bn, cx, cy, cz, targetY, { minLen = 6, maxLen = 16
             for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (wet(x + ox, cy, z + oz) || wet(x + ox, cy + 1, z + oz)) { sideWet = true; break; }
             if (sideWet || wet(x, cy + 2, z)) break;
             path.push([x, z]);
-            if (d >= minLen && (!best || d < best.path.length) && shaftDry(x, z)) { best = { sx: dx, sz: dz, path: path.slice(), dryShaft: true }; break; }
+            if (d >= minLen && (!best || d < best.path.length) && stairDry(x, z, dx, dz)) { best = { sx: dx, sz: dz, path: path.slice(), dryShaft: true }; break; }
         }
     }
     return best;
@@ -439,7 +438,9 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 const feetB = bn(Math.floor(p2.x), Math.floor(p2.y) - 1, Math.floor(p2.z));
                 const footingOk = feetB && feetB.boundingBox === 'block' && !FLUID.test(nm(feetB)) && !!bot.entity.onGround;
                 const avoid2 = bot._mineDownFluidAvoid.filter(a => Date.now() - a.at < 600000 && Math.hypot(a.x - p2.x, a.z - p2.z) < 8);
-                const clean2 = [[1, 0], [0, 1], [-1, 0], [0, -1]].find(([cx, cz]) => !avoid2.some(a => a.sx === cx && a.sz === cz));
+                // ★T-0184 续: after a tunnel, the tunnel's own direction (its staircase was checked dry) comes first
+                const _cands2 = (_tun ? [[_tun.sx, _tun.sz]] : []).concat([[1, 0], [0, 1], [-1, 0], [0, -1]]);
+                const clean2 = _cands2.find(([cx, cz]) => !avoid2.some(a => a.sx === cx && a.sz === cz));
                 if (movedB >= (_fbOk ? 4 : 6) && footingOk && clean2) {
                     sx = clean2[0]; sz = clean2[1];
                     rb.count++; rb.at = Date.now();
@@ -941,7 +942,8 @@ export default async function mineDown(bot, ctx, opts = {}) {
                     else if (!(await walkDugPath(bot, skills, Vec3, bn, _tun.path))) { loopRelocates++; log_(`fluid: tunnel ${_tun.sx},${_tun.sz} walk stopped early: ${bot._walkDugFail || '?'}`); }
                     else {
                         loopRelocates++;
-                        const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
+                        // ★T-0184 续: keep going the tunnel's way (the dry staircase was checked along it), not back toward the aquifer
+                        const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, _tun.sx, _tun.sz);
                         sx = _r2.sx; sz = _r2.sz; noProg = 0;
                         log_(`fluid: all 4 headings wet here — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz} to dry rock${_tun.dryShaft ? ' (dry shaft)' : ''}, heading ${sx},${sz}`);
                         continue;

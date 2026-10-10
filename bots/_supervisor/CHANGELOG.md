@@ -3178,6 +3178,8 @@
 
 - **★C419-S 敌对门统一改用可达/视线谓词 hostile_reach(T-0222, 监工指派普查)**（2026-10-10，worker-stuck，T-0222）: 实录 10-10 03:57→04:10+ @27,13,29 y13 (hp7 food6) — 一只对 bot 无视线的地下骷髅 (self_defense 已判 ranged-unreachable-trap) 同时卡死 replenishKit 上浮门 (hostiles16)、quickMeal/exitPit (8b)、GET_BED (16b) 12min+; 各门数原始敌对数。修: 新纯函数模块 src/agent/framework/hostile_reach.js — hostileActionable(bot,e,r): ≤3b 恒算; 远程 (skeleton/stray/bogged/pillager/witch/blaze/ghast/evoker/breeze) 须视线 (眼→眼 0.4b 采样, 实心块遮挡); 近战须视线且 |dy|≤3; 未加载区块按有视线 (保守); hostileActionableNear 计数。替换: replenishKit/setBed/bankGear/prepNether 的 hostilesNear 定义 (所有调用点随之切换); world_model 观察者 threat.actionable (原 d<12&&|dy|≤4)。worker-tier 换 quickMeal/bedErrand/bedProposable/bedErrandFeasible; missionNether (回滚锚) 不动。测试 test/hostile_reach.test.mjs (墙后骷髅/有视线骷髅/同层近战/贴身/被动+出界 + replenishKit 门场景 + 接线钉)。需重启 main (modes.js)。
 
+- **★C420-S 干竖井改为沿楼梯斜线检查 + 隧道后沿隧道方向下挖(T-0184 续)**（2026-10-10，worker-stuck，T-0184）: 实机 04:45:37 'tunnelled 15b 1,0 to dry rock (dry shaft)' 后 y51→44 采矿 5 无立刻 abort ✅, 但下挖朝向沿用旧向 -1,0 (朝回含水层) → 2 次 fluid turn; 且干燥检查只看终点竖列, 楼梯每下一层前进一格会偏离。修: planDryTunnel 的 stairDry 检查第 k 层 (x+dx·k, z+dz·k) 半径 2 的脚/头格 (记忆化, ≤32 层封顶 — 去 y-59 最坏 ~1.7k blockAt/1ms); 循环内隧道成功后朝向取 _tun 方向; START 换址 clean2 优先隧道方向。测试 test/minedown_dry_shaft.test.mjs 新增"水在楼梯斜线上、终点竖列干"场景 + 朝向钉。
+
 ---
 
 ---
