@@ -32,7 +32,8 @@ const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS'
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 export const NIGHT_ARMOR_PRIORITY = 94.2;
 export const BED_ERRAND_PRIORITY = 66;   // ★T-0202 床优先: FOOD_FLOOR 70 之后、GET_ARMOR 58 之前
-export const BED_ERRAND_MIN_FOOD = 10;   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
+export const BED_ERRAND_MIN_FOOD = 10;
+export const BED_NO_SHEEP_BACKOFF_MS = 8 * 60 * 1000;   // ★T-0208 一次"附近没羊"后 8min 不再侦察 (约 1/3 白天; 换个地方再找)   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
 export const STARVING_FOOD_FLOOR_COOLDOWN_MS = 30000;   // ★T-0201 food=0 时 FOOD_FLOOR 派发冷却上限 (续命类不干等 5min)
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
@@ -2124,7 +2125,8 @@ export function bedErrandScoutOk(world, bot) {
     try {
         const w = world || EMPTY_WORLD;
         return w.time && w.time.phase === 'day' && Number(w.vitals && w.vitals.food) >= BED_ERRAND_MIN_FOOD
-            && !((w.threat && w.threat.actionable) > 0) && hasStoneTierPick(w) && !swordMissing(invCounts(bot));
+            && !((w.threat && w.threat.actionable) > 0) && hasStoneTierPick(w) && !swordMissing(invCounts(bot))
+            && !(bot && bot._bedErrandNoSheepAt && Date.now() - bot._bedErrandNoSheepAt < BED_NO_SHEEP_BACKOFF_MS);   // ★T-0208 没羊后退避
     } catch (e) { return false; }
 }
 

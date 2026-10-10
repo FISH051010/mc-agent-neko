@@ -72,3 +72,15 @@ test('T-0202 bedErrand: 包里已有 3 羊毛 → 直接 setBed; 附近 3 只羊
     assert.equal(b.calls.filter(c => c === 'attack').length, 3);
     assert.equal(b.calls[b.calls.length - 1], 'setBed');
 });
+
+test('T-0208: 附近没羊 → bedErrand 记 _bedErrandNoSheepAt; 8min 内不再提侦察, 过后恢复; 已有羊毛的捷径不受影响', async () => {
+    const r = skillRig({ sheep: 0 });
+    const res = await bedErrand(r.bot, r.ctx);
+    assert.equal(res.failed, true);
+    assert.ok(r.bot._bedErrandNoSheepAt > 0, 'no-sheep timestamp recorded');
+    const recent = fakeBot(KIT); recent._bedErrandNoSheepAt = Date.now() - 60000;
+    const p1 = proposeTasks(world(), recent).find(p => p.kind === 'GET_BED');
+    assert.ok(!p1 || p1.skill !== 'bedErrand', 'backing off 1min after no-sheep');
+    const old = fakeBot(KIT); old._bedErrandNoSheepAt = Date.now() - 9 * 60000;
+    assert.equal(proposeTasks(world(), old).find(p => p.kind === 'GET_BED').skill, 'bedErrand', 'resumes after 8min');
+});

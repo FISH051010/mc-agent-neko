@@ -45,7 +45,9 @@ export default async function bedErrand(bot, ctx) {
             sheep = await scoutForAnimal(bot, { radius: 48, maxDy: 8, scoutRadius: SCOUT_RADIUS, scoutMs: SCOUT_MS, targetRe: SHEEP_RE });
             if (sheep === 'hostile') { prog('scout deferred: hostile near'); return { deferred: true, reason: 'hostile-near' }; }
             if (bot.interrupt_code) { haltPath(bot); prog('interrupted during scout — exit'); return false; }   // ★T-0206: 打断按 unwind 处理
-            if (!sheep) { prog('no sheep found'); return { failed: true, reason: 'no-sheep' }; }
+            // ★T-0208 (02:01/02:03Z 实录: 96b 内两轮都没羊, 立即重派 → 3 轮×2min + 5min 冷却 ≈ 每个白天一半在找羊): 记下时间,
+            //   world_model 在 NO_SHEEP_BACKOFF_MS 内不再提侦察 (bot 去干别的、换了地方再找)。
+            if (!sheep) { prog('no sheep found'); try { bot._bedErrandNoSheepAt = Date.now(); } catch (e) {} return { failed: true, reason: 'no-sheep' }; }
         }
         const shears = (bot.inventory.items() || []).find(i => i.name === 'shears');
         let kills = 0;
