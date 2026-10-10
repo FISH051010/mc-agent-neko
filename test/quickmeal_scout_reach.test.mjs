@@ -129,3 +129,17 @@ test('T-0204: pathfinder.stop() 的延迟标志不再杀下一段 — 按真实�
     assert.equal(killed, 0, `no leg killed by a stale stop flag (gotos=${gotos}, killed=${killed})`);
     assert.ok(bot.entity.position.x >= 40, 'actually walked out and saw the cow');
 });
+
+test('T-0211: 地下饿着要上浮, 但 16 格内有敌对 → 不上浮 (等 ≤15s, 仍在则延后不计 strike) — death #17 拂晓往僵尸堆里爬', async () => {
+    const calls = [];
+    const zombie = { name: 'zombie', position: V(5, 36, 0) };
+    const bot = { food: 6, health: 20, entity: { position: V(0, 36, 0) }, entities: { 9: zombie }, blockAt: () => ({ name: 'stone', skyLight: 0 }),
+        pathfinder: { stop() {}, setGoal() {}, setMovements() {}, goto: async () => {} }, clearControlStates() {} };
+    const ctx = { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async (_b, n) => { calls.push(n); }, attackEntity: async () => {}, consume: async () => {} } };
+    const t0 = Date.now();
+    const realSetTimeout = global.setTimeout;
+    const r = await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000, surfaceFirst: true, scout: true, scoutRadius: 96, scoutMs: 90000 });
+    assert.ok(!calls.includes('surfaceUp'), `did not climb into the mob (calls=${calls})`);
+    assert.equal(r.deferred, true, JSON.stringify(r));
+    assert.ok(Date.now() - t0 < 17000);
+});

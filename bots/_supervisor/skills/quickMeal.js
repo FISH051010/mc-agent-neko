@@ -225,6 +225,12 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     // ★T-0189 (23:21:15Z 实录: y61 本在地表 mob=FREE, "surfaced y 61→61" 空上浮): 头顶见天 (skyLight≥14) 就不上浮。
     if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 62 && skyOpenAt(bot) !== true) {
         const y0 = Math.round(bot.entity.position.y);
+        // ★T-0211 (death #17 02:37:09Z: 拂晓 y36 地下, 16 格内有僵尸, 上浮途中被打死): 上浮前有敌对 → 原地等 ≤15s (拂晓亡灵会晒死/走开),
+        //   仍在 → 延后 (不计 strike), 不往怪堆里爬。
+        if (hostileWithin(bot, 16)) {
+            prog(`surfaceUp held: hostile within 16b underground — wait ≤15s before climbing`);
+            if (!(await waitHostileClear(bot, 15000))) { prog('surfaceUp deferred: hostile still near'); return { deferred: true, reason: 'hostile-near-surfacing' }; }
+        }
         prog(`starving underground y=${y0} food=${bot.food} — surfaceUp first (≤${Math.round((opts.surfaceMaxMs ?? 120000) / 1000)}s)`);
         await raceI(bot, skills.customSkill(bot, 'surfaceUp', 63), opts.surfaceMaxMs ?? 120000);
         haltPath(bot);
