@@ -41,6 +41,6 @@ test('T-0161: wet / unbreakable everywhere → null (honest fail instead of a do
 
 test('T-0161: relocate tries the tunnel first and only falls back to pathfinder moveAway', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
-    assert.match(src, /const _tun = planRelocateTunnel\(bn, [^\n]*\);\s*\n(?:[^\n]*\n)?\s*if \(_tun\) \{\s*\n\s*const _ok = await walkDugPath\(/);   // (T-0193 adds `let _fbOk` between)
+    assert.match(src, /\|\| planRelocateTunnel\(bn, [^\n]*\);\s*\n(?:[^\n]*\n)?\s*if \(_tun\) \{\s*\n\s*const _ok = await walkDugPath\(/);   // (T-0193 adds `let _fbOk` between)
     assert.match(src, /await relocateFallback\(bot, skills, bn, log_, 'no dry solid 9-cell tunnel line at this level'\);/);   // ★T-0193: no bare moveAway underground
 });

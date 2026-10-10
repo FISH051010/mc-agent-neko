@@ -3120,6 +3120,8 @@
 
 - **★C415-S 库层修 mineflayer-pathfinder stop() 残留标志(T-0207, 监工指派; T-0204 的库级根治)**（2026-10-10，worker-stuck，T-0207）: 库语义 stop() 只置 stopPathing (index.js:171), 真停在下次 resetPath — 无 path 时标志残留, 下一个 setGoal/goto 当场 stop() 清掉新 goal + emit path_stop → 'Path was stopped before it could be completed!' (bedErrand 112 段 111 段被杀; skills.customSkill 每次启动都 stop)。worker-tier 在 quickMeal/bedErrand 用 setGoal(null) 绕开。库层修 (patches/mineflayer-pathfinder+2.4.5.patch, patch-package 重新生成, 已验证可打到原版 2.4.5 且与 node_modules 一致): ① setGoal 先清残留 stopPathing (新目标取代挂起的 stop); ② stop() 无 path 时立即复位 (清 goal/astar, emit path_stop 供挂起 goto 收到), 不 fullStop/不清按键 (空闲时按键不属于寻路); 走路中保持原到下一节点再停。测试 test/pathfinder_stop_residue.test.mjs 用真实库 inject 假 bot 建模。需重启 main。
 
+- **★C416-S 含水层换址找"干竖井"(T-0184, 监工指派)**（2026-10-10，worker-stuck，T-0184）: COOLDOWN-CHURN GO_UNDERGROUND ×3; 01-02h mineDown abort 'fluid near stair cell' ×11 @-31,39,-62 — 换向和 9b 隧道都留在同一片含水层。修: planDryTunnel = 沿基本方向 6..16b 横向隧道 (侧邻/头顶防水同 planRelocateTunnel), 终点须"干竖井": 半径 2 格内从脚下到 targetY 无流体 (列湿度记忆化, 最坏数万次 blockAt), 取最短; 含水层分支与 START 换址优先用它, 找不到再退 9b 隧道/实心列。日志带 '(dry shaft)'。测试 test/minedown_dry_shaft.test.mjs, 更新 T-0161/T-0162 钉子。
+
 ---
 
 ---

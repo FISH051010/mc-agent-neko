@@ -23,5 +23,5 @@ test('T-0162: within ONE dispatch, three wet headings still leave the 4th headin
 test('T-0162: mineDown re-heads / tunnels in-dispatch on a fluid abort instead of ending the dispatch', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
     assert.match(src, /if \(_r\.rotated && fluidTurns < 4 && !_aq\) \{[\s\S]{0,300}sx = _r\.sx; sz = _r\.sz; noProg = 0;\s*\n\s*continue;/);
-    assert.match(src, /if \(\(_r\.exhausted \|\| _aq\) && loopRelocates < 1\) \{\s*\n\s*const _tun = planRelocateTunnel\(bn, cx, cy, cz\);/);
+    assert.match(src, /if \(\(_r\.exhausted \|\| _aq\) && loopRelocates < 1\) \{\s*\n\s*const _tun = planDryTunnel\(bn, cx, cy, cz, targetY\) \|\| planRelocateTunnel\(bn, cx, cy, cz\);/);   // T-0184 dry shaft first
 });

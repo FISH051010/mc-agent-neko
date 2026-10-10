@@ -125,6 +125,45 @@ export function planRelocateTunnel(bn, cx, cy, cz, len = 9) {
     return null;
 }
 
+// ★T-0184 干竖井换址 (COOLDOWN-CHURN GO_UNDERGROUND ×3; 01-02h 'fluid near stair cell' ×11 @-31,39,-62): re-heading
+//   and 9b tunnels kept the bot in the same aquifer. Tunnel 6..16b along a cardinal (same dry-sided checks as
+//   planRelocateTunnel) to the nearest end column whose whole way down is dry: no fluid within r blocks horizontally
+//   from the feet level down to targetY. Column wetness is memoised (≈ tens of k blockAt worst case). null = none.
+export function planDryTunnel(bn, cx, cy, cz, targetY, { minLen = 6, maxLen = 16, r = 2 } = {}) {
+    const nm = (b) => (b && b.name) || 'air';
+    const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
+    const passable = (b) => !FLUID.test(nm(b)) && !UNBREAKABLE.test(nm(b));
+    const wet = (x, y, z) => FLUID.test(nm(bn(x, y, z)));
+    const yLo = Math.min(cy - 1, Math.max(-60, Number.isFinite(targetY) ? targetY : cy - 30));
+    const memo = new Map();
+    const columnWet = (x, z) => {
+        const key = `${x},${z}`;
+        if (memo.has(key)) return memo.get(key);
+        let w = false;
+        for (let y = cy - 1; y >= yLo && !w; y--) if (wet(x, y, z)) w = true;
+        memo.set(key, w);
+        return w;
+    };
+    const shaftDry = (x, z) => {
+        for (let ox = -r; ox <= r; ox++) for (let oz = -r; oz <= r; oz++) if (columnWet(x + ox, z + oz)) return false;
+        return true;
+    };
+    let best = null;
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+        const path = [];
+        for (let d = 1; d <= maxLen; d++) {
+            const x = cx + dx * d, z = cz + dz * d;
+            if (!passable(bn(x, cy, z)) || !passable(bn(x, cy + 1, z)) || !solid(bn(x, cy - 1, z))) break;
+            let sideWet = false;
+            for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (wet(x + ox, cy, z + oz) || wet(x + ox, cy + 1, z + oz)) { sideWet = true; break; }
+            if (sideWet || wet(x, cy + 2, z)) break;
+            path.push([x, z]);
+            if (d >= minLen && (!best || d < best.path.length) && shaftDry(x, z)) { best = { sx: dx, sz: dz, path: path.slice(), dryShaft: true }; break; }
+        }
+    }
+    return best;
+}
+
 /** ★T-0183: nothing solid in the first h blocks above the head = under open sky (surface pathfinding works here).
  *  A tree canopy (leaves/logs/vines) is not a roof (live 23:06 @-8,69,-7: spruce canopy blocked the relocate). */
 export function openSkyAbove(bn, x, y, z, h = 24) {
@@ -380,11 +419,12 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 if (rb.count >= 2) { log_(`relocate budget spent (${rb.count}/2 in <3min) — honest fail, higher layer should reposition`); return { failed: true, abort: 'all headings flooded/wedged; relocate budget spent' }; }
                 const before = bot.entity.position.clone();
                 // ★T-0161: underground the pathfinder moveAway never moved (0/∞ historically) — tunnel out instead.
-                const _tun = planRelocateTunnel(bn, Math.floor(before.x), Math.round(before.y), Math.floor(before.z));
+                const _tun = planDryTunnel(bn, Math.floor(before.x), Math.round(before.y), Math.floor(before.z), targetY)   // ★T-0184
+                    || planRelocateTunnel(bn, Math.floor(before.x), Math.round(before.y), Math.floor(before.z));
                 let _fbOk = false;   // ★T-0193 the column walk reported arrival at a 5-solid-below column
                 if (_tun) {
                     const _ok = await walkDugPath(bot, skills, Vec3, bn, _tun.path);
-                    log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length} — ${_ok ? 'arrived' : 'walk stopped early: ' + (bot._walkDugFail || '?')}`);
+                    log_(`relocate tunnel ${_tun.sx},${_tun.sz} ×${_tun.path.length}${_tun.dryShaft ? ' (dry shaft)' : ''} — ${_ok ? 'arrived' : 'walk stopped early: ' + (bot._walkDugFail || '?')}`);
                     if (!_ok) _fbOk = await relocateFallback(bot, skills, bn, log_, 'tunnel walk stopped');
                 } else {
                     // ★T-0193: moveAway underground moved 0.2b / hung 43s (live 00:04:25-30) — column walk or fast fail
@@ -896,14 +936,14 @@ export default async function mineDown(bot, ctx, opts = {}) {
                     continue;
                 }
                 if ((_r.exhausted || _aq) && loopRelocates < 1) {
-                    const _tun = planRelocateTunnel(bn, cx, cy, cz);
+                    const _tun = planDryTunnel(bn, cx, cy, cz, targetY) || planRelocateTunnel(bn, cx, cy, cz);   // ★T-0184 dry shaft first
                     if (!_tun) log_(`fluid: all 4 headings wet here and no dry 9-cell tunnel line at y${cy}`);
                     else if (!(await walkDugPath(bot, skills, Vec3, bn, _tun.path))) { loopRelocates++; log_(`fluid: tunnel ${_tun.sx},${_tun.sz} walk stopped early: ${bot._walkDugFail || '?'}`); }
                     else {
                         loopRelocates++;
                         const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, sx, sz);
                         sx = _r2.sx; sz = _r2.sz; noProg = 0;
-                        log_(`fluid: all 4 headings wet here — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz} to dry rock, heading ${sx},${sz}`);
+                        log_(`fluid: all 4 headings wet here — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz} to dry rock${_tun.dryShaft ? ' (dry shaft)' : ''}, heading ${sx},${sz}`);
                         continue;
                     }
                 }
