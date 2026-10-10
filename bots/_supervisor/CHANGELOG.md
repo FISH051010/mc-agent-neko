@@ -12,6 +12,14 @@
 
 ---
 
+## C392. ★surfaceUp 冻结战斗反射须"此刻无危险": 上浮中遇险当拍解冻 self_defense/self_preservation 并放弃上浮（surfaceUp.js 热加载,T-0169 同形第二次 death #17/#18,worker-death,已合入即生效）
+
+**证据**: death #17 02:37:09 y34 黎明: quickMeal surfaceFirst → surfaceUp, 寻路 02:37:01–02 往下掉进僵尸洞 (y34.7→30), 02:37:03–09 僵尸 0.8b 连打 17→11→8→5→0, act 全空, 手持 andesite (背包石剑) — surfaceUp 把 self_defense/self_preservation 整段 setOn(false) (只夜裸例外) 又不处理威胁 = 让位没人接 (T-0169 当时按重复 wontfix, 第二次 = 当场沉淀)。death #18 02:37:32 (在 -34,34,-77 的床重生, 同两只僵尸 id 146016/146767 就在旁边, 光身): replenishKit → surfaceUp 与 self_preservation 逃跑同时驱动身体, ctrl `forward,back,sneak,sprint` 互相抵消原地卡 4s。
+**改动**: surfaceUp.surfaceUpDangerYield({hurtAgoMs, hostiles}) 纯函数 — 近战怪 <3.5b 且高差≤2, 或 2.5s 内掉血且 8b 内有怪 (自身坠落/窒息不算) → 危险。并进 deadlineHit (所有主循环都查), 首次触发即解冻 self_defense/self_preservation、停寻路、清控制, 记 `[surfaceUp] ★danger mid-climb … (death #17)`, 上浮放弃 (kernel 之后重派)。
+**可证伪预测**: 上浮途中遇怪出现 `★danger mid-climb`, 随后 self_defense ENGAGE 或 self_preservation 接手; 不再出现上浮中被近战怪打死且 act 全空。
+**回滚**: revert (热加载)。回归 test/surfaceup_danger.test.mjs。
+**未解 (另单)**: 床在地下洞穴里 → 死后重生在杀手旁边 (T-0043 族)。
+
 ## C391. branchMine 读破口回避记忆: 不再反复朝刚封掉的有怪空腔开隧道（branchMine.js 热加载,T-0180,worker-death,已合入即生效）
 
 **证据**: 02:22:50 / 02:23:43 / 02:24:55 @-35,36,-64 heading -1,0 三次 `cavity breach … backing off` —— sealCavityBreach 把方向写进 bot._mineDownFluidAvoid, 但 branchMine 选隧道方向 (矿石朝向/yaw) 从不读它, 每次派发又朝同一空腔挖。

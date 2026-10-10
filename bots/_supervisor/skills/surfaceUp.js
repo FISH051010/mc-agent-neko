@@ -17,6 +17,18 @@ const { goals, Movements } = mfp;
 const DBG = path.resolve(process.cwd(), 'bots', '_supervisor', 'surfaceUp.log');
 const dbg = (s) => { try { fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 
+/**
+ * ★death #17 (10-10 02:37:09, 第二次 = T-0169 同形): surfaceUp 冻结 self_defense/self_preservation 整段上浮, 自己又不处理
+ * 威胁 → 僵尸 0.8b 连打 17→0, 背包有石剑却零出手 (让位没人接)。冻结的前提是"此刻没危险"; 一旦有危险就把身体还给反射。
+ * hostiles: [{name, d, dy}] ; hurtAgoMs: 距上次掉血。纯函数。
+ */
+export function surfaceUpDangerYield({ hurtAgoMs, hostiles }) {
+    const melee = (hostiles || []).filter(h => h && !/creeper|skeleton|stray|pillager|witch|ghast|blaze/i.test(h.name || ''));
+    if (melee.some(h => h.d < 3.5 && Math.abs(h.dy || 0) <= 2)) return true;            // 贴脸近战怪 — 够得着我
+    const anyNear = (hostiles || []).some(h => h && h.d < 8);
+    return Number.isFinite(hurtAgoMs) && hurtAgoMs < 2500 && anyNear;                       // 正在被怪打 (排除自身坠落/窒息)
+}
+
 const OPEN = new Set(['air', 'cave_air', 'void_air']);
 const NO_DIG = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
 const SCAFFOLD = ['cobblestone', 'dirt', 'cobbled_deepslate', 'andesite', 'granite', 'diorite', 'tuff', 'stone', 'deepslate', 'gravel', 'netherrack'];
@@ -103,7 +115,8 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     // guardedDig 的 ≤26s 尾巴)。kernel 直派不带 opts → deadlineAt=0 永不过期, 存量行为与返回
     // 契约零变化 (到点返回 surfaceReady(), 对带 maxMs 的嵌套调用方而言返回值本就被忽略)。
     const deadlineAt = (opts && Number.isFinite(opts.maxMs) && opts.maxMs > 0) ? Date.now() + opts.maxMs : 0;
-    const deadlineHit = () => !!(deadlineAt && Date.now() >= deadlineAt) || kernelYieldRequested(bot, enteredAtSU);
+    let _suDangerCheck = null;   // armed after the reflex freeze below (death #17)
+    const deadlineHit = () => !!(deadlineAt && Date.now() >= deadlineAt) || kernelYieldRequested(bot, enteredAtSU) || !!(_suDangerCheck && _suDangerCheck());
     // C226-D: callers pass RELATIVE targets (pos.y + N). When the bot is already
     // high (on a peak/mountainside the caller mislabels "enclosed"), pos.y+18 from
     // y118 = 136 → surfaceReady never satisfied → runaway pillar to y127-136 where
@@ -670,6 +683,27 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     try { for (const m of GUARD) if (bot.modes && bot.modes.exists && bot.modes.exists(m)) { prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
     try { bot.clearControlStates(); } catch (e) {}
     dbg(`modes frozen: ${Object.keys(prevModes).join(',')}`);
+    // ★death #17: danger while the combat reflexes are frozen → unfreeze them NOW and unwind (every main loop checks deadlineHit).
+    let _suDangerHit = false;
+    _suDangerCheck = () => {
+        if (_suDangerHit) return true;
+        if (!('self_defense' in prevModes) && !('self_preservation' in prevModes)) return false;   // not frozen (night-naked) — reflexes already live
+        let hs = [];
+        try {
+            const me = bot.entity.position;
+            hs = Object.values(bot.entities || {}).filter(e => e && e !== bot.entity && e.position && ctx.mc && ctx.mc.isHostile && ctx.mc.isHostile(e))
+                .map(e => ({ name: e.name, d: e.position.distanceTo(me), dy: e.position.y - me.y }));
+        } catch (e) {}
+        if (!surfaceUpDangerYield({ hurtAgoMs: Date.now() - (bot.lastDamageTime || 0), hostiles: hs })) return false;
+        _suDangerHit = true;
+        try { for (const m of ['self_defense', 'self_preservation']) if (m in prevModes) { bot.modes.setOn(m, prevModes[m]); delete prevModes[m]; } } catch (e) {}
+        try { bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop(); } catch (e) {}
+        try { bot.clearControlStates(); } catch (e) {}
+        const near = hs.filter(h => h.d < 8).map(h => `${h.name}@${h.d.toFixed(1)}`).join(',');
+        dbg(`★DANGER — hostile ${near} hp=${Math.round(bot.health)}: unfreezing self_defense/self_preservation, abandoning the climb (death #17)`);
+        try { fs.appendFileSync(path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt'), `[${new Date().toISOString()}] [surfaceUp] ★danger mid-climb (${near}, hp=${Math.round(bot.health)}) — combat reflexes unfrozen, climb abandoned (death #17)\n`); } catch (e) {}
+        return true;
+    };
     try {
       await climbToSurface();
     } finally {

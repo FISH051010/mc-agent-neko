@@ -18,5 +18,5 @@ test('T-0181: wiring — kernelDriver stamps the flip; surfaceUp loops exit on i
     const kd = fs.readFileSync(new URL('../bots/_supervisor/skills/kernelDriver.js', import.meta.url), 'utf8');
     assert.match(kd, /bot\._commitFlipAt = Date\.now\(\);[^\n]*\r?\n\s*bot\.interrupt_code = true;/);
     const su = fs.readFileSync(new URL('../bots/_supervisor/skills/surfaceUp.js', import.meta.url), 'utf8');
-    assert.match(su, /const deadlineHit = \(\) => !!\(deadlineAt && Date\.now\(\) >= deadlineAt\) \|\| kernelYieldRequested\(bot, enteredAtSU\);/);
+    assert.match(su, /const deadlineHit = \(\) => !!\(deadlineAt && Date\.now\(\) >= deadlineAt\) \|\| kernelYieldRequested\(bot, enteredAtSU\)[^\n]*;/);
 });
