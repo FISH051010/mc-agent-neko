@@ -121,7 +121,10 @@ loop:
 2. 判断层级：
    - `bots/_supervisor/skills/<子skill>.js`（chopWood/feedUp 等）→ **热加载**，下次调用即生效，无需重启
    - `src/agent/**`（① 层 modes/skills/framework）+ **顶层 sticky `missionNether.js`** → **必须重启 main.js**
-3. 重启配方（白天/无怪时做；夜里热重载封顶 skill 有把 bot 拽出庇护的风险）：
+3. 重启配方（白天 + **无可行威胁**时做；夜里热重载封顶 skill 有把 bot 拽出庇护的风险）。
+   ★2026-10-10 "无怪"的口径改为 hostile_reach.hostileActionable（T-0222）：3 格内一律算；远程怪须对 bot 有视线；近战怪须有视线且 |dy|≤3。
+   墙后无视线、晒不死的地下骷髅不算，不再因为它无限推迟部署（实录：一只这样的骷髅让 bot 在 y13 冻了 12 分钟以上，部署也被卡住）。
+   bot 封闭（mob ENC/ENTOMBED）且无可行威胁时，夜里重启也可以（只是原地重连，不会被拽出庇护）。：
    ```
    # 杀 main + 清端口 8765/48909 + 重启(env NEKO_AGENT_SCREENSHOT_INTERVAL_MS=0)
    # 见 watchdog.ps1 的 Restart-Agent；冒烟自检:端口 48909 listening + vitals.json ts 新鲜(<20s)
