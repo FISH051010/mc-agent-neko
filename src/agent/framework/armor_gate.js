@@ -35,19 +35,25 @@ export function chestTierArmor(names) {
 // ★T-0170 (监工: 剑排在胸/腿之后、盔/靴之前): 已有铁镐时防护序插入铁剑 (2 锭), 已有铁+剑则跳过。
 export const PROTECTION_ORDER_WITH_SWORD = [SHIELD_PIECE, ['iron_chestplate', 8], ['iron_leggings', 7], ['iron_sword', 2], ['iron_helmet', 5], ['iron_boots', 4]];
 const IRON_PLUS_SWORD_RE = /^(iron|diamond|netherite)_sword$/;
-/** 按防护优先序挑下一件: 跳过已有(穿着或背包里)的, 挑铁料预算造得起的第一件; 都造不起 → null。
+/** 按防护优先序挑下一件: 跳过已有(穿着或背包里)的, 序里第一件没有的造得起才返回; 造不起 → null (攒料)。
  *  withSword: 已有铁镐 → 序里含铁剑 (haveNames 里有铁+剑即视为已有)。 */
 /** shieldBudget: 盾不吃铁镐预留额 → 调用方传未扣预留的铁总量 (默认同 budget)。 */
 export function nextProtectionPiece(haveNames, budget, { withSword = false, shieldBudget = budget } = {}) {
     const names = haveNames || [];
+    // ★T-0266 (监工拍板): 严格防护序 — 序里第一件没有的造不起就攒锭 (返回 null), 不跳过胸甲去造头盔/靴子
+    const miss = missingProtectionPiece(names, { withSword });
+    if (!miss) return null;
+    return miss[1] <= (miss[0] === 'shield' ? shieldBudget : budget) ? miss : null;
+}
+/** ★T-0266 防护序里第一件还没有的 (不看料); null = 全齐。craftArmor 攒锭时报 saving 用。 */
+export function missingProtectionPiece(haveNames, { withSword = false } = {}) {
+    const names = haveNames || [];
     const have = new Set(names.map(n => (pieceOf(n) || {}).slot).filter(Boolean));
     const hasGoodSword = names.some(n => IRON_PLUS_SWORD_RE.test(n));
     for (const [name, cost] of (withSword ? PROTECTION_ORDER_WITH_SWORD : PROTECTION_ORDER)) {
-        if (name === 'iron_sword') { if (!hasGoodSword && cost <= budget) return [name, cost]; continue; }
-        if (name === 'shield') { if (!names.includes('shield') && cost <= shieldBudget) return [name, cost]; continue; }
-        const slot = pieceOf(name).slot;
-        if (have.has(slot)) continue;
-        if (cost <= budget) return [name, cost];
+        if (name === 'iron_sword') { if (!hasGoodSword) return [name, cost]; continue; }
+        if (name === 'shield') { if (!names.includes('shield')) return [name, cost]; continue; }
+        if (!have.has(pieceOf(name).slot)) return [name, cost];
     }
     return null;
 }

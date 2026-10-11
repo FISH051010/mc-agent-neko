@@ -34,3 +34,42 @@ test('T-0253: 无铁镐时 NIGHT_SMELT_IRON 完成判据 — 锭+粗铁凑不够
     assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, bot({ raw_iron: 1, coal: 19 })), true, '1 raw iron cannot become a pick');
     assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, bot({ raw_iron: 2, iron_ingot: 1, coal: 19 })), false, '2 raw + 1 ingot = 3 → keep smelting');
 });
+
+test('T-0266: 熔铁烧光木头无台路 (kit.hasTablePath=false) → NIGHT_SMELT_IRON 放手, 不再粘着派 craftArmor/craftChain 必拒', () => {
+    const bot = (inv) => ({ inventory: { items: () => Object.entries(inv).map(([name, count]) => ({ name, count })), slots: [] } });
+    const w = JSON.parse(JSON.stringify(EMPTY_WORLD)); w.kit = { ...w.kit, picks: 4, pickTier: 'iron', hasTablePath: false };
+    const rich = { iron_ingot: 9, iron_pickaxe: 1, iron_sword: 1, shield: 1, cobblestone: 171 };   // 胸甲造得起, 但没台
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, bot(rich)), true, 'no table path: release');
+    w.kit.hasTablePath = true;
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, bot(rich)), false, 'table path + chest affordable → keep');
+    // 无铁镐: 无台路但还有粗铁可熔 → 继续熔 (熔炉不要台); 粗铁熔完 → 放手
+    const s = JSON.parse(JSON.stringify(EMPTY_WORLD)); s.kit = { ...s.kit, picks: 2, pickTier: 'stone', hasTablePath: false };
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', s, bot({ raw_iron: 3, coal: 4 })), false);
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', s, bot({ iron_ingot: 3, coal: 4 })), true);
+});
+
+test('T-0266 (监工拍板): 严格防护序 — 盾在 + 5 锭 + 0 粗铁: 胸甲要 8 造不起 = 攒锭, 不跳去造头盔; 夜里不提 NIGHT_SMELT_IRON, 承诺放手', async () => {
+    const { nextProtectionPiece, missingProtectionPiece, armorNightWarranted } = await import('../src/agent/framework/armor_gate.js');
+    const have = ['shield', 'iron_sword'];
+    assert.equal(nextProtectionPiece(have, 5, { withSword: true }), null, 'saving for the chestplate');
+    assert.deepEqual(missingProtectionPiece(have, { withSword: true }), ['iron_chestplate', 8]);
+    assert.deepEqual(nextProtectionPiece(have, 8, { withSword: true }), ['iron_chestplate', 8]);
+    assert.deepEqual(nextProtectionPiece([...have, 'iron_chestplate', 'iron_leggings'], 5, { withSword: true }), ['iron_helmet', 5], 'chest+legs done → helmet next');
+    assert.equal(armorNightWarranted({ hasIronPick: true, hasTablePath: true, canSmeltHere: true, armorHave: have, rawIron: 0, ingots: 5, fuelUnits: 4 }), false, 'night plan: no SMELT_IRON');
+    const bot = (inv) => ({ inventory: { items: () => Object.entries(inv).map(([name, count]) => ({ name, count })), slots: [] } });
+    const w = JSON.parse(JSON.stringify(EMPTY_WORLD)); w.kit = { ...w.kit, picks: 4, pickTier: 'iron', hasTablePath: true };
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, bot({ iron_ingot: 5, iron_pickaxe: 1, iron_sword: 1, shield: 1, crafting_table: 1, coal: 8 })), true, 'commitment releases while saving');
+});
+
+test('T-0266 (监工): craftArmor 下一件锭不够 → 非失败 {ok, saving, need, have} + 写 progress, 不造头盔', async () => {
+    const { default: craftArmor } = await import('../bots/_supervisor/skills/craftArmor.js');
+    const inv = { iron_ingot: 5, iron_pickaxe: 1, iron_sword: 1, crafting_table: 1, coal: 8 };
+    const bot = { inventory: { items: () => Object.entries(inv).filter(([, c]) => c > 0).map(([name, count]) => ({ name, count })), slots: { 45: { name: 'shield', count: 1 } } }, health: 20 };
+    const calls = [];
+    const ctx = { log: () => {}, world: { getInventoryCounts: () => ({ ...inv, shield: 1 }) },
+        skills: { customSkill: async (_b, n, ...a) => { calls.push(n + JSON.stringify(a)); }, equip: async () => {} } };
+    const r = await craftArmor(bot, ctx, { order: 'protection' });
+    assert.deepEqual(r, { ok: true, saving: 'iron_chestplate', need: 8, have: 5 });
+    assert.ok(!calls.some(c => /craftChain/.test(c)), 'no helmet crafted: ' + calls);
+    assert.match(fs.readFileSync(path.join(home, 'bots', '_supervisor', 'progress.txt'), 'utf8'), /saving iron for iron_chestplate \(5\/8\)/);
+});

@@ -1767,7 +1767,11 @@ export function isGoalDone(kind, world, bot) {
         case PROPOSAL_KIND.GET_IRON_TOOLS:   return hasIronTierPick(w) || ironSmeltFuelBlocked(bot);   // ★T-0176 缺燃料熔不出 3 锭即释放 (否则 holding commitment 继续派 smeltSafe 必拒)
         // ★T-0097 NIGHT_SMELT_IRON done = same target (an iron-tier pick exists) — holds the night
         // commitment sticky across the smelt→craft hand-off until the iron pickaxe is actually crafted.
-        case TASK.NIGHT_SMELT_IRON:          if (hasIronTierPick(w)) return !nextProtectionPiece(protectionHaveNames(bot), ironArmorBudget(bot), { withSword: true, shieldBudget: ironForArmor(bot) });   /* ★T-0229 含盾 */   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
+        // ★T-0266 (04:55-04:56Z 实录: 夜里熔铁把木头烧光 → 无台无板无原木, 粘性承诺照派 craftArmor 连败 3 次):
+        //   合成要台 — kit.hasTablePath=false (同夜计划 SMELT_IRON 的入口门) 且没有可熔的粗铁 → 放手, 交给白天补木/补台。
+        //   ★同单: 严格防护序 (armor_gate.nextProtectionPiece) — 下一件锭不够 = 攒锭, 也放手。
+        case TASK.NIGHT_SMELT_IRON:          if (w.kit && w.kit.hasTablePath === false && (hasIronTierPick(w) || invCount(bot, /^raw_iron$/) === 0)) return true;
+                                             if (hasIronTierPick(w)) return !nextProtectionPiece(protectionHaveNames(bot), ironArmorBudget(bot), { withSword: true, shieldBudget: ironForArmor(bot) });   /* ★T-0229 含盾 */   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
             // ★T-0253: 与夜间熔铁提案门同口径 — 锭 + 粗铁凑不够一把铁镐 (3) 也算完成 (原只认粗铁清零: 剩 1 粗铁时握着承诺空转 ×3)
             return (invCount(bot, /^raw_iron$/) === 0 && invCount(bot, /^iron_ingot$/) < 3) || ironForArmor(bot) < 3;   // ★FIX (worker-sync 0630 frozen-alive): the sticky NIGHT_SMELT_IRON deadlocked into a smeltSafe no-op spin — chosen at dusk w/ raw_iron≥3, but once the iron was smelted+consumed WITHOUT reaching hasIronTierPick (ingots banked/used, no lasting iron pick), it stayed sticky dispatching smeltSafe('raw_iron',N) at raw_iron=0 → no-op every 1.5s, frozen until watchdog (live: pinned 9min @54,58 mob=FREE/ENC). Release when there's nothing left to smelt OR craft → re-evaluate → mine more iron. Does NOT gate pick-making.
         // ★P1-4 GET_IRON_ARMOR_SET 复活后语义 = 采集端(下铁带补铁库存), done 与提案门(RUNG 1.5)共用

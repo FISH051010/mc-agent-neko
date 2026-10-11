@@ -27,7 +27,7 @@ function fakeBot(inv, worn = []) {
 function nightWorld(decision) {
     const w = JSON.parse(JSON.stringify(EMPTY_WORLD));
     w.time = { ...w.time, phase: 'night', isDay: false };
-    w.kit = { ...w.kit, picks: 3, pickTier: 'iron', sufficientForUnderground: true };
+    w.kit = { ...w.kit, picks: 3, pickTier: 'iron', sufficientForUnderground: true, hasTablePath: true };   // ★T-0266 无台路时 NIGHT_SMELT_IRON 放手
     w.vitals = { ...w.vitals, hp: 20, food: 19, armor: 0 };
     w.nightPlan = { decision };
     return w;
@@ -37,7 +37,9 @@ test('T-0151: 防护优先序 — 11 铁先胸甲(8); 7 铁腿(7); 已有胸甲�
     // ★T-0229: 盾排第一 — 没盾时先盾; 有盾后同旧序
     assert.deepEqual(nextProtectionPiece([], 11), ['shield', 1]);
     assert.deepEqual(nextProtectionPiece(['shield'], 11), ['iron_chestplate', 8]);
-    assert.deepEqual(nextProtectionPiece(['shield'], 7), ['iron_leggings', 7]);
+    // ★T-0266 (监工拍板) 严格防护序: 7 铁造不起胸甲 = 攒锭, 不跳去造腿甲; 胸甲到手后 7 铁才造腿
+    assert.equal(nextProtectionPiece(['shield'], 7), null);
+    assert.deepEqual(nextProtectionPiece(['shield', 'iron_chestplate'], 7), ['iron_leggings', 7]);
     assert.equal(nextProtectionPiece(['shield', 'iron_chestplate'], 3), null);
     assert.deepEqual(PROTECTION_PIECES('iron').map(p => p[0]), ['shield', 'iron_chestplate', 'iron_leggings', 'iron_helmet', 'iron_boots']);
 });

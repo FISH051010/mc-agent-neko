@@ -82,7 +82,7 @@ export default async function craftArmor(bot, ctx, opts = {}) {
     const _matReserve = () => TIER === 'diamond' ? (_diaPicksN() >= 3 ? 0 : 9) : (_hasIronPick() ? 0 : 3);
     const _matBudget = () => _matTotal() - _matReserve();
 
-    let crafted = 0, stall = 0;
+    let crafted = 0, stall = 0, saving = null;
     for (let pass = 0; pass < 4; pass++) {
         if (bot.interrupt_code || bot.health <= 0 || Date.now() - t0 > maxMs) break;
 
@@ -91,14 +91,16 @@ export default async function craftArmor(bot, ctx, opts = {}) {
         // ★T-0170 (监工): 已有铁镐时防护序 胸 > 腿 > 铁剑 > 盔 > 靴 (与 armor_gate.PROTECTION_ORDER_WITH_SWORD 同序)
         const _goodSword = () => { try { return bot.inventory.items().some(i => /^(iron|diamond|netherite)_sword$/.test(i.name)); } catch (e) { return false; } };
         const _order = (TIER === 'iron' && _hasIronPick()) ? PROTECTION_PIECES_WITH_SWORD : PROTECTION_PIECES(TIER);
+        // ★T-0266 (监工拍板): 严格防护序 — 取序里第一件没有的 (不看料), 造不起就攒料 (saving), 不跳过胸甲去造头盔 (同 armor_gate.nextProtectionPiece)
         const target = (opts && opts.order === 'protection')
-            ? (_order.find(([n, c]) => (n === 'iron_sword' ? !_goodSword() : !havePiece(n)) && c <= (n === 'shield' ? _matTotal() : _matBudget())) || null)
+            ? (_order.find(([n]) => (n === 'iron_sword' ? !_goodSword() : !havePiece(n))) || null)
             : PIECES.find(([n]) => !havePiece(n));
-        if (!target) break; // full set held/worn (or nothing affordable in protection order) — done
+        if (!target) break; // full set held/worn — done
         const [piece, cost] = target;
 
         // ★材料保留额执行点: 这件甲会吃掉镐的保留材料 → 停 (钻甲留 9 钻给 3 钻镐; 铁甲留 3 铁给镐)。
         if (cost > (piece === 'shield' ? _matTotal() : _matBudget())) {   // ★T-0229 盾不吃铁镐预留额
+            saving = { piece, need: cost, have: piece === 'shield' ? _matTotal() : _matBudget() };
             log(bot, `craftArmor[${TIER}]: RESERVE gate — ${piece} costs ${cost} but budget is ${_matBudget()} `
                 + `(mat ${_matTotal()}, reserve ${_matReserve()}) — stopping, material goes to the pickaxe first.`);
             break;
@@ -177,6 +179,11 @@ export default async function craftArmor(bot, ctx, opts = {}) {
     const progressed = crafted > 0 || newlyWorn > 0 || have >= 4;
     log(bot, `craftArmor[${TIER}] done: crafted ${crafted}, newly worn ${newlyWorn > 0 ? newlyWorn : 0}, ${TIER} armor held+worn=${have}/4, `
         + (TIER === 'diamond' ? `diamond=${inv()['diamond'] || 0} diaPicks=${_diaPicksN()} ` : `iron_ingot=${inv()['iron_ingot'] || 0} raw_iron=${inv()['raw_iron'] || 0} `) + `hp=${Math.round(bot.health || 0)}`
-        + (progressed ? '' : ' — NO progress this dispatch → false (kernel 3-strike cooldown).'));
+        + (progressed ? '' : saving ? ` — saving for ${saving.piece}` : ' — NO progress this dispatch → false (kernel 3-strike cooldown).'));
+    // ★T-0266 (监工): 下一件料不够 = 攒料, 不是失败 (决策层同判据已不再提; 万一派到也不记连败)
+    if (!progressed && saving) {
+        progLine(`craftArmor: saving ${TIER} for ${saving.piece} (${saving.have}/${saving.need}) — protection order kept, not skipping to a cheaper piece`);
+        return { ok: true, saving: saving.piece, need: saving.need, have: saving.have };
+    }
     return progressed ? (have || crafted || newlyWorn || true) : false;   // ★T-0229 只造了盾时 have=0 也要真值
 }
