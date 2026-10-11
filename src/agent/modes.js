@@ -13,6 +13,7 @@ import fs from 'fs';
 import Vec3 from 'vec3';
 import { appendTelemetry } from '../utils/telemetry.js';
 import { installReflexBodyGate, reflexCtx, holdBodyForReflex, holderName } from './framework/reflex_body_gate.js';
+import { installDigAbortProbe } from './framework/dig_abort_probe.js';   // ★T-0260
 import { bumpWedgeStreak } from './framework/wedge_streak.js';
 // Framework v2 lava_guard — pure read predicate (no lane, no flag), safe to call
 // from a reflex. Wires the blueprint §E.2 "never clutch over lava" guard into the
@@ -7837,6 +7838,8 @@ export function initModes(agent) {
     _agent = agent;
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();
+    // ★T-0260: name the caller of every bot.stopDigging() from the first dig on (was installed only when mineDown ran).
+    try { installDigAbortProbe(agent.bot); } catch (e) {}
     // ★T-0231: one owner drives the body — while a reflex mode holds it, skill-chain setGoal/keys are refused.
     try {
         installReflexBodyGate(agent.bot, { onBlock: (kind, detail) => {

@@ -3348,6 +3348,8 @@
 
 - **★C443-S chopWood 采集锁定选中的树 + 零镐就近用现成工作台 (T-0272, 监工 T-0271 验收效率)**（2026-10-11，worker-stuck，T-0272）: 10-11 05:57:48→06:01:37Z @30,67,-9 — chopWood 按 T-0256 选了最近的落地树 (iter 行 nearest=spruce_log@10.9b), 却以 skills.collectBlock(bot, nearest.t, …) 只传方块类型, collectBlock 自己重新挑最近的 spruce_log = bot 头顶 6 格的悬空树干 spruce_log@30,73,-10: 76 次寻路 GoalNear(30,73,-10) 全 partial (len 0, 原地不动 — 监工看到 06:00:00-07 ctrl '-' path 0), 9 次挖掘全 'Digging aborted'; 超时后 raw-approach 只剩 2.5s 走向真目标 → C323 'no closer' 拉黑。T-0256 的选树在执行这一步被绕过。修: 新导出 collectExcludeForTarget(positions, target) — 选中树干列 (x,z) 以外的同类原木全部排除; collectBlock 前在 min(16, 到目标距离+1) 内 findBlocks 并传 exclude, collectBlock 只能挑选中的那棵。另 (监工截帧地上 3 张旧台): replenishKit ③.4 零镐在地表且 12 格内有放好的工作台 → 走到台边 (≤15s), ④ 的 craftRecipeLocal 认 4 格内的台; ③.5 零镐且台在旁时不造口袋台 (有镐后随身台照常补)。test/chop_collect_target.test.mjs (T-0272 ×4); replenish_first_pick_hold 钉子随条件放宽。热加载。全套 884/884。
 
+- **★C444-S dig-abort 探针启动即装: 搬进 src/agent/framework/dig_abort_probe.js, modes.initModes 安装 (T-0260)**（2026-10-11，worker-stuck，T-0260）: 10-11 05:58-06:01Z chopWood 对 spruce_log@30,73,-10 的 9 次 'Digging aborted' 没留 [dig-abort] 行 — 探针只在 mineDown 入口安装, 05:53 重启后 mineDown 还没跑过。不让 chopWood 静态导入 mineDown (缓存旧版缺导出 → chopWood 整个加载失败 → 一阶瘫痪)。修: 探针实现原样搬进新模块 dig_abort_probe.js (installDigAbortProbe/DIG_ABORT_PROBE_V, 同版本号不重复挂), modes.initModes 启动即装, mineDown 改为导入并转出 (原入口调用保留)。test/dig_abort_probe.test.mjs 追加钉子 ×1。src → 随下次重启。全套 887/887。
+
 ---
 
 ---

@@ -61,3 +61,12 @@ test('T-0260 v2: every abort is logged with block / caller / holder / skill; an 
     mobilityGuardedDig();
     assert.equal(lines.length, 1, 'throttled');
 });
+
+test('T-0260: the probe lives in src/agent/framework/dig_abort_probe.js, modes installs it at init, mineDown re-exports it', () => {
+    const modes = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(modes, /import \{ installDigAbortProbe \} from '\.\/framework\/dig_abort_probe\.js';/);
+    assert.match(modes, /try \{ installDigAbortProbe\(agent\.bot\); \} catch \(e\) \{\}/);
+    const md = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
+    assert.match(md, /from '\.\.\/\.\.\/\.\.\/src\/agent\/framework\/dig_abort_probe\.js'/);
+    assert.doesNotMatch(md, /export function installDigAbortProbe/);
+});
