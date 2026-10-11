@@ -37,6 +37,7 @@ import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep
 import { hostileActionable } from './framework/hostile_reach.js';
 import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, unownedDangerThreshold, effectivelyOwned, lowHpHoldRecovers, bunkerTooLate, BUNKER_TOO_LATE_B, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
+import { enclosedAt } from './framework/surface_judge.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
 import { recordSightings } from './framework/animal_sightings.js';
@@ -4452,21 +4453,9 @@ const modes_list = [
                 // y94 surface → exits=0 + upOpen → POCKET → bogus pillar/dig-up reflex + enclosed→surfaceUp
                 // competing with the famine VENTURE → stuck. POCKET now requires upOpen AND enc(covered);
                 // upOpen but sky-visible ⇒ FREE (exposed ledge, can travel). !upOpen ⇒ ENTOMBED (unchanged).
+                // ★T-0265: canopy (leaves/logs) is not a roof — surface_judge.enclosedAt is the one scan.
                 let enc = true;
-                try {
-                    const mP = bot.entity.position.floored();
-                    outer:
-                    for (const ddx of [-4, 0, 4]) {
-                        for (const ddz of [-4, 0, 4]) {
-                            let covered = false;
-                            for (let dy = 2; dy <= 36; dy++) {
-                                const cb = bot.blockAt(mP.offset(ddx, dy, ddz));
-                                if (cb && cb.boundingBox === 'block') { covered = true; break; }
-                            }
-                            if (!covered) { enc = false; break outer; }
-                        }
-                    }
-                } catch (e) { enc = false; }
+                try { enc = enclosedAt((q) => bot.blockAt(new Vec3(q.x, q.y, q.z)), bot.entity.position.floored()); } catch (e) { enc = false; }
                 st = mobilityBaseState({ inWater, exitsN: exits.length, upOpen, enc });
                 // ★C346 (T-0091): SWIM_STUCK sub-state. Plain SWIM hands the body to the swim
                 // instinct (self_preservation in-water branch) and walks away. But the
@@ -6418,15 +6407,7 @@ const modes_list = [
                     }
                     const upOpen = !solid(bot.blockAt(m.offset(0, 2, 0)));
                     const inWater = /water/.test((bot.blockAt(m) || {}).name || '') || /water/.test((bot.blockAt(m.offset(0, 1, 0)) || {}).name || '');
-                    let enc = true;
-                    encScan:
-                    for (const ddx of [-4, 0, 4]) {
-                        for (const ddz of [-4, 0, 4]) {
-                            let cov = false;
-                            for (let dy = 2; dy <= 36; dy++) { const cb = bot.blockAt(m.offset(ddx, dy, ddz)); if (cb && cb.boundingBox === 'block') { cov = true; break; } }
-                            if (!cov) { enc = false; break encScan; }
-                        }
-                    }
+                    const enc = enclosedAt((q) => bot.blockAt(new Vec3(q.x, q.y, q.z)), m);   // ★T-0265 canopy-blind
                     let st = inWater ? 'SWIM' : (exits.length ? 'FREE' : ((upOpen && enc) ? 'POCKET' : (upOpen ? 'FREE' : 'ENTOMBED')));
                     if (bot._mobility && bot._mobility.state === 'MAROONED') st = 'MAROONED';
                     mob = { state: st, enclosed: enc, exits };

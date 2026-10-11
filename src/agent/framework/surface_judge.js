@@ -73,6 +73,33 @@ export function openRingCount(blockAt, feet, spacing = SURFACE_RING_SPACING, max
     return n;
 }
 
+// ★T-0265: mobility.enclosed ("cut off from the open sky — night can't reach me", also the POCKET roof test) used to be
+//   a hand-written 3x3 × 36-up scan in modes.js that took ANY solid as a roof → a dense canopy made a bare bot on the grass
+//   "enclosed" and every night gate (shouldNightShelter, MINE_THROUGH_NIGHT, NIGHT-BAIL, flee…) called it sheltered.
+//   Same grid as before (±4, 9 columns from feet+2 to +36), but canopy is never a roof and — unlike rockRoofAbove —
+//   neither is a fluid: a lake bottom stays exposed (water had boundingBox 'empty' in the old scan too).
+export const ENCLOSED_GRID = [-4, 0, 4];
+/** dy (2..maxDy above the feet) of the first non-canopy solid, ignoring fluids; null when there is none. */
+export function solidRoofAbove(blockAt, feet, maxDy = ROOF_SCAN_DY) {
+    const fx = Math.floor(feet.x), fy = Math.floor(feet.y), fz = Math.floor(feet.z);
+    for (let dy = 2; dy <= maxDy; dy++) {
+        let b = null;
+        try { b = blockAt({ x: fx, y: fy + dy, z: fz }); } catch (e) { b = null; }
+        if (b && b.boundingBox === 'block' && !isCanopyBlock(b)) return dy;
+    }
+    return null;
+}
+/** Every column of the 3x3 grid (spacing 4) has a non-canopy solid roof within maxDy. */
+export function enclosedAt(blockAt, feet, maxDy = ROOF_SCAN_DY) {
+    const fx = Math.floor(feet.x), fz = Math.floor(feet.z);
+    for (const dx of ENCLOSED_GRID) {
+        for (const dz of ENCLOSED_GRID) {
+            if (solidRoofAbove(blockAt, { x: fx + dx, y: feet.y, z: fz + dz }, maxDy) == null) return false;
+        }
+    }
+    return true;
+}
+
 /** Pure verdict. sky: true/false/null (skyOpenAt); rockRoof: number|null (rockRoofAbove), undefined = no world data; openRing: number|undefined. */
 export function onSurfaceAt({ y, sky, rockRoof, openRing }) {
     if (!Number.isFinite(y)) return false;

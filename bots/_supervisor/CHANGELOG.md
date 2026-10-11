@@ -12,6 +12,24 @@
 
 ---
 
+## C413. ★夜间暴露判据不再把树冠当屋顶: mobility.enclosed 改走 surface_judge.enclosedAt（modes.js 需重启,T-0265,worker-death,⏳待重启）
+- **证据**: T-0258 审计 C 类。modes.js 两处手写 3x3 网格 ×36 格向上扫描（mobility 分类器、world-model 观察者）把任何实心块都当成顶，树叶和原木也算。密林里裸站在草地上的 bot 会被判 enclosed，于是 shouldNightShelter、MINE_THROUGH_NIGHT、chopWood/achieve 的 NIGHT-BAIL、flee 面包屑、nightBunker 判据都把它当成"已庇护"，夜里不躲也不撤。
+- **假设**: enclosed 的语义本来就是"与开放天空隔绝（封闭地穴）"。树冠下仍然是地表，怪会从侧面走进来，所以树冠下本身就不该算 enclosed。surface_judge 已经有 canopy 规则 (isCanopyBlock)，应当共用这一处。
+- **改动**: surface_judge 新增 solidRoofAbove，只认非树冠的实心块，流体不算（与 rockRoofAbove 不同：湖底在旧扫描里也算暴露，因为水的 boundingBox 是 empty）；新增 enclosedAt，网格和扫描高度与旧逻辑相同。modes.js 两处扫描都改调 enclosedAt。测试 test/enclosed_canopy.test.mjs 覆盖：树冠→false、岩顶→true、树叶上方有岩→true、水→false、一列开天窗→false，并钉住 modes.js 不再出现手写的 36 格探测。
+- **可证伪预测**: 密林地表 progress.txt 不再出现 `[mobility] enclosed → true`。入夜时树冠下的 bot 会走 shouldNightShelter 去挖坑封顶，而不是继续砍树或挖矿。洞穴里的 enclosed 行为不变。
+- **回滚法**: modes.js 两处恢复为手写扫描（git revert 本提交）。
+
+---
+
+## C412. ★watchdog 不再随会话的 Job Object 一起被回收: ensure-stack 改用 Win32_Process.Create 拉起（ensure-stack.ps1 纳入 git 跟踪,T-0270,worker-death,🟡已生效）
+- **证据**: 10-11 13:35:21 后 watchdog.log 静默，没有 RESTART 行也没有退出行，main 宕了 7 分钟（13:35 到 13:42），直到某个会话的 SessionStart 钩子重新拉起 watchdog。旧 watchdog pid 5668 是 10-10 01:30 由某会话的 ensure-stack 用 Start-Process 拉起的。实测：Start-Process 起的子进程 IsProcessInJob=True；Invoke-CimMethod Win32_Process Create 起的子进程 IsProcessInJob=False，父进程是 WmiPrvSE。
+- **假设**: Start-Process 的子进程继承了 Claude 会话的 Job Object。发起会话结束时 job 被整体终止，watchdog 被强杀，来不及写日志，它拉起的 main/bridge 等也一起被杀。
+- **改动**: ensure-stack.ps1 改为 Invoke-CimMethod Win32_Process Create（带 CurrentDirectory=$proj），失败时才回退到 Start-Process 并打印 WARN。watchdog.ps1 头注释的启动方式同步修正。.gitignore 放行 bots/_supervisor/ensure-stack.ps1（原先被 bots/_supervisor/* 排除，只在主工作树有一份没被跟踪的文件）。测试 test/ensure_stack_detach.test.mjs。
+- **可证伪预测**: 换宿主后 watchdog 的 IsProcessInJob=False，它新拉起的 main/bridge 也是 False；任何 Claude 会话结束都不再导致 watchdog.log 静默断档。
+- **回滚法**: ensure-stack.ps1 恢复为 Start-Process（git revert）。
+
+---
+
 ## C411. ★窒息时 T-0131② 低血拒挖重力柱不再生效 (保护规则堵死唯一出路) + pickDryDigSpot 不选原点列（modes.js/mobility_geom.js 需重启,T-0268 death #55,worker-death,⏳待重启）
 
 **证据**: death #55 05:30:43 suffocation y-8 (丢 24 铁+钻石+2 铁镐)。MAROONED 在洞底 y-7, 凿崖上爬挖 tuff 被重力总闸拒 (tuff 上压砂砾) ×20; 05:30:33 mobility 侧移走进 113,-8 (邻 112,-5 'UNSETTLED column still collapsing'), 05:30:35 砂砾落头。之后 reflex_watchdog SUFFOCATION 'dig out NOW' ×4, mobility dig 'Digging aborted' ×2, `★T-0131 gravity dig refused at hp=4/3/2 (ENTOMBED) gravel@…/diorite@…` ×6 → 16→0。另: 重生后 05:31:32 `relocate-dry-dig→-4,64,-5 @-4,64,-5` — pickDryDigSpot 选回了原点列。
