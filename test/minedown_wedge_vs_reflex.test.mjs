@@ -26,3 +26,13 @@ test('T-0267: mineDown snapshots gate refusals around the walk and waits for the
     assert.match(src, /if \(_so === 'reflex'\) \{/);
     assert.match(src, /from '\.\.\/\.\.\/\.\.\/src\/agent\/framework\/reflex_body_gate\.js'/);
 });
+
+test('T-0267: the bound is live — mineDown counts each reflex hold before re-taking the step (else a stuck reflex waits forever)', () => {
+    // worker-tests mutation 10-11: dropping `reflexWaits++` kept every other T-0267 pin green, yet stepOutcome then sees
+    // reflexWaits=0 forever → a reflex that never lets go re-takes the same step every 4s with no wedge, no fail.
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
+    const branch = /if \(_so === 'reflex'\) \{([\s\S]*?)\n\s*continue;/.exec(src);
+    assert.ok(branch, 'reflex branch ends in continue');
+    assert.match(branch[1], /\breflexWaits\+\+|\breflexWaits \+= 1\b|\+\+reflexWaits\b/);
+    assert.match(src, /let reflexWaits = 0;/, 'per-dispatch counter, reset each run');
+});
