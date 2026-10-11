@@ -699,6 +699,7 @@ export class Agent {
                     skill: this.bot._currentSkill || null,
                     supervised: this.supervised_skill || null,
                     action: (this.actions && this.actions.currentActionLabel) || null,
+                    commitment: (this.bot._commitment && this.bot._commitment.kind) || null,
                     at: Date.now(),   // ★T-0235: the death_log writer only trusts a snapshot newer than the last spawn (death_attribution.js)
                 };
             } catch (e) {}
@@ -876,7 +877,8 @@ export class Agent {
                         ...pickDeathLayers({
                             captured: b && b._deathLayers,
                             lastSpawnAt: b && b._lastSpawnAt,
-                            live: { action: (this.actions && this.actions.currentActionLabel) || null, skill: (b && b._currentSkill) || null, supervised: this.supervised_skill || null },
+                            live: { action: (this.actions && this.actions.currentActionLabel) || null, skill: (b && b._currentSkill) || null, supervised: this.supervised_skill || null,
+                                commitment: (b && b._commitment && b._commitment.kind) || null },
                         }),
                     };
                     fs.appendFileSync(SUP('death_log.jsonl'), JSON.stringify(rec) + '\n');

@@ -49,8 +49,25 @@ test('T-0235: an un-timestamped legacy snapshot is never trusted', () => {
 test('T-0235 wiring: snapshot time-stamped, spawn stamps _lastSpawnAt and clears it, writer goes through pickDeathLayers', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const src = fs.readFileSync(path.join(root, 'src', 'agent', 'agent.js'), 'utf8');
-    assert.match(src, /this\.bot\._deathLayers = \{[\s\S]{0,300}at: Date\.now\(\)/);
+    assert.match(src, /this\.bot\._deathLayers = \{[\s\S]{0,600}at: Date\.now\(\)/);
     assert.match(src, /bot\.on\('spawn', \(\) => \{ try \{ bot\._lastSpawnAt = Date\.now\(\); bot\._deathLayers = null; \} catch \(e\) \{\} \}\);/);
-    assert.match(src, /pickDeathLayers\(\{[\s\S]{0,200}lastSpawnAt: b && b\._lastSpawnAt/);
+    assert.match(src, /pickDeathLayers\(\{[\s\S]{0,600}lastSpawnAt: b && b\._lastSpawnAt/);
     assert.doesNotMatch(src, /action: \(b && b\._deathLayers && b\._deathLayers\.action\)/, 'raw stale read must be gone');
+});
+
+test('T-0235 补: death_log records the kernel commitment KIND (supervised is always kernel/ws under kernelDriver)', () => {
+    const fresh = pickDeathLayers({
+        captured: { skill: 'mineDown', supervised: 'ws', commitment: 'GO_UNDERGROUND', at: 2000 },
+        live: { skill: null, supervised: null, commitment: null }, lastSpawnAt: 1000,
+    });
+    assert.equal(fresh.commitment, 'GO_UNDERGROUND');
+    const chain = pickDeathLayers({
+        captured: { commitment: 'NIGHT_DIG_ONE', at: 1000 },
+        live: { commitment: 'MIGRATE' }, lastSpawnAt: 1500,
+    });
+    assert.equal(chain.commitment, 'MIGRATE', 'previous life commitment must not leak either');
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const src = fs.readFileSync(path.join(root, 'src', 'agent', 'agent.js'), 'utf8');
+    assert.match(src, /commitment: \(this\.bot\._commitment && this\.bot\._commitment\.kind\) \|\| null,/);
+    assert.match(src, /commitment: \(b && b\._commitment && b\._commitment\.kind\) \|\| null \},/);
 });

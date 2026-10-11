@@ -11,7 +11,7 @@
 // wrong for chain deaths (T-0236: respawned onto the death point and was at hp4 again within 10s). The spawn handler
 // also clears the snapshot, so a stale one can't survive a respawn either way.
 
-// captured = bot._deathLayers ({skill, supervised, action, at}); live = the layers read right now;
+// captured = bot._deathLayers ({skill, supervised, action, commitment, at}); live = the layers read right now;
 // lastSpawnAt = time of the most recent spawn/respawn (bot._lastSpawnAt), 0/undefined if unknown.
 export function pickDeathLayers({ captured, live, lastSpawnAt = 0 }) {
     const fresh = !!(captured && Number.isFinite(captured.at) && captured.at > (lastSpawnAt || 0));
@@ -20,5 +20,8 @@ export function pickDeathLayers({ captured, live, lastSpawnAt = 0 }) {
         action: src.action || live.action || null,
         skill: src.skill || live.skill || null,
         supervised: src.supervised || live.supervised || null,
+        // ★T-0235 补: under kernelDriver supervised_skill is always 'kernel'/'ws' — the kernel commitment KIND
+        // (GO_UNDERGROUND / NIGHT_DIG_ONE / MIGRATE …) is what actually says what the bot was trying to do.
+        commitment: src.commitment || live.commitment || null,
     };
 }
