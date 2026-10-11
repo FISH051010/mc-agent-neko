@@ -1649,12 +1649,14 @@ export function proposeTasks(world, bot) {
     //   真任务冷却一结束就重新选它, 不粘承诺; 兜底本身失败 3 次也走正常冷却, 不热转。
     try {
         const _cdu = bot && bot._kindCooldownUntil && bot._kindCooldownUntil[PROPOSAL_KIND.IDLE_FALLBACK];
-        if (overworld && time.phase === 'day' && !(threat.actionable > 0) && bot && !bot._healLatch
+        // ★T-0263 补 (监工): admin 下发的任务在跑 (_adminMission.active) 或 admin 独占窗口内 (_extIntentUntil) 不触发兜底
+        const _adminBusy = !!(bot && ((bot._adminMission && bot._adminMission.active) || (bot._extIntentUntil && Date.now() < bot._extIntentUntil)));
+        if (overworld && time.phase === 'day' && !(threat.actionable > 0) && bot && !bot._healLatch && !_adminBusy
             && !_final.some(p => p.kind !== PROPOSAL_KIND.FREE_PLAY) && !(_cdu && Date.now() < _cdu)) {
             let fb = dayFallbackTask(w, bot);
-            // 兜底在过滤之后才加: 下挖类须自己过下挖门 (T-0237 descentBlocked / T-0243 近距原始敌对), 不满足就退为侦察
+            // 兜底在过滤之后才加: 下挖类须自己过下挖门 (T-0237 descentBlocked / T-0243 近距原始敌对), 不满足就不派 (交给反射/HEAL, 不退成漫游)
             if (fb && DESCENT_SKILL_RE.test(fb.skill) && (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }) || hostileRawNear(bot, DESCENT_HOSTILE_R) > 0))
-                fb = { skill: 'scoutResources', args: [{ need: 'both' }], rationale: 'day fallback: descent gated — scout instead' };
+                fb = null;
             if (fb) _final.push({ kind: PROPOSAL_KIND.IDLE_FALLBACK, priority: 2, ...fb });
         }
     } catch (e) {}
@@ -1662,7 +1664,8 @@ export function proposeTasks(world, bot) {
     return _final;
 }
 
-/** ★T-0263 白天兜底活的选择 (纯函数): 缺木 → chopWood; 封坑料不足 → 有镐 mineDown 浅挖 / 零镐 gatherDirt; 其余 → scoutResources。 */
+/** ★T-0263 白天兜底活的选择 (纯函数): 缺木 → chopWood; 封坑料不足 → 有镐 mineDown 浅挖 / 零镐 gatherDirt; 其余 → 有镐原地浅挖攒石/矿, 零镐砍木。
+ *  ★T-0263 补 (监工, 07-08 令防'到处乱逛'): 兜底绝不侦察漫游 (scoutResources 会直奔数百格外的已知村庄/灯塔, 无界) — 只做原地有界的活。 */
 export function dayFallbackTask(w, bot) {
     if (woodUnits(bot) < 16) return { skill: 'chopWood', args: [8], rationale: `day fallback: all proposals cooled/gated — chop wood (planksEq ${woodUnits(bot)}<16)` };
     if (sealFillerCount(invCounts(bot)) < SEAL_FILLER_TARGET) {
@@ -1670,7 +1673,9 @@ export function dayFallbackTask(w, bot) {
             ? { skill: 'mineDown', args: [{ targetY: stoneBootstrapTargetY(w) }], rationale: `day fallback: all proposals cooled/gated — dig a little stone (filler ${sealFillerCount(invCounts(bot))}<${SEAL_FILLER_TARGET})` }
             : { skill: 'gatherDirt', args: [{ count: SEAL_FILLER_TARGET }], rationale: `day fallback: all proposals cooled/gated — hand-dig dirt (filler ${sealFillerCount(invCounts(bot))}<${SEAL_FILLER_TARGET})` };
     }
-    return { skill: 'scoutResources', args: [{ need: 'both' }], rationale: 'day fallback: all proposals cooled/gated — scout for resources instead of standing still' };
+    return totalPicks(bot) >= 1
+        ? { skill: 'mineDown', args: [{ targetY: stoneBootstrapTargetY(w) }], rationale: 'day fallback: all proposals cooled/gated — dig a few blocks in place for stone/ore (bounded ≤6 deep, no roaming)' }
+        : { skill: 'chopWood', args: [8], rationale: 'day fallback: all proposals cooled/gated — chop wood (bounded count, no roaming)' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
