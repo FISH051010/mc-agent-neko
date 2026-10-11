@@ -52,3 +52,12 @@ test('T-0278: quickMeal 吃的顺序 — 腐肉只在 food≤3 时才吃, 排在
     const i = src.indexOf("'rotten_flesh' : null"), j = src.indexOf("c.chicken > 0 ? 'chicken' : null");
     assert.ok(j > 0 && i > j, 'rotten flesh is the last resort');
 });
+
+test('T-0278: 打僵尸这条路真能走通 — 不给自己的猎物让路; 杀掉拿到腐肉算"打到肉"; 30 格外的僵尸不算', () => {
+    // worker-tests 变异 10-11: ①yield 分支不豁免猎物本身 → 每次先等这只僵尸走开 15s 再放弃, 永远不出手; ②gotMeat 只认生肉 →
+    // 打死僵尸拿到腐肉也记 'hunt yielded no meat' → 冷却; ③扫描半径 16→64 → 去追 30+ 格外的僵尸。上面三条均照绿。
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/quickMeal.js', import.meta.url), 'utf8');
+    assert.match(src, /if \(hd\.action === 'yield' && !\(zombieHunt && hd\.h && hd\.h\.name === target\.name\) && /, 'the hunted zombie is not a reason to wait');
+    assert.match(src, /gotMeat = rawHeld\(\) > r0 \|\| \(zombieHunt && \(inv\(\)\.rotten_flesh \|\| 0\) > rf0\);/, 'rotten flesh from the kill counts');
+    assert.equal(zombieFoodTarget(fakeBot({ mobs: [{ name: 'zombie', d: 30 }] })), null, 'out of the 16b engage radius');
+});
