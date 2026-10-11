@@ -158,7 +158,7 @@ loop:
 | 0e81e7a (worker-tests) | src/agent/library/skills.js | main.js | goToPosition 搭路填充块/partial 路径选择(T-0052/T-0053 C319/C320)提为纯函数，无行为变化 |
 | f2a19f8 (worker-tests) | src/agent/modes.js + src/agent/combat_gates.js | main.js | bunkerDown 冷却期重开门(T-0050 C316-A / T-0067)原样抽出为 bunkerCooldownReopen，无行为变化 |
 | ac5b0b6 (worker-tests) | src/agent/modes.js + src/agent/framework/mobility_signals.js | main.js | pin-breaker 退避/升级(C234)抽为 pinKickIntervalMs/pinKickEscalates，无行为变化 |
-| 3cb5405 (worker-tests) | src/agent/agent.js + 新 src/agent/death_attribution.js | main.js | ⚠**行为修复 T-0235**：death_log 的 skill/action 只信新鲜快照（不再沿用上一次死亡） |
+| 3cb5405 + 9d46dd3 (worker-tests) | src/agent/agent.js + 新 src/agent/death_attribution.js | main.js | ⚠**行为修复 T-0235**：death_log 的 skill/action 只信晚于最近一次 spawn 的快照（不再沿用上一次死亡，含连死） |
 | ~~b7fda85 (overseer)~~ ✅ 00:17 cancel re-arm 上线 | bots/_supervisor/skills/kernelDriver.js | 顶层 sticky（**白天无怪** cancel re-arm） | ⚠**有行为变化·优先**：派发器等待改 pace()（不认 interrupt_code），根治 interrupt 粘住时 1.3s 跑满 5000 次热转。注意 kernelDriver 测试须注入 ctx.pace |
 | ~~fc52c61 (overseer)~~ ✅ main 17:36:40Z + botwatch 01:38 上线 | src/agent/modes.js + src/websocket/ws_server.js + botwatch | main.js **和** botwatch | ⚠**有行为变化**：MOBILITY-STALE 检测器(mobility 分类器停更>30s 报警, T-0124 后续)。只加时间戳/字段/检测器, 不改决策 |
 | ~~1845609 (overseer)~~ ✅ 02:38 重启上线 | src/websocket/ws_server.js | main.js | vitals 从未分类显示 NONE(非 '?')，消除重启后 MOBILITY-STALE 误报；只改观测字段 |
