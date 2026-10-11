@@ -61,5 +61,5 @@ test('T-0284: small chip damage does not abort; modes wires the instinct to the 
     assert.equal(w.fired(), false);
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     assert.match(src, /test: \(w, b\) => goSleepInstinctEligible\(w, b\),/);
-    assert.match(src, /const _hurt = abortWalkOnHurt\(b, \{/);
+    assert.match(src, /travels: true,\s+travelDist: \(w\) => sleepTargetDist\(w\),/);   // T-0290: watcher now applied by runInstinct
 });

@@ -13,7 +13,7 @@ import fs from 'fs';
 import Vec3 from 'vec3';
 import { appendTelemetry } from '../utils/telemetry.js';
 import { installReflexBodyGate, reflexCtx, holdBodyForReflex, holderName } from './framework/reflex_body_gate.js';
-import { goSleepInstinctEligible, abortWalkOnHurt } from './framework/sleep_instinct.js';
+import { goSleepInstinctEligible, sleepTargetDist } from './framework/sleep_instinct.js';
 import { installDigAbortProbe } from './framework/dig_abort_probe.js';   // ★T-0260
 import { bumpWedgeStreak } from './framework/wedge_streak.js';
 // Framework v2 lava_guard — pure read predicate (no lane, no flag), safe to call
@@ -7171,14 +7171,17 @@ const modes_list = [
                             //   NIGHT_SEAL — NIGHT_SMELT_IRON slipped through and the instinct ran a 272b goto over smeltSafe), never when
                             //   hurt/healing, never >64b; the 07-02 yield-to-night-plan and 07-08 near/far rules are kept (framework/sleep_instinct.js).
                             test: (w, b) => goSleepInstinctEligible(w, b),
+                            // ★T-0290: travelling instinct — runInstinct enforces the shared guard (instinct_travel.js) and runs the act under
+                            //   the hurt/commitment watcher (c.hurt): a fall/hit or the kernel committing meanwhile halts the walk now
+                            travels: true,
+                            travelDist: (w) => sleepTargetDist(w),
+                            onHalt: (h0, h1, why) => { try { bot._bedSleepFailAt = Date.now(); fs.appendFileSync('bots/_supervisor/instinct.log', `[${new Date().toISOString()}] [本能] go_to_bed_sleep 途中${why ? '让位 ' + why : '受伤'} hp ${h0}→${h1} — 停止赶路 (T-0284/T-0290)\n`); } catch (e) {} },
                             act: async (w, b, c) => {
                                 const lm = (w && w.landmarks) || {}; const tgt = lm.bed || lm.village; if (!tgt) return;
                                 const hp = b.entity.position;
                                 if (Math.hypot(hp.x - tgt.x, hp.z - tgt.z) > 2.5 && !b.interrupt_code) {
-                                    // ★T-0284: hurt on the way (fall/hit) → halt the walk now, hand the body to reflexes/HEAL, no re-fire for 3min
-                                    const _hurt = abortWalkOnHurt(b, { onAbort: (h0, h1) => { try { b._bedSleepFailAt = Date.now(); fs.appendFileSync('bots/_supervisor/instinct.log', `[${new Date().toISOString()}] [本能] go_to_bed_sleep 途中受伤 hp ${h0}→${h1} — 停止赶路 (T-0284)\n`); } catch (e) {} } });
-                                    try { await c.skills.goToPosition(b, tgt.x, tgt.y, tgt.z, 2); } catch (e) {} finally { _hurt.stop(); }
-                                    if (_hurt.fired()) return;
+                                    try { await c.skills.goToPosition(b, tgt.x, tgt.y, tgt.z, 2); } catch (e) {}
+                                    if (c.hurt && c.hurt.fired()) return;
                                 }
                                 if (b.interrupt_code) return;
                                 const bed = b.findBlock({ matching: (bl) => bl && /_bed$/.test(bl.name || ''), maxDistance: 6 });

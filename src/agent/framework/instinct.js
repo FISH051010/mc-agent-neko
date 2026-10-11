@@ -23,6 +23,7 @@
  */
 
 import { getWorld } from './world_model.js';
+import { instinctTravelVeto, abortWalkOnHurt } from './instinct_travel.js';
 
 /** @type {import('./contracts.js').Instinct[]} */
 const REGISTRY = [];
@@ -137,6 +138,14 @@ export function runInstinct(bot, instinct, world, ctx) {
     const eps = episodes(bot);
     let hit = false;
     try { hit = !!instinct.test(world, bot); } catch (e) { hit = false; }
+    // ★T-0290: an instinct that moves the body must pass the shared travel guard (live commitment yields / hurt or healing /
+    //   cross-map) — enforced HERE so no travelling instinct can skip it (T-0284 death #56: the sleep instinct's own yield list
+    //   missed NIGHT_SMELT_IRON and ran a 272b goto over smeltSafe).
+    if (hit && instinct.travels) {
+        let dist = 0;
+        try { dist = typeof instinct.travelDist === 'function' ? instinct.travelDist(world, bot) : 0; } catch (e) { dist = Infinity; }
+        if (instinctTravelVeto(bot, { dist, maxDist: instinct.maxTravel })) hit = false;
+    }
 
     // Episode bookkeeping: a continuous run of test=true is ONE cycle; test=false ends it (re-arm).
     if (!hit) { if (eps[instinct.name]) delete eps[instinct.name]; return { fired: false, reason: 'test-false' }; }
@@ -151,9 +160,16 @@ export function runInstinct(bot, instinct, world, ctx) {
     if (ep.acting) return { fired: true, reason: 'already-acting', act: ep.acting };
 
     // 1) EXECUTE FIRST — launch the act optimistically; do NOT await it.
-    const act = Promise.resolve().then(() => instinct.act(world, bot, ctx)).catch(() => {});
+    //    ★T-0290: a travelling act runs under the hurt/commitment watcher — a fall or hit, or the kernel committing meanwhile,
+    //    halts its walk at once (ctx.hurt.fired() tells the act to give up).
+    const hurt = instinct.travels
+        ? abortWalkOnHurt(bot, { onAbort: (h0, h1, why) => { try { instinct.onHalt && instinct.onHalt(h0, h1, why); } catch (e) {} },
+            yieldIf: () => { const v = instinctTravelVeto(bot, { dist: 0 }); return v && !/^hp/.test(v) ? v : null; } })
+        : null;
+    const actCtx = hurt ? { ...(ctx || {}), hurt } : ctx;
+    const act = Promise.resolve().then(() => instinct.act(world, bot, actCtx)).catch(() => {});
     ep.acting = act;
-    act.finally(() => { if (ep.acting === act) ep.acting = null; });
+    act.finally(() => { if (hurt) hurt.stop(); if (ep.acting === act) ep.acting = null; });
 
     // 2) ASK THE LLM — ONCE per cycle, concurrently with the act (never blocks the act).
     if (instinct.askLLM && !ep.asked) {
