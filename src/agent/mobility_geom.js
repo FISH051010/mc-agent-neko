@@ -184,6 +184,37 @@ export function shieldDuelInsteadOfFlee({ coverFailed, hasShield, meleeNear }) {
     return !!(coverFailed && hasShield && !meleeNear);
 }
 
+/**
+ * ★T-0261 (death #54 04:27:54, 刚出水, 包里零填充): bunkerDown 原地 digDown 被邻水守卫拒 (0.6s 后 'cap failed') →
+ * pillar 失败 → kite 跑到另一处水边 (溺尸) → 死。人类: 往旁边干地挪几步再往下挖, 挖出的土石就是封顶料; kite 是最后手段。
+ * 纯选点: R 内可站 (脚/头空), 脚下可徒手挖的软土 (有镐时石头也算, 非重力块), 周围 2 格 (y-1..y+1) 无水/岩浆, 取最近。
+ * blockAt(x,y,z) → {name, boundingBox} | null ; origin {x,y,z} 整数
+ */
+const DRY_SOFT_RE = /^(dirt|coarse_dirt|rooted_dirt|grass_block|podzol|mycelium|clay|mud|moss_block|dirt_path|farmland)$/;
+const DRY_STONE_RE = /(stone|deepslate|tuff|andesite|diorite|granite|cobbled|calcite)$/;
+export function pickDryDigSpot(blockAt, origin, { R = 8, hasPick = false } = {}) {
+    let best = null, bd = Infinity;
+    const wet = (x, y, z) => { const b = blockAt(x, y, z); return !!(b && /water|lava/.test(b.name || '')); };
+    for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
+        const d2 = dx * dx + dz * dz;
+        if (d2 > R * R || d2 >= bd) continue;
+        for (const dy of [0, -1, 1]) {
+            const x = origin.x + dx, y = origin.y + dy, z = origin.z + dz;
+            const feet = blockAt(x, y, z), head = blockAt(x, y + 1, z), floor = blockAt(x, y - 1, z);
+            if (!(feet && feet.boundingBox === 'empty' && head && head.boundingBox === 'empty')) continue;
+            if (!(floor && floor.boundingBox === 'block')) continue;
+            const fn = floor.name || '';
+            if (!(DRY_SOFT_RE.test(fn) || (hasPick && DRY_STONE_RE.test(fn)))) continue;
+            let near = false;
+            for (let wx = -2; wx <= 2 && !near; wx++) for (let wz = -2; wz <= 2 && !near; wz++) for (const wy of [-2, -1, 0, 1]) { if (wet(x + wx, y + wy, z + wz)) { near = true; break; } }
+            if (near) continue;
+            best = { x, y, z }; bd = d2;
+            break;
+        }
+    }
+    return best;
+}
+
 /** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */
 export function pickCreeperRunDir(cands) {
     const okTerrain = (cands || []).filter(c => c && c.ok);

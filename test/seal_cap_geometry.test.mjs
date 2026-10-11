@@ -417,3 +417,24 @@ test('T-0226 实录 04:25 (骷髅连射, 背包只有 spruce_log×9 < 储备): �
     const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     assert.equal((m.match(/const _fb = skills\.resolveCapBlock\(bot, \{ emergency: true \}\);/g) || []).length, 2, 'swarm pillar + stuck pillar');
 });
+test('T-0261 death #54: 原地挖不下去 (邻水) 且无近战贴身 → 挪到 ≤8b 内干燥可挖处再挖; 选点避开 2 格内的水, 石头要有镐', async () => {
+    const { pickDryDigSpot } = await import('../src/agent/mobility_geom.js');
+    // 水体在 x≤2 (y62), 地面 y62 为草方块, 原点 (0,63,0) 刚出水
+    const world = (x, y, z) => {
+        if (y >= 63) return { name: 'air', boundingBox: 'empty' };
+        if (x <= 2 && y === 62) return { name: 'water', boundingBox: 'empty' };
+        return { name: y === 62 ? 'grass_block' : 'stone', boundingBox: 'block' };
+    };
+    const s = pickDryDigSpot(world, { x: 0, y: 63, z: 0 }, { R: 8 });
+    assert.ok(s, 'a dry spot exists');
+    assert.ok(s.x >= 5, `≥2 blocks from any water (got x=${s.x})`);
+    const stoneOnly = (x, y, z) => (y >= 63 ? { name: 'air', boundingBox: 'empty' } : { name: 'stone', boundingBox: 'block' });
+    assert.equal(pickDryDigSpot(stoneOnly, { x: 0, y: 63, z: 0 }, { hasPick: false }), null, 'bare hands cannot dig stone');
+    assert.ok(pickDryDigSpot(stoneOnly, { x: 0, y: 63, z: 0 }, { hasPick: true }), 'a pick can');
+    const allWet = (x, y, z) => (y >= 63 ? { name: 'air', boundingBox: 'empty' } : { name: 'water', boundingBox: 'empty' });
+    assert.equal(pickDryDigSpot(allWet, { x: 0, y: 63, z: 0 }), null);
+    const fs = await import('node:fs');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const bd = m.slice(m.indexOf('bunkerDown: async function'), m.indexOf('// CAP FIRST (highest priority', m.indexOf('bunkerDown: async function')));
+    assert.match(bd, /if \(Math\.floor\(bot\.entity\.position\.y\) >= y0\) \{[\s\S]*pickDryDigSpot\([\s\S]*goToPosition\([\s\S]*digDown\(bot, 1\)/, 'relocate-dry-dig runs before cap/pillar/run');
+});

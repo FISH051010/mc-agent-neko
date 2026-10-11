@@ -12,6 +12,14 @@
 
 ---
 
+## C409. ★入夜庇护原地挖不下去 → 先挪到附近干地再挖 (挖出的土石即封顶料), kite 退为最后手段（modes.js/mobility_geom.js 需重启,T-0261 death #54,worker-death,⏳待重启）
+
+**证据**: death #54 04:27:54 刚入夜, 04:26:31 刚从水里游出, 包里零填充。04:27:26.0 `bunkerDown enter @0,62,-81` → 0.6s 后 `cap failed → pillar-up fallback` (原地 digDown 一格都没下去 — 邻水守卫拒) → 04:27:29 `seal failed → run from swarm` → kite 25b 到 -16,64,-105 (又是水边, 溺尸) → 04:27:53 `no-filler roof-niche dig+walk` hp3 → 溺尸 0.9b 打死。
+**改动**: mobility_geom.pickDryDigSpot(blockAt, origin, {R:8, hasPick}): 可站、脚下软土 (有镐含石头, 非重力)、周围 2 格 (y-2..+1) 无水/岩浆, 取最近。bunkerDown 首轮下挖后若一格未下且 4b 内无近战怪 → `relocate-dry-dig→x,y,z (T-0261)` 走过去再 digDown ×2, 之后才进封顶/垫柱/run 兜底。
+**分工**: 决策层"黄昏前备填充方块"归 worker-tier (监工指派), 本条只管技能/反射层没料时怎么办。
+**可证伪预测**: 入夜在水边/硬地 bunkerDown 出现 `relocate-dry-dig→…` 而非直接 `cap failed → pillar-up` / `run from swarm`。
+**回滚**: revert, 重启。回归 seal_cap_geometry 'T-0261 death #54'。
+
 ## C408. 挡箭/垫柱应急取料放开原木储备 + 挡箭失败且有盾 → 面向射手举盾逼近, 不背身逃（skills.js/modes.js/mobility_geom.js 需重启,T-0226 续,worker-death,⏳待重启）
 
 **证据**: 04:25:08/09/23/25 `shot while fleeing by skeleton 9.2/7.6/7.9/6.9b → cover first: no-material placed=0` ×4, hp20→16→12; 背包只有 spruce_log×9 (≈36 板 < 64 储备, resolveCapBlock 拒用原木)。worker-tier 转报: 同时 arrow_guard 'raised shield (offhand=true)' 却照样中箭 — 背对骷髅冲刺逃跑, 盾只挡正前方且冲刺取消格挡, flee 的转向与 arrow_guard 的 look 抢朝向。

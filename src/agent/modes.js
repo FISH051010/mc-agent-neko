@@ -30,7 +30,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction, shieldDuelInsteadOfFlee } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction, shieldDuelInsteadOfFlee, pickDryDigSpot } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { hostileActionable } from './framework/hostile_reach.js';
@@ -1379,6 +1379,29 @@ const modes_list = [
                 const before = Math.floor(bot.entity.position.y);
                 try { await skills.digDown(bot, 1); } catch (e) {}
                 if (Math.floor(bot.entity.position.y) >= before) break; // couldn't descend (water/lava/stuck) — stop
+            }
+            // ★T-0261 (death #54): not one block down here (water-adjacent guard / hard floor) and no melee mob on us yet →
+            //   step to the nearest dry, diggable column (≤8b, nothing wet within 2) and dig there — the dug dirt/stone IS the
+            //   cap material. Only after this fails do we fall through to pillar / run (kiting is the last resort).
+            if (Math.floor(bot.entity.position.y) >= y0) {
+                try {
+                    const _me = bot.entity.position;
+                    const _melee4 = Object.values(bot.entities || {}).some(e => e && e !== bot.entity && e.position && mc.isHostile(e) && !/skeleton|stray|pillager|creeper|witch/i.test(e.name || '') && e.position.distanceTo(_me) < 4);
+                    if (!_melee4) {
+                        const _hasPick = bot.inventory.items().some(i => /_pickaxe$/.test(i.name || ''));
+                        const _spot = pickDryDigSpot((x, y, z) => bot.blockAt(new Vec3(x, y, z)), _me.floored(), { R: 8, hasPick: _hasPick });
+                        if (_spot) {
+                            _bdLog(`relocate-dry-dig→${_spot.x},${_spot.y},${_spot.z} (T-0261)`);
+                            try { await skills.goToPosition(bot, _spot.x + 0.5, _spot.y, _spot.z + 0.5, 0); } catch (e) {}
+                            const _y1 = Math.floor(bot.entity.position.y);
+                            for (let d = 0; d < 2 && Math.floor(bot.entity.position.y) > _y1 - 2; d++) {
+                                const before = Math.floor(bot.entity.position.y);
+                                try { await skills.digDown(bot, 1); } catch (e) {}
+                                if (Math.floor(bot.entity.position.y) >= before) break;
+                            }
+                        }
+                    }
+                } catch (e) {}
             }
             // CAP FIRST (highest priority — this is what actually stops the swarm).
             // ★T-0105 (seal-fail 根因): the old code placed the cap at a FIXED feet+2 after a fixed
