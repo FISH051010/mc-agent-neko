@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
 import { kernelYieldRequested } from './surfaceUp.js';   // ★T-0197 kernel commitment-flip stamp (T-0181)
-import { skyOpenAt } from '../../../src/agent/framework/food_floor.js';   // ★T-0257 T-0189 surface criterion (existing export)
+import { skyOpenAt, onSurfaceNow, shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 const _CHOP_PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const _dbg = (s) => { try { fs.appendFileSync(_CHOP_PROG, `[${new Date().toISOString()}] [chopDBG] ${s}\n`); } catch (e) {} };
 // ★perf 2026-07-09: death_log.jsonl grows all session and was re-read+split every main-loop iteration
@@ -119,14 +119,7 @@ export function xrayTrunkSkip(dist, canSee) {
 //   highSurface=false tree=13.3b → surfacing' → 'digToSurface NOPICK boxed' → 0 logs ×3 → cooled. The 36-block sky probe
 //   counts a leaf canopy as a roof and _highOpenSurface needs y≥70. Surface = high-open verdict, or sky open over the head
 //   (T-0189 skyOpenAt), or at/above the climb target 63 and not enclosed (T-0251 line), or the old y≥58+probe.
-export const CHOP_SURFACE_Y = 63;
-export function chopOnSurface({ y, enclosed, skyProbe, skyLight, highSurface }) {
-    if (highSurface) return true;
-    if (skyLight === true) return true;
-    if (enclosed) return false;
-    if (Number.isFinite(y) && y >= CHOP_SURFACE_Y) return true;
-    return Number.isFinite(y) && y >= 58 && !!skyProbe;
-}
+//   → T-0258: all four chopWood surface tests now call surface_judge (shouldClimbToSurface / onSurfaceNow).
 export const HIGH_TREE_DEFER_MAX = 2;
 export const GROUNDED_PREFER_R = 48;
 const _GROUND_NOT = /(leaves|_log|_wood|_stem)$/;
@@ -708,18 +701,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             }
         } catch (e) {}
         { const _ic = world.getInventoryCounts(bot); _dbg(`digToSurface START y=${Math.floor(bot.entity.position.y)} pick=${bot.inventory.items().some(it => /pickaxe/.test(it.name))} cob=${_ic['cobblestone'] || 0} dirt=${_ic['dirt'] || 0}`); }
-        const _trueSurfaceNow = () => {
-            const py = Math.floor(bot.entity.position.y);
-            let sky = true;
-            try {
-                const m = bot.entity.position.floored();
-                for (let dd = 2; dd <= 36; dd++) {
-                    const b = bot.blockAt(m.offset(0, dd, 0));
-                    if (b && b.boundingBox === 'block') { sky = false; break; }
-                }
-            } catch (e) { sky = false; }
-            return py >= 60 && sky && !(bot._mobility && bot._mobility.enclosed);
-        };
+        const _trueSurfaceNow = () => onSurfaceNow(bot);   // ★T-0258 one surface criterion (canopy-blind roof + ring)
         {
             const _noPick = !bot.inventory.items().some(it => /_pickaxe$/.test(it.name));
             const _blockedUntil = bot._chopNoPickSurfaceBlockedUntil || 0;
@@ -845,13 +827,10 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // 三条件: y≥60 + 头顶整列见天 + enclosed=false(C32 全景列探测,周围也开)。
             // 单用 enclosed 不行: 1格天窗就翻 false(对夜门保守正确,对出地表过松)。
             // 状态机未建时退回 y≥70 旧线。)
-            let _surfaced;
-            if (bot._mobility && typeof bot._mobility.enclosed === 'boolean') {
-                let _skyAbove = true;
-                for (let _dd = 2; _dd <= 36; _dd++) { const _cb = bot.blockAt(bot.entity.position.floored().offset(0, _dd, 0)); if (_cb && _cb.boundingBox === 'block') { _skyAbove = false; break; } }
-                _surfaced = py >= 60 && _skyAbove && !bot._mobility.enclosed;
-            } else _surfaced = py >= 70;
-            if (_surfaced) { _dbg(`digToSurface DONE y=${py} (true surface: sky above + not enclosed)`); return true; }
+            // ★T-0258: surface_judge.onSurfaceNow — rock roof (canopy never counts) + the 8-column ring that tells a skylight
+            //   shaft (the y64 pin above) from real ground; no longer depends on mobility.enclosed (which counts leaves).
+            const _surfaced = onSurfaceNow(bot);
+            if (_surfaced) { _dbg(`digToSurface DONE y=${py} (true surface: surface_judge)`); return true; }
             // ★徒手禁撸石 (用户实拍怒斥"你见过哪个人类玩家这样挖石头的?"): bare hands on
             // stone = 7.5s/block AND drops nothing — pure waste. The old "prefer dirt/
             // gravel route" was a LOG LINE with no implementation; every dig call below
@@ -861,7 +840,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             const _pickIn = hasPick;
             const _digOK = (b) => !!b && (_pickIn() || plannedNoPickStone() || !STONY_BLOCK.test(b.name));
             const headUp = bot.blockAt(bot.entity.position.offset(0, 2, 0));
-            if (headUp && NO_DIG_UP.has(headUp.name)) { try { await skills.goToSurface(bot); } catch (e) {} return Math.floor(bot.entity.position.y) >= 62; }
+            if (headUp && NO_DIG_UP.has(headUp.name)) { try { await skills.goToSurface(bot); } catch (e) {} return onSurfaceNow(bot); }   // ★T-0258
             if (headUp && !UP_OPEN.has(headUp.name) && _digOK(headUp)) await guardedDig(headUp, 'head-up');
             const before = Math.floor(bot.entity.position.y);
             // ★Manual MLG pillar — skills.pillarUp FAILED to lift us despite filler (chopDBG:
@@ -988,7 +967,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             }
         }
         _dbg(`digToSurface END y=${Math.floor(bot.entity.position.y)}`);
-        return Math.floor(bot.entity.position.y) >= 62;
+        return onSurfaceNow(bot);   // ★T-0258 (was y>=62)
     };
 
     // ★GENERATION TOKEN (orphan killer): every Promise.race timeout up the stack
@@ -1148,22 +1127,12 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
         } catch (e) {}
         return { seen, reached, near: _nearDrop };
     };
-    const _skyAboveHere = () => {
-        try {
-            const m = bot.entity.position.floored();
-            for (let dy = 2; dy <= 36; dy++) {
-                const b = bot.blockAt(m.offset(0, dy, 0));
-                if (b && b.boundingBox === 'block') return false;
-            }
-            return true;
-        } catch (e) { return false; }
-    };
     const _highOpenSurface = () => {
         try {
             const y = Math.floor(bot.entity.position.y);
             if (y < 70) return false;
+            if (onSurfaceNow(bot)) return true;   // ★T-0258 one surface criterion (was a leaf-counting 36-block sky probe)
             if (bot._mobility && bot._mobility.enclosed) return false;
-            if (_skyAboveHere()) return true;
             // Leaf canopies and steep hills often make the strict sky probe false even
             // though the bot is already on open overworld terrain. In that case a hard
             // leash raw-walks it back through cliffs/shafts and recreates the stair-edge
@@ -1989,17 +1958,11 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
         // we're underground and the nearest log is FAR (>8b → almost surely up top) or we've already
         // stalled on it, dig UP to daylight instead of futilely chasing it.
         const _yNow = Math.floor(bot.entity.position.y);
-        let _skyAboveNow = true;
-        try {
-            const _mNow = bot.entity.position.floored();
-            for (let _dd = 2; _dd <= 36; _dd++) {
-                const _cb = bot.blockAt(_mNow.offset(0, _dd, 0));
-                if (_cb && _cb.boundingBox === 'block') { _skyAboveNow = false; break; }
-            }
-        } catch (e) { _skyAboveNow = false; }
+        // ★T-0257 → T-0258: one surface criterion (surface_judge). _skyAboveNow is the plain skyLight reading, logs only.
+        const _skyAboveNow = skyOpenAt(bot) === true;
         const _enclosedNow = !!(bot._mobility && bot._mobility.enclosed);
         const _highSurfaceLike = _highOpenSurface();
-        const _notSurface = !chopOnSurface({ y: _yNow, enclosed: _enclosedNow, skyProbe: _skyAboveNow, skyLight: skyOpenAt(bot), highSurface: _highSurfaceLike });   // ★T-0257 same surface criterion as T-0251
+        const _notSurface = !_highSurfaceLike && shouldClimbToSurface(bot);
         const _nearHighTree = nearest && nearest.b && nearest.b.position
             && ndist <= 12 && (nearest.b.position.y - bot.entity.position.y) >= 4;
         if (!_opts.criticalForageLocalOnly && _nearHighTree && surfaced < 4) {
@@ -2045,7 +2008,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // with "3 diamonds but no wood for sticks" deep underground, unable to
             // craft the diamond pickaxe. goToSurface pathfinds up (pillarUp fallback
             // for sheer shafts). Try it a couple of times before giving up.
-            if (surfaced < 3 && (Math.floor(bot.entity.position.y) < 62 || _enclosedNow || !_skyAboveNow)) {
+            if (surfaced < 3 && _notSurface) {   // ★T-0258 (was y<62 || enclosed || 36-block probe — the branch T-0257 missed)
                 log(bot, `No logs nearby and not on true surface (y=${Math.floor(bot.entity.position.y)}, enclosed=${_enclosedNow}, sky=${_skyAboveNow}) — digging a shaft up to the surface for trees.`);
                 surfaced++;
                 let _surfOk = false;

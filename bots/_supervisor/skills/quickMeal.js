@@ -8,7 +8,8 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { HUNTABLE_RE, skyOpenAt, FOOD_FLOOR, cannotRegen } from '../../../src/agent/framework/food_floor.js';
+import { HUNTABLE_RE, FOOD_FLOOR, cannotRegen } from '../../../src/agent/framework/food_floor.js';
+import { shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 import { hostileActionableNear, isHostileEntity } from '../../../src/agent/framework/hostile_reach.js';
 const { goals, Movements } = mfp;
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
@@ -92,7 +93,7 @@ export async function exitPitIfSealed(bot, { legMs = 8000, force = false } = {})
     // ★T-0215 补2 (death #20, 04:22:02Z 'exit pit: out (moved 2.7b, dy -4.0)'): 地下的横向段不受高度约束, 横移中掉进下方
     //   3 怪洞穴 (hp7 food2) → 被围死; 且掉下去还被判出坑。地下出坑 = 往上 (+8, 不成再 +4), 绝不走横向段;
     //   横向段只给头顶见天的开顶坑。出坑 = 升高 ≥1, 或横移 ≥2 且没往下掉超过 1 格。
-    const underground = y0 < 62 && skyOpenAt(bot) !== true;
+    const underground = shouldClimbToSurface(bot);   // ★T-0258 one surface criterion
     const legs = underground
         ? [8, 4].map(h => () => new GoalRiseBy(Math.floor(y0) + h))
         : [[1, 0], [0, 1], [-1, 0], [0, -1]].map(([dx, dz]) => () => new goals.GoalNearXZ(Math.round(x0 + dx * 6), Math.round(z0 + dz * 6), 1));
@@ -306,7 +307,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     // ⓪ 饿着在矿里 → 先上浮 (监工拍板: 在矿里的要先回地面觅食); 单独限时, 不吃猎杀的 60s 预算
     // ★监工加急#3: 阈值与 depthBand 同口径 (surface = y≥62); 旧 y<60 在 y60 跳过上浮 → 直接失败 3 连败冷却
     // ★T-0189 (23:21:15Z 实录: y61 本在地表 mob=FREE, "surfaced y 61→61" 空上浮): 头顶见天 (skyLight≥14) 就不上浮。
-    if (opts.surfaceFirst && bot.entity && bot.entity.position && bot.entity.position.y < 62 && skyOpenAt(bot) !== true) {
+    if (opts.surfaceFirst && bot.entity && bot.entity.position && shouldClimbToSurface(bot)) {   // ★T-0258
         const y0 = Math.round(bot.entity.position.y);
         // ★T-0211 (death #17 02:37:09Z: 拂晓 y36 地下, 16 格内有僵尸, 上浮途中被打死): 上浮前有敌对 → 原地等 ≤15s (拂晓亡灵会晒死/走开),
         //   仍在 → 延后 (不计 strike), 不往怪堆里爬。
@@ -395,7 +396,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             await approach();
             // ★T-0167 (21:03:01 实录: y56 封闭地下, 猪在 44 格外地面 → 安全寻路 0s 无路, "approached → 44.4b" 照样出手,
             //   3 连败 FOOD_FLOOR 冷却 5min)。接近没缩短距离且人在地下 → 先上浮 (≤60s) 再接近一次。
-            if (d0 - target.position.distanceTo(bot.entity.position) < 2 && bot.entity.position.y < 62 && skyOpenAt(bot) !== true && !opts._surfaced) {
+            if (d0 - target.position.distanceTo(bot.entity.position) < 2 && shouldClimbToSurface(bot) && !opts._surfaced) {   // ★T-0258
                 const y0 = Math.round(bot.entity.position.y);
                 prog(`approach made no progress (${d0.toFixed(1)}b) underground y=${y0} — surfaceUp first (≤60s), then retry`);
                 await raceI(bot, skills.customSkill(bot, 'surfaceUp', 63), Math.min(left(), 60000));

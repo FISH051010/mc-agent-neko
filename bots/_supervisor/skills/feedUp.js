@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
+import { shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258
 
 const { Movements, goals } = mfp;
 
@@ -1669,13 +1670,13 @@ export default async function feedUp(bot, ctx, targetFood = 18) {
                 if (bot.food <= 1 && !edibleHeld() && await desperationRoam({ concreteOnly: true })) { await skills.wait(bot, 600); continue; }
                 if (await criticalMicroScout()) { await skills.wait(bot, 600); continue; }
                 // At the calorie floor, allow one surface attempt when nothing is in punch range.
-                if (!surfaceTriedThisRun && bot.entity.position.y < 60 && !hostileNear(8)) {
+                if (!surfaceTriedThisRun && shouldClimbToSurface(bot) && !hostileNear(8)) {   // ★T-0258 one surface criterion (was y<60)
                     surfaceTriedThisRun = true;
                     prog(`feedUp: calorie-floor surface-first — food=${bot.food} y=${Math.round(bot.entity.position.y)}, climbing to daylight food`);
                     let up = false;
                     try { up = await skills.customSkill(bot, 'surfaceUp', 63); } catch (e) { prog(`feedUp: surfaceUp threw ${e && e.message || e}`); }
                     if (bot.interrupt_code || bot.health <= 0) break;
-                    if (up || bot.entity.position.y >= 60) { await skills.wait(bot, 400); continue; }
+                    if (up || !shouldClimbToSurface(bot)) { await skills.wait(bot, 400); continue; }   // ★T-0258
                 }
                 prog(`feedUp: calorie-floor local-only stop food=${bot.food} — no long roam`);
                 break;
@@ -1687,13 +1688,13 @@ export default async function feedUp(bot, ctx, targetFood = 18) {
             // Surfacing IS the food move: one surfaceUp (the hardened sealed-staircase climb)
             // per dispatch, then rescan from daylight. FORAGE_SURFACE has no proposer push, so
             // nothing above this layer owns the climb.
-            if (!surfaceTriedThisRun && bot.food <= 11 && bot.entity.position.y < 60 && !hostileNear(8)) {
+            if (!surfaceTriedThisRun && bot.food <= 11 && shouldClimbToSurface(bot) && !hostileNear(8)) {   // ★T-0258 one surface criterion (was y<60)
                 surfaceTriedThisRun = true;
                 prog(`feedUp: famine surface-first — underground y=${Math.round(bot.entity.position.y)} with dry local scan, climbing before giving up`);
                 let up = false;
                 try { up = await skills.customSkill(bot, 'surfaceUp', 63); } catch (e) { prog(`feedUp: surfaceUp threw ${e && e.message || e}`); }
                 if (bot.interrupt_code || bot.health <= 0) break;
-                if (up || bot.entity.position.y >= 60) { await skills.wait(bot, 400); continue; }   // rescan from the surface
+                if (up || !shouldClimbToSurface(bot)) { await skills.wait(bot, 400); continue; }   // rescan from the surface   // ★T-0258
             }
             if (bot.food <= 6 && !edibleHeld()) {
                 // Calorie floor: a 24-block "maybe food elsewhere" relocate costs the
