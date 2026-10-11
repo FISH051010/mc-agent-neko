@@ -3940,6 +3940,12 @@ async function _consumeOnce(bot, itemName="") {
     // ★第四刀回装: 盾回副手 (成败路径都走到这里; equip 目的地非 'hand' 不撞手部锁)
     if (_shieldWasOff) {
         try { const _sh = bot.inventory.items().find(i => i.name === 'shield'); if (_sh) await bot.equip(_sh, 'off-hand'); } catch (e) {}
+        // ★T-0269: 卸了盾却哪儿都找不到 → 诊断行 (窗口闸之外若还有丢盾路径, 下次直接看到现场)
+        try {
+            const _o = bot.inventory.slots[45];
+            if (!(_o && _o.name === 'shield') && !bot.inventory.items().some(i => i.name === 'shield'))
+                fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] ★SHIELD-LOST after eating ${item.name}: off-hand=${(_o && _o.name) || 'empty'}, none in pack, win=${bot.currentWindow ? (bot.currentWindow.type || 'open') : 'none'}\n`);
+        } catch (e) {}
     }
     if (nonHunger) {
         if (consumeErr) { log(bot, `Failed to consume ${item.name}: ${consumeErr.message}.`); return false; }
@@ -7476,6 +7482,40 @@ export function closeStrayContainerWindow(bot) {
     if (!w || w.type === 'minecraft:inventory') return false;
     try { bot.closeWindow(w); } catch (e) {}
     return true;
+}
+
+/**
+ * ★T-0269 窗口总闸 (05:29:35Z 实录: craftChain 开着工作台窗口时 auto_eat 进食卸盾 bot.unequip('off-hand') —
+ * clickWindow 落在工作台窗口上, 按玩家背包编号点格 (45 在工作台窗口里是快捷栏) → 盾凭空消失, 70s 后无盾窒息死)。
+ * 同 T-0172 bot.dig 总闸思路: 包 bot.equip / unequip / toss / tossStack — 有容器窗口开着 (非玩家背包) 先等它自己关
+ * (合成/冶炼收尾, ≤maxMs), 超时按 T-0179 关掉残留窗口并写诊断, 之后才按玩家背包编号操作, 绝不在容器窗口上点格。
+ */
+export const WINDOW_GATE_WAIT_MS = 2500;
+export async function awaitContainerClosed(bot, op, { maxMs = WINDOW_GATE_WAIT_MS } = {}) {
+    const open = () => { const w = bot && bot.currentWindow; return !!(w && w.type !== 'minecraft:inventory') && w; };
+    const w0 = open();
+    if (!w0) return { waited: 0, closed: false };
+    const t0 = Date.now();
+    while (open() && Date.now() - t0 < maxMs) await new Promise(r => setTimeout(r, 100));
+    const still = open();
+    if (still) { try { bot.closeWindow(still); } catch (e) {} }
+    try { fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] [window-gate] ${op}: container ${w0.type || '?'} open → waited ${Date.now() - t0}ms${still ? ', closed it' : ', closed by owner'} — not clicking player slots on a container window (T-0269)\n`); } catch (e) {}
+    return { waited: Date.now() - t0, closed: !!still };
+}
+export function installWindowGate(bot) {
+    if (!bot || bot._windowGateInstalled) return false;
+    let n = 0;
+    for (const m of ['equip', 'unequip', 'toss', 'tossStack']) {
+        if (typeof bot[m] !== 'function') continue;
+        const raw = bot[m].bind(bot);
+        bot[m] = async (...args) => {
+            await awaitContainerClosed(bot, `${m}(${args.map(a => (a && a.name) || (typeof a === 'string' ? a : typeof a === 'number' ? a : '')).filter(x => x !== '').join(',')})`);
+            return raw(...args);
+        };
+        n++;
+    }
+    bot._windowGateInstalled = n > 0;
+    return n > 0;
 }
 
 export function gazeHold(bot, block, digPromise) {

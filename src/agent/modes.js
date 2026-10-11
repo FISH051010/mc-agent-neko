@@ -5939,6 +5939,8 @@ const modes_list = [
                 }
                 return await originalEquip(item, destination, ...args);
             };
+            // ★T-0269 窗口总闸 (最外层): equip/unequip/toss/tossStack 遇容器窗口开着先等它关, 超时关掉再操作 — 不在容器窗口上按玩家编号点格
+            try { skills.installWindowGate(bot); } catch (e) {}
             const originalPlaceBlock = bot.placeBlock.bind(bot);
             bot.placeBlock = async (referenceBlock, faceVector, ...args) => {
                 const seq = ++bot._mineMotionSeq;
