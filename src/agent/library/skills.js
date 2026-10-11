@@ -7502,6 +7502,55 @@ export async function awaitContainerClosed(bot, op, { maxMs = WINDOW_GATE_WAIT_M
     try { fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] [window-gate] ${op}: container ${w0.type || '?'} open → waited ${Date.now() - t0}ms${still ? ', closed it' : ', closed by owner'} — not clicking player slots on a container window (T-0269)\n`); } catch (e) {}
     return { waited: Date.now() - t0, closed: !!still };
 }
+/**
+ * ★T-0272 饥饿禁疾跑总闸 (监工加急; 06:02:21→06:04:20Z 实录: FOOD_FLOOR 侦察 food 9 起, 两轮 "moved 322b/308b in 90.0s" 一路疾跑,
+ * 疾跑 0.1 消耗/格 ≈ 32 消耗值 = 9 点饥饿全烧光 → food 0 掉血到 hp 3; 侦察越找越饿)。1.21 走路零消耗。
+ * food ≤ SPRINT_FOOD_MAX 时: bot.setControlState('sprint', true) 一律改成 false (pathfinder 也走这里 → 覆盖 quickMeal/migrate/
+ * scoutResources/bedErrand 全部长途移动), 并把当前 movements.allowSprinting 置 false (不规划疾跑跳)。例外: 有可动敌对 (躲避) 照跑。
+ */
+export const SPRINT_FOOD_MAX = 10;
+export function sprintAllowed(bot) {
+    const f = bot && bot.food;
+    if (!Number.isFinite(f) || f > SPRINT_FOOD_MAX) return true;
+    const t = bot._world && bot._world.threat;
+    return !!(t && t.actionable > 0);
+}
+export function installHungerSprintGate(bot) {
+    if (!bot || bot._sprintGateInstalled || typeof bot.setControlState !== 'function') return false;
+    const rawSCS = bot.setControlState.bind(bot);
+    const gateMovements = () => {
+        try {
+            const m = bot.pathfinder && bot.pathfinder.movements;
+            if (!m) return;
+            if (!sprintAllowed(bot)) { if (m.allowSprinting !== false) { m.allowSprinting = false; m._sprintGated = true; } }
+            else if (m._sprintGated) { m.allowSprinting = true; m._sprintGated = false; }
+        } catch (e) {}
+    };
+    bot.setControlState = (control, state) => {
+        if (control === 'sprint' && state && !sprintAllowed(bot)) {
+            gateMovements();
+            if (Date.now() - (bot._sprintGateLogAt || 0) > 30000) {
+                bot._sprintGateLogAt = Date.now();
+                try { fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] [sprint-gate] food=${bot.food} ≤${SPRINT_FOOD_MAX}, no actionable hostile → walk, no sprint (T-0272)\n`); } catch (e) {}
+            }
+            return rawSCS('sprint', false);
+        }
+        return rawSCS(control, state);
+    };
+    try {
+        const pf = bot.pathfinder;
+        if (pf && typeof pf.setMovements === 'function') {
+            const rawSet = pf.setMovements.bind(pf);
+            pf.setMovements = (m) => { const r = rawSet(m); gateMovements(); return r; };
+        }
+        if (pf && typeof pf.setGoal === 'function') {
+            const rawGoal = pf.setGoal.bind(pf);
+            pf.setGoal = (g, d) => { gateMovements(); return rawGoal(g, d); };
+        }
+    } catch (e) {}
+    bot._sprintGateInstalled = true;
+    return true;
+}
 export function installWindowGate(bot) {
     if (!bot || bot._windowGateInstalled) return false;
     let n = 0;
