@@ -123,3 +123,16 @@ test('T-0226 death #22: 逃跑中被射手打中 → 先挡视线 (挡住就停�
     assert.ok(cover < loop.indexOf('tunnelWallOffWanted('), 'cover check runs before moving on');
     assert.match(loop, /if \(_cv && _cv\.covered\) break;/);
 });
+test('T-0233: 逃跑零位移 ≥0.9s 且 4b 内有怪 → 先垫块挡在中间 (#4 隧道 3s 不动 / #5 坑里对墙冲刺); 还在跑/怪远/苦力怕 → 不动', async () => {
+    const { fleeStuckAction } = await import('../src/agent/mobility_geom.js');
+    assert.equal(fleeStuckAction({ stuckMs: 3000, nearestMob: { name: 'zombie', d: 1.4 } }), 'interpose', '#5 21:59:14');
+    assert.equal(fleeStuckAction({ stuckMs: 3000, nearestMob: { name: 'skeleton', d: 1.5 } }), 'interpose', '#4 21:51:50');
+    assert.equal(fleeStuckAction({ stuckMs: 400, nearestMob: { name: 'zombie', d: 1.4 } }), null, 'still moving');
+    assert.equal(fleeStuckAction({ stuckMs: 3000, nearestMob: { name: 'zombie', d: 9 } }), null, 'far');
+    assert.equal(fleeStuckAction({ stuckMs: 3000, nearestMob: { name: 'creeper', d: 2 } }), null, 'creeper branch owns it');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const s0 = m.indexOf('sprintFlee: async function');
+    const loop = m.slice(s0, m.indexOf('// 有目标且已接近', s0));
+    assert.match(loop, /this\._fleeMovePos = null; this\._fleeMoveAt = Date\.now\(\);/, 'baseline reset per flee');
+    assert.match(loop, /fleeStuckAction\([\s\S]*skills\.coverFromShooter\(bot, _nm[\s\S]*skills\.placeBlockUnderFeet\(/);
+});

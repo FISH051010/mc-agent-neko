@@ -164,6 +164,17 @@ export function fleeCoverFirst({ shooterDist, meleeNear }) {
     return !meleeNear;
 }
 
+/**
+ * ★T-0233 (#4 21:51:50 隧道里 'running from the swarm' 坐标 3s 不变; #5 21:59:14 坑里 'sprinting away' 对墙冲刺, 僵尸贴身 15→0):
+ * 逃跑没有位移 = 没在逃, 只是背对怪站着挨打。卡住 ≥900ms 且 4b 内有怪 (非苦力怕, 那有专枝) → 'interpose' (两者之间垫块挡);
+ * 调用方垫不住且近战怪 ≤2.5b、手上有方块 → 再往上垫柱。纯函数。
+ */
+export function fleeStuckAction({ stuckMs, nearestMob }) {
+    if (!(stuckMs >= 900)) return null;
+    if (!nearestMob || !(nearestMob.d <= 4) || /creeper/i.test(nearestMob.name || '')) return null;
+    return 'interpose';
+}
+
 /** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */
 export function pickCreeperRunDir(cands) {
     const okTerrain = (cands || []).filter(c => c && c.ok);

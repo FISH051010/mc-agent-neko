@@ -12,6 +12,14 @@
 
 ---
 
+## C402. 逃跑位移看门狗: 零位移 ≥0.9s 且怪 ≤4b → 两者之间垫块, 垫不住且近战怪贴身 → 垫柱 2 格（modes.js/mobility_geom.js 需重启,T-0233 挂起期 C 组,worker-death,⏳待重启）
+
+**证据**: #5 21:59:18 坑里 (y64 掉进 y60), 僵尸 1.4m: 21:59:14 'Hit (1 mob, hp 12) — sprinting away, not stopping!', 15–17s ctrl forward,sprint 坐标 -0.3,60,-10.7 不动 = 对墙冲刺, 15→0。#4 21:51:53 1 宽隧道骷髅: 'Can't seal here — running from the swarm' 坐标 3s 不变。逃跑没有位移检测 = 背对怪站着挨打。
+**改动**: mobility_geom.fleeStuckAction({stuckMs, nearestMob}): 卡住 ≥900ms 且 4b 内有非苦力怕怪 → 'interpose'。sprintFlee 每拍跟踪位移 (每次进入重置基准): 触发 (1.5s 限频) → 停步 skills.coverFromShooter(bot, mob) 在两者之间补格; 垫不住且近战怪 ≤2.5b → resolveCapBlock 料 placeBlockUnderFeet ×2 垫柱; 挡住或垫满 2 格 → 结束逃跑。
+**可证伪预测**: 坑/隧道里被追时出现 `flee stuck … → interpose … (T-0233)`, 不再出现 forward,sprint 但坐标数秒不变的挨打。
+**未覆盖**: bunkerDown 的 'running from the swarm' 跳跃小循环 (#4) 另有自己的移动, 本改动未覆盖。
+**回滚**: revert, 重启。回归 ranged_cover 'T-0233'。
+
 ## C401. ★★反射冻结改引用计数共享原语: 重叠的冻结者不再把 self_defense/self_preservation 永久留成关（framework/mode_freeze.js + skills.js/bunker.js 需重启; surfaceUp.js/achieve.js 热加载,T-0234 挂起期 D 组,worker-death,⏳待重启）
 
 **证据**: #6 22:59:46 shot:Skeleton, 有石剑。22:59:31 被射 hp5.8 → 22:59:34.8–37.3 骷髅在同格 0.2–0.4m, act 全空 3s, 整个窗口零条 self_defense/self_preservation 日志 (连 DISENGAGE 都没有 = 反射没在跑)。surfaceUp.log: 22:57:01 ENTER+modes frozen (实例 A, 孤儿未退) → 22:59:19 ENTER+modes frozen (实例 B, 此时 A 已冻 → B 记下的原值是 off) → 22:59:22 EXIT (A, 恢复 on) → 22:59:23 EXIT (B, 恢复 off) ⇒ 反射被永久关掉直到死。同一"记原值→关→finally 恢复"写法共 6 处 (surfaceUp / bunker / skills×3 / achieve), 任意两处交错都会出事。

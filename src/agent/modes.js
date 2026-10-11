@@ -29,7 +29,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { hostileActionable } from './framework/hostile_reach.js';
@@ -813,6 +813,7 @@ const modes_list = [
             // 消费本模式激活自身的 interrupt 一次 (与 kite 同纪律), 之后一旦有 NEW interrupt (死亡/停止) 立即退出;
             // 绝不在循环内 reset interrupt_code (否则顶掉 executor 的 stop → "refused stop 10s" 被看门狗杀进程)。
             try { bot.interrupt_code = false; } catch (e) {}
+            this._fleeMovePos = null; this._fleeMoveAt = Date.now();             // ★T-0233 displacement watchdog baseline (per flee)
             for (let step = 0; step < 4000; step++) {
                 if (bot.interrupt_code || bot.health <= 0) break;                 // 真停止/死亡 → 立即返回
                 if (bot.oxygenLevel !== undefined && bot.oxygenLevel <= 6) break; // 真淹水 → 让位游泳脱困反射
@@ -820,6 +821,28 @@ const modes_list = [
                 const cr = this.nearestCreeper(bot, 12);
                 if (hs.length === 0 && !cr) break;                               // 威胁清除 → 收手 (常规循环恢复→重新寻路奔目标)
                 const me = bot.entity.position;
+                // ★T-0233 (#4/#5 挂起期): 逃跑零位移 = 背对怪站着挨打。卡住 ≥0.9s 且 4b 内有怪 → 两者之间垫块; 垫不住且近战怪
+                //   ≤2.5b → 往上垫柱 2 格 (僵尸够不着)。
+                try {
+                    if (!this._fleeMovePos || me.distanceTo(this._fleeMovePos) > 0.6) { this._fleeMovePos = me.clone(); this._fleeMoveAt = Date.now(); }
+                    let _nm = null, _nd = Infinity;
+                    for (const e of hs) { if (e && e.position) { const d = e.position.distanceTo(me); if (d < _nd) { _nd = d; _nm = e; } } }
+                    const _act = fleeStuckAction({ stuckMs: Date.now() - (this._fleeMoveAt || Date.now()), nearestMob: _nm ? { name: _nm.name, d: _nd } : null });
+                    if (_act && Date.now() - (this._fleeStuckActAt || 0) > 1500) {
+                        this._fleeStuckActAt = Date.now();
+                        try { bot.clearControlStates(); } catch (e) {}
+                        let _r = null;
+                        try { _r = await skills.coverFromShooter(bot, _nm, { tag: 'flee-stuck' }); } catch (e) {}
+                        let _pillar = 0;
+                        if (!(_r && _r.covered) && _nd <= 2.5 && !/skeleton|stray|pillager|witch/i.test(_nm.name || '')) {
+                            const _fb = skills.resolveCapBlock(bot);
+                            for (let k = 0; k < 2 && _fb; k++) { try { if (await skills.placeBlockUnderFeet(bot, _fb, { retries: 1, settleMs: 160 })) _pillar++; } catch (e) {} }
+                        }
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] flee stuck ${((Date.now() - this._fleeMoveAt) / 1000).toFixed(1)}s with ${_nm.name} ${_nd.toFixed(1)}b hp=${Math.round(bot.health)} → interpose ${_r ? `${_r.why} placed=${_r.placed}` : 'error'}${_pillar ? ` + pillar ${_pillar}` : ''} (T-0233)\n`); } catch (e) {}
+                        this._fleeMovePos = bot.entity.position.clone(); this._fleeMoveAt = Date.now();
+                        if ((_r && _r.covered) || _pillar >= 2) break;
+                    }
+                } catch (e) {}
                 // ★T-0226 death #22 (04:51:13–25, 骷髅 4 箭 12→0): C382 的挡箭只挂在 self_defense 让位分支, 而身体一直在 sprintFlee 手里 →
                 //   挡箭从没执行。在射程内冲刺 = 继续当靶子: 刚被射手打中 → 先挡视线 (coverFromShooter), 挡住就停跑躲在掩体后。
                 try {
