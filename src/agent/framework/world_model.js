@@ -1667,7 +1667,7 @@ export function proposeTasks(world, bot) {
 /** ★T-0263 白天兜底活的选择 (纯函数): 缺木 → chopWood; 封坑料不足 → 有镐 mineDown 浅挖 / 零镐 gatherDirt; 其余 → 有镐原地浅挖攒石/矿, 零镐砍木。
  *  ★T-0263 补 (监工, 07-08 令防'到处乱逛'): 兜底绝不侦察漫游 (scoutResources 会直奔数百格外的已知村庄/灯塔, 无界) — 只做原地有界的活。 */
 export function dayFallbackTask(w, bot) {
-    if (woodUnits(bot) < 16) return { skill: 'chopWood', args: [8], rationale: `day fallback: all proposals cooled/gated — chop wood (planksEq ${woodUnits(bot)}<16)` };
+    if (woodUnits(bot) < 16) return { skill: 'chopWood', args: [8, { needLogs: true }], rationale: `day fallback: all proposals cooled/gated — chop wood (planksEq ${woodUnits(bot)}<16)` };   // ★T-0281: needLogs — chopWood's own 8-plank BAIL would no-op this 1.5s forever
     if (sealFillerCount(invCounts(bot)) < SEAL_FILLER_TARGET) {
         return totalPicks(bot) >= 1
             ? { skill: 'mineDown', args: [{ targetY: stoneBootstrapTargetY(w) }], rationale: `day fallback: all proposals cooled/gated — dig a little stone (filler ${sealFillerCount(invCounts(bot))}<${SEAL_FILLER_TARGET})` }
@@ -1675,7 +1675,7 @@ export function dayFallbackTask(w, bot) {
     }
     return totalPicks(bot) >= 1
         ? { skill: 'mineDown', args: [{ targetY: stoneBootstrapTargetY(w) }], rationale: 'day fallback: all proposals cooled/gated — dig a few blocks in place for stone/ore (bounded ≤6 deep, no roaming)' }
-        : { skill: 'chopWood', args: [8], rationale: 'day fallback: all proposals cooled/gated — chop wood (bounded count, no roaming)' };
+        : { skill: 'chopWood', args: [8, { needLogs: true }], rationale: 'day fallback: all proposals cooled/gated — chop wood (bounded count, no roaming)' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

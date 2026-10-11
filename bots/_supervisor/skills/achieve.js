@@ -592,13 +592,11 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
             if (skills.inConstrainedPocket && skills.inConstrainedPocket(bot)) { prog(`${tag}★fix#1 defer table reclaim (constrained pocket) — leave registered station @${pos.x},${pos.y},${pos.z}`); return; }
             const still = bot.blockAt(pos);
             if (!still || still.name !== 'crafting_table') { try { stDeregister('crafting_table', pos); } catch (e) {} return; }
-            await Promise.race([
-                skills.collectBlock(bot, 'crafting_table', 1),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('reclaim-timeout')), 15000)),
-            ]).catch(() => {});
-            try { await skills.ensurePickupAt(bot, pos, { radius: 4 }); } catch (e) {}
+            // ★T-0280: 只敲本次放的这一张 (够不着/旧进程无此导出 → 留作登记站); 原 collectBlock 按类型找台 + race 弃养会成孤儿走去别的台
+            const _rc = typeof skills.reclaimTableAt === 'function' ? await skills.reclaimTableAt(bot, pos) : { reclaimed: false, reason: 'no-reclaimTableAt' };
             try { const s2 = bot.blockAt(pos); if (!s2 || s2.name !== 'crafting_table') stDeregister('crafting_table', pos); } catch (e) {}
-            prog(`${tag}★#3 reclaimed local crafting_table @${pos.x},${pos.y},${pos.z} (carry+reuse, no litter)`);
+            prog(_rc.reclaimed ? `${tag}★#3 reclaimed local crafting_table @${pos.x},${pos.y},${pos.z} (carry+reuse, no litter)`
+                : `${tag}★#3 leave registered station @${pos.x},${pos.y},${pos.z} (${_rc.reason}) — T-0280 no type search / no walk`);
         } catch (e) {}
     };
 
@@ -995,10 +993,13 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
             // surplus gravel picked up along the way is harmless ballast.
             const deficit = need - have();
             const wantBlocks = chanceDrop ? Math.min(12, Math.ceil(deficit / chanceDrop.rate)) : deficit;
-            await step(`collect ${block} (xray) [${have()}/${need}]`, () => Promise.race([
-                skills.collectBlock(bot, block, wantBlocks),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('collect-timeout')), 25000)),
-            ]).catch(e => { try { bot.pathfinder.stop(); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} throw e; }));
+            // ★T-0280: 有界 collect — 超时真取消 (旧 race 只弃养, collectBlock 继续寻路/挖掘成孤儿); 旧进程无导出时退回旧 race
+            await step(`collect ${block} (xray) [${have()}/${need}]`, () => (typeof skills.collectBlockWithin === 'function'
+                ? skills.collectBlockWithin(bot, block, wantBlocks, { maxMs: 25000 })
+                : Promise.race([
+                    skills.collectBlock(bot, block, wantBlocks),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('collect-timeout')), 25000)),
+                ])).catch(e => { try { bot.pathfinder.stop(); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} throw e; }));
             if (have() >= need) break;
             if (!foodGoal && (hostileWorkRisk() || (_foodOn() && bot.food <= 10 && !edibleHeld()))) {
                 prog(`${tag}mine probe safety yield — food=${bot.food} hostile=${hostileNear(12)}; stop optional ore route`);

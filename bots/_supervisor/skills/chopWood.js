@@ -2217,7 +2217,10 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
                     } catch (e) {}
                 }, 1000);
             });
-            await Promise.race([
+            // ★T-0280: 超时/停滞真取消 collect (旧 race 只弃养 → 孤儿 collectBlock 接着走/挖, 压到下一个技能的挖掘); 旧进程无导出时退回旧 race
+            if (typeof skills.collectBlockWithin === 'function')
+                await skills.collectBlockWithin(bot, nearest.t, 1, { maxMs: 45000, exclude: _cbExclude, veinFollow: true, abortOn: _cbStall, label: 'chop-timeout' });
+            else await Promise.race([
                 skills.collectBlock(bot, nearest.t, 1, _cbExclude, true),
                 new Promise((_, rej) => setTimeout(() => rej(new Error('chop-timeout')), 45000)),
                 _cbStall,

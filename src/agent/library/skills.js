@@ -1374,7 +1374,22 @@ export function pickPathMode(ndStatus, dStatus) {
     return null;
 }
 
-export async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = true, pickup = false, requireLOS = false } = {}) {
+/**
+ * ★T-0280: bot.stopDigging() stops WHATEVER dig is current. A dig that failed because another digger's bot.dig replaced it
+ * ('Digging aborted') must not then stop that other dig (live 06:40:40/06:41:03Z: an orphaned collectBlock's safeDig catch
+ * killed mineDown's digs ×2 → GO_UNDERGROUND cooldown). Stop only when the current dig is on THIS block.
+ */
+export function stopOwnDig(bot, block) {
+    try {
+        const t = bot && bot.targetDigBlock;
+        const p = block && block.position;
+        if (!t || !t.position || !p || !t.position.equals(p)) return false;
+        bot.stopDigging();
+        return true;
+    } catch (e) { return false; }
+}
+
+export async function safeDig(bot, block, { maxMs = 15000, approach = true, equip = true, pickup = false, requireLOS = false, signal = null } = {}) {
     ensureWaterAwareDigTime(bot);
     const dead = (b) => !b || b.boundingBox === 'empty' || b.name === 'air';
     const reachTo = (target) => bot.entity.position.offset(0, 1.62, 0)
@@ -1463,7 +1478,7 @@ export async function safeDig(bot, block, { maxMs = 15000, approach = true, equi
             // 脚下支撑柱 / 过流体裁判】→ 挖掉它, 复查 LOS, 最多 3 块。遮挡物够不到/挖不动/是矿
             // → 维持 'occluded' 原样拒 (真·隔厚墙 x-ray 仍不可能; 矿遮矿交回主循环按矿正常采)。
             for (let _c = 0; _c < 3; _c++) {
-                if (bot.interrupt_code) return 'occluded';
+                if (bot.interrupt_code || (signal && signal.aborted)) return 'occluded';
                 const _los = (() => { try { return bot.canSeeBlock(cur); } catch (e) { return true; } })();
                 if (_los) break;
                 const _eye = bot.entity.position.offset(0, 1.62, 0);
@@ -1542,7 +1557,7 @@ export async function safeDig(bot, block, { maxMs = 15000, approach = true, equi
             await Promise.race([
                 gazeHold(bot, cur, bot.dig(cur)),
                 new Promise((_, rej) => setTimeout(() => rej(new Error('dig-timeout')), _digMs)),
-                new Promise((_, rej) => { _sdIv = setInterval(() => { try { if (bot.interrupt_code) rej(new Error('interrupted')); } catch (e) {} }, 200); }),
+                new Promise((_, rej) => { _sdIv = setInterval(() => { try { if (bot.interrupt_code || (signal && signal.aborted)) rej(new Error('interrupted')); } catch (e) {} }, 200); }),
             ]);
         } finally { if (_sdIv) clearInterval(_sdIv); }
         if (pickup) {
@@ -1555,7 +1570,7 @@ export async function safeDig(bot, block, { maxMs = 15000, approach = true, equi
         }
         return 'ok';
     } catch (e) {
-        try { bot.stopDigging(); } catch (_) {}
+        stopOwnDig(bot, block);   // ★T-0280: never the dig that replaced ours
         if (e && e.message === 'interrupted') return 'error';
         return (e && e.message === 'dig-timeout') ? 'timeout' : 'error';
     } finally {
@@ -1780,7 +1795,7 @@ export function collectOreBlockTypes(blockType) {
     return spec ? [...spec.blocks] : [blockType];
 }
 
-export async function collectBlock(bot, blockType, num=1, exclude=null, veinFollow='auto') {
+export async function collectBlock(bot, blockType, num=1, exclude=null, veinFollow='auto', { signal = null } = {}) {
     /**
      * Collect one of the given block type.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
@@ -1795,6 +1810,10 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
      * @example
      * await skills.collectBlock(bot, "oak_log");
      **/
+    // ★T-0280: a caller that bounds this call (collectBlockWithin) aborts it via signal — the loop and every dig stop, so a
+    //   raced-out collect can never keep walking/digging as an orphan under the next dispatch.
+    const _cbSignal = signal;
+    const _cbAborted = () => !!(_cbSignal && _cbSignal.aborted);
     const underwaterMiningTarget = !!oreCollectSpec(blockType)
         || collectOreBlockTypes(blockType).some(name => /(?:_ore$|ancient_debris$|obsidian$)/.test(String(name)));
     const endUnderwaterMiningTask = beginUnderwaterMiningTask(bot, underwaterMiningTarget);
@@ -1983,7 +2002,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     // loop on `collected < num` with an attempt cap to avoid spinning on
     // unreachable targets.
     const maxAttempts = num * 4 + 8;
-    for (let i=0; i<maxAttempts && collected < num; i++) {
+    for (let i=0; i<maxAttempts && collected < num && !_cbAborted(); i++) {
         // ★死亡区矿物不可见 (242/243/244 17分钟三连死: 蜂窝雷区裸露矿脉是x-ray磁铁 —
         // 采集选target吸进去,避区撤退推出来,两逻辑打架死在往返路上。修在源头: 聚集区内
         // 的方块从候选里消失)。零开销缓存: 每次collect调用读一次death_log近50条,预算
@@ -2081,7 +2100,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                             log(bot, `Don't have right tools to harvest ${_raw.name} — need a better pickaxe.`);
                             break;
                         }
-                        const r = await safeDig(bot, _raw, { maxMs: 15000, equip: false, requireLOS: false });
+                        const r = await safeDig(bot, _raw, { maxMs: 15000, equip: false, requireLOS: false, signal: _cbSignal });
                         if (r === 'ok') {
                             try { await goToPosition(bot, _p.x, _p.y, _p.z, 1); } catch (e) {}
                             await pickupNearbyItems(bot);
@@ -2229,14 +2248,14 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 // let it reach through solid rock). Non-ore (logs/stone/dirt) dig as before.
                 const _isOre = /_ore$/.test(block.name || '');
                 const gainBeforeDig = gainOf();
-                let r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: _isOre, requireLOS: _isOre });
+                let r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: _isOre, requireLOS: _isOre, signal: _cbSignal });
                 // ★C304-T (2026-07-09 "凿隧道直达"): 埋铁被 safeDig 判 unreachable/occluded 时不再直接
                 //  exclude 放弃整条矿脉 — 先朝它凿一条密封隧道(防坠/防淹/防x-ray, 任一不安全即停),
                 //  逼近到臂展再重试一次 safeDig(requireLOS 仍锁, 绝不 x-ray)。隧道失败=旧行为 exclude。
                 if (_isOre && (r === 'unreachable' || r === 'occluded') && _tunnelTries < _TUNNEL_MAX_TRIES) {
                     _tunnelTries++;
                     if (await tunnelToOre(bot, block))
-                        r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: true, requireLOS: true });
+                        r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: true, requireLOS: true, signal: _cbSignal });
                 }
                 if (r === 'ok') {
                     // ★Actually COLLECT the drop (fixes "挖了树不捡木头"): step ONTO the broken
@@ -2268,8 +2287,8 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 collected++;
                 // Exhaust the rest of this connected ore vein so we never leave
                 // remnants behind (and gather a natural buffer beyond `num`).
-                if (veinActive)
-                    collected += await harvestConnectedVein(bot, block.position, blocktypes);
+                if (veinActive && !_cbAborted())
+                    collected += await harvestConnectedVein(bot, block.position, blocktypes, 64, { signal: _cbSignal });
             }
             await autoLight(bot);
         }
@@ -2296,7 +2315,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             }
         }
         
-        if (bot.interrupt_code)
+        if (bot.interrupt_code || _cbAborted())
             break;  
     }
     // ★Report/judge on the REAL inventory delta, not the broken-block count. `collected`
@@ -2310,6 +2329,48 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     } finally {
         endUnderwaterMiningTask();
     }
+}
+
+/**
+ * ★T-0280: collectBlock with a REAL time bound. The old pattern `Promise.race([collectBlock(…), timeout])` only abandoned
+ * the collect: it kept pathing and digging detached, under whatever ran next (live 06:40:37-06:41:03Z: craftChain's table
+ * reclaim timed out, its collectBlock walked 40 blocks to another table and dug over mineDown ×3). On timeout (or when
+ * `abortOn` rejects, e.g. a caller's stall detector) this aborts the collect, halts its walk, and waits (≤graceMs) for it
+ * to settle before throwing — the caller moves on only once nothing of it is still driving the body.
+ */
+export async function collectBlockWithin(bot, blockType, num = 1, { maxMs = 15000, exclude = null, veinFollow = 'auto', abortOn = null, graceMs = 3000, label = 'collect-timeout', collect = collectBlock } = {}) {
+    const signal = { aborted: false };
+    const run = Promise.resolve().then(() => collect(bot, blockType, num, exclude, veinFollow, { signal }));
+    let to = null;
+    const races = [run, new Promise((_, rej) => { to = setTimeout(() => rej(new Error(label)), maxMs); })];
+    if (abortOn) races.push(abortOn);
+    try {
+        return await Promise.race(races);
+    } catch (e) {
+        signal.aborted = true;
+        try { bot.pathfinder && bot.pathfinder.setGoal(null); } catch (_) {}   // setGoal(null) acts now; stop() only sets a deferred flag
+        let gt = null;
+        await Promise.race([run.catch(() => {}), new Promise(r => { gt = setTimeout(r, graceMs); })]);
+        if (gt) clearTimeout(gt);
+        throw e;
+    } finally {
+        if (to) clearTimeout(to);
+    }
+}
+
+/**
+ * ★T-0280: take back the table THIS skill placed at `pos` — break that block and pick it up. Never a type search
+ * (collectBlock(bot,'crafting_table') walked to a table 50 blocks away), never a walk: out of reach → leave it standing.
+ */
+export async function reclaimTableAt(bot, pos, { reach = 4.5, breakAt = breakBlockAt, pickup = ensurePickupAt } = {}) {
+    const b = pos && bot.blockAt(pos);
+    if (!b || b.name !== 'crafting_table') return { reclaimed: false, reason: 'gone' };
+    if (bot.entity.position.distanceTo(b.position) > reach) return { reclaimed: false, reason: 'out-of-reach' };
+    let ok = false;
+    try { ok = await breakAt(bot, b.position.x, b.position.y, b.position.z); } catch (e) { ok = false; }
+    if (!ok) return { reclaimed: false, reason: 'dig-failed' };
+    try { await pickup(bot, b.position, { radius: 4 }); } catch (e) {}
+    return { reclaimed: true };
 }
 
 // Flood-fill mine a connected ore vein starting from a just-mined block position.
@@ -2344,14 +2405,14 @@ export async function harvestConnectedVein(bot, startPos, blocktypes, max=64, op
 
     const dig = typeof opts.dig === 'function'
         ? opts.dig
-        : (b) => safeDig(bot, b, { maxMs: 8000, pickup: true, requireLOS: true });
+        : (b) => safeDig(bot, b, { maxMs: 8000, pickup: true, requireLOS: true, signal: opts.signal || null });
     let mined = 0;
     let pending = component;
     while (pending.length && mined < max) {
         let passMined = 0;
         const retry = [];
         for (const p of pending) {
-            if (bot.interrupt_code || mined >= max) break;
+            if (bot.interrupt_code || (opts.signal && opts.signal.aborted) || mined >= max) break;
             const b = bot.blockAt(p);
             if (!isTarget(b)) continue;
             const r = await dig(b);
@@ -2684,11 +2745,11 @@ export async function breakBlockAt(bot, x, y, z) {
         } catch (error) {
             if (error.message === 'Dig timeout') {
                 log(bot, `⚠️ Digging ${block.name} timed out after ${digTimeout/1000}s, stopping dig.`);
-                try { bot.stopDigging(); } catch (e) {}
+                stopOwnDig(bot, block);   // ★T-0280
                 return false;
             }
             if (error.message === 'Interrupted') {
-                try { bot.stopDigging(); } catch (e) {}
+                stopOwnDig(bot, block);   // ★T-0280
                 return false;
             }
             throw error;  // Re-throw other errors

@@ -123,13 +123,13 @@ export default async function craftChain(bot, ctx, preset) {
         if (_ccT && skills.inConstrainedPocket && skills.inConstrainedPocket(bot)) {
             log(bot, `★fix#1 受限地形不敲台 — 留台 @${_ccT.position.x},${_ccT.position.y},${_ccT.position.z}(敲碎会弹进够不到的墙角, 原地复用)`);
         } else if (_ccT) {
+            // ★T-0280 (06:40:37Z 实录): 原 collectBlock(bot,'crafting_table',1) 按类型找台 + 15s race 弃养 → 孤儿走到 50 格外另一张台,
+            //   挖掘压掉 mineDown ×3。现只敲本次放的这一张、够不着就留着; 旧进程 (skills.js 未重启, 无此导出) 也留着, 绝不按类型搜。
             try {
-                await Promise.race([
-                    skills.collectBlock(bot, 'crafting_table', 1),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('cc-reclaim-timeout')), 15000)),
-                ]).catch(() => {});
-                try { if (skills.ensurePickupAt) await skills.ensurePickupAt(bot, _ccT.position, { radius: 4 }); } catch (e) {}
-                log(bot, `★#3 reclaimed local crafting_table @${_ccT.position.x},${_ccT.position.y},${_ccT.position.z} (carry+reuse, no litter)`);
+                const _rc = typeof skills.reclaimTableAt === 'function' ? await skills.reclaimTableAt(bot, _ccT.position) : { reclaimed: false, reason: 'no-reclaimTableAt' };
+                log(bot, _rc.reclaimed
+                    ? `★#3 reclaimed local crafting_table @${_ccT.position.x},${_ccT.position.y},${_ccT.position.z} (carry+reuse, no litter)`
+                    : `★#3 leave table @${_ccT.position.x},${_ccT.position.y},${_ccT.position.z} (${_rc.reason}) — T-0280 no type search / no walk`);
             } catch (e) {}
         }
     }
