@@ -128,3 +128,57 @@ export function makeCooldownChurnTracker({ windowMs = COOLDOWN_CHURN_WINDOW_MS, 
         },
     };
 }
+
+// ── IDLE-DISPATCH (2026-10-11, 监工): daytime with NO kernel dispatch for ≥3min while kernelDriver is the driver =
+//    the decision layer committed nothing actionable (live 04:16:41→04:21:33: zero-pick REPLENISH_KIT on 5min cooldown,
+//    every other proposal gated → 4m52s of standing still in daylight; root fixed by T-0259, this catches the class).
+//    Activity = a '[kernel] dispatch →' line, OR a progress line from a SKILL (any tag not in the background set below —
+//    reflex/framework chatter like [proposeTasks]/[mobility] keeps flowing while nothing is dispatched; unknown tags count
+//    as activity, 宁缺毋滥), OR the body moving (>1 block between vitals samples — a long silent skill walking/digging).
+//    Replay-calibrated on 10-09→10-11 progress+vitals: see test/idle_dispatch.test.mjs. Exempt: not day (world_model time.phase, same as the decision layer), kernelDriver
+//    not running (cancelled / another sticky), and intentional stillness (last dispatched kind HOLD / HEAL, or a
+//    self_preservation FAMINE body freeze).
+export const IDLE_DISPATCH_MS = 3 * 60000;
+const PROG_TS_RE = /^\[(\d{4}-\d\d-\d\dT[\d:.]+Z)\]\s*(.*)$/;
+const DISPATCH_RE = /^\[kernel\] dispatch → (\w+) \(kind=(\w+)/;
+const BACKGROUND_TAG_RE = /^\[(proposeTasks|mobility|kernel|body-gate|arbiter|edge_unstick|self_preservation|self_defense|unstuck|step-edge|arrow_guard|reflex_watchdog|swim|inv-sync|dig-gate|world-scope|motion_quality|threat_radar|auto_eat|cowardice|elbow_room|torch_placing|item_collecting)\]/;
+const IDLE_EXEMPT_KINDS = new Set(['HOLD', 'HEAL']);
+// reflex-side INTENTIONAL stillness (same nature as HOLD): self_preservation freezes the body on purpose (food=0/hp=1)
+const INTENTIONAL_HOLD_RE = /^\[self_preservation\] FAMINE body freeze/;
+export function makeIdleDispatchTracker({ idleMs = IDLE_DISPATCH_MS } = {}) {
+    let lastActivityAt = null, lastKind = null, lastSkill = null, kernelRunning = true, dayStartedAt = null, lastPos = null;
+    return {
+        // vitals position each tick: moving > 1 block = the body is doing something (legit long skill / walking)
+        noteBody(now, pos) {
+            if (!pos || !Number.isFinite(pos.x)) return;
+            if (lastPos && Math.hypot(pos.x - lastPos.x, pos.y - lastPos.y, pos.z - lastPos.z) > 1) lastActivityAt = Math.max(lastActivityAt || 0, now);
+            lastPos = { x: pos.x, y: pos.y, z: pos.z };
+        },
+        ingest(lines) {
+            for (const line of lines) {
+                const m = PROG_TS_RE.exec(line);
+                if (!m) continue;
+                const t = Date.parse(m[1]);
+                if (!Number.isFinite(t)) continue;
+                const body = m[2];
+                const d = DISPATCH_RE.exec(body);
+                if (d) { lastActivityAt = t; lastSkill = d[1]; lastKind = d[2]; kernelRunning = true; continue; }
+                if (/^\[kernel\] ==== kernelDriver START/.test(body)) { kernelRunning = true; lastActivityAt = Math.max(lastActivityAt || 0, t); continue; }
+                if (/^\[kernel\] (supervisor cancel received|kernelDriver loop exhausted)/.test(body)) { kernelRunning = false; continue; }
+                if (INTENTIONAL_HOLD_RE.test(body)) { lastActivityAt = Math.max(lastActivityAt || 0, t); continue; }
+                if (BACKGROUND_TAG_RE.test(body)) continue;
+                lastActivityAt = Math.max(lastActivityAt || 0, t);   // a skill's own progress line
+            }
+        },
+        // phase: world_model time.phase; driver: vitals skill (the sticky) — null/undefined = unknown (don't block)
+        check(now, { phase, driver } = {}) {
+            if (phase !== 'day') { dayStartedAt = null; return null; }
+            if (dayStartedAt === null) dayStartedAt = now;
+            if (!kernelRunning || (driver && driver !== 'kernelDriver')) return null;
+            if (lastKind && IDLE_EXEMPT_KINDS.has(lastKind)) return null;
+            const since = Math.max(lastActivityAt || 0, dayStartedAt);
+            const idle = now - since;
+            return idle >= idleMs ? { idleMs: idle, since, lastKind, lastSkill } : null;
+        },
+    };
+}

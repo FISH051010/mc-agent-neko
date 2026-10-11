@@ -39,7 +39,7 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, mobilityStaleActive, makeCooldownChurnTracker } from './botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, makeIdleDispatchTracker, mobilityStaleActive, makeCooldownChurnTracker } from './botwatch-trackers.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -264,8 +264,8 @@ function readNewProgressLines() {
         return buf.toString('utf8').split(/\r?\n/);
     } catch (e) { return []; }
 }
-async function cooldownChurnDetector(s, t) {
-    cooldownChurn.ingest(readNewProgressLines());
+async function cooldownChurnDetector(s, t, lines) {
+    cooldownChurn.ingest(lines);
     for (const h of cooldownChurn.churning(t)) {
         if (t - (_churnTicketedAt.get(h.kind) || 0) < 2 * 3600000) continue;
         _churnTicketedAt.set(h.kind, t);
@@ -277,6 +277,28 @@ async function cooldownChurnDetector(s, t) {
         });
         flagsOut.push(`★COOLDOWN-CHURN ${h.kind}×${h.count}→${id || '?'}`);
     }
+}
+
+// ── IDLE-DISPATCH (2026-10-11, 监工): 白天 kernelDriver 驱动下 ≥3min 零派发 + 零技能进展 + 身体不动 → 开单。
+//    判据/豁免/回放校准见 botwatch-trackers.makeIdleDispatchTracker + test/idle_dispatch.test.mjs。
+//    dedupKey 按小时 (idle-dispatch-YYYY-MM-DDTHH), 2h 内最多 1 张。
+const idleDispatch = makeIdleDispatchTracker();
+let _idleDispatchTicketedAt = 0;
+async function idleDispatchDetector(s, t, lines) {
+    idleDispatch.ingest(lines);
+    if (s.v) idleDispatch.noteBody(t, s.v);
+    const hit = idleDispatch.check(t, { phase: s.wm && s.wm.time ? s.wm.time.phase : null, driver: s.skill });
+    if (!hit || t - _idleDispatchTicketedAt < 2 * 3600000) return;
+    _idleDispatchTicketedAt = t;
+    const hourKey = new Date(t).toISOString().slice(0, 13);
+    const mins = Math.round(hit.idleMs / 60000 * 10) / 10;
+    const id = await postTicket({
+        type: 'framework', severity: 'high', dedupKey: `idle-dispatch-${hourKey}`,
+        title: `白天零派发 ${mins}min — kernelDriver 无任何派发且身体不动 (上次: ${hit.lastSkill || '?'}/${hit.lastKind || '?'})`.slice(0, 140),
+        detail: `白天(time.phase=day) kernelDriver 自 ${new Date(hit.since).toISOString()} 起 ${mins}min 没有派发任何技能, 期间无技能进展日志、身体未移动 —— 决策层此刻没有可执行的承诺 (常见: 唯一可行 kind 在 dispatch-cooldown, 其余提案被门挡住 / 承诺落到 FREE_PLAY / 技能秒败循环)。查 world_model.json commitment + progress 里同期的 [proposeTasks] 与 ★dispatch-cooldown。现状 skill=${s.skill} mob=${s.mob} hp=${s.hp} food=${s.food} commit=${s.commitment ? s.commitment.kind : '-'}`.slice(0, 480),
+        evidence: { idleMin: mins, since: new Date(hit.since).toISOString(), lastSkill: hit.lastSkill, lastKind: hit.lastKind, pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, mobility: s.mob, commitment: s.commitment, progressTail: s.progTail },
+    });
+    flagsOut.push(`★IDLE-DISPATCH ${mins}min→${id || '?'}`);
 }
 
 // per-detector runtime state
@@ -401,7 +423,9 @@ async function tick() {
         flagsOut.push(`★STALE(vitals ${s.ageS}s old)`);
     } else {
         for (const d of D) await runDetector(d, s, t);
-        try { await cooldownChurnDetector(s, t); } catch (e) {}
+        const _newProg = readNewProgressLines();   // read once per tick, shared by the progress-driven detectors
+        try { await cooldownChurnDetector(s, t, _newProg); } catch (e) {}
+        try { await idleDispatchDetector(s, t, _newProg); } catch (e) {}
         edgeDetectors(s, t);
         await classicDetectors(s, t);
     }
