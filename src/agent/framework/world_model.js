@@ -35,6 +35,18 @@ const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS'
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 export const NIGHT_ARMOR_PRIORITY = 94.2;
+// ★T-0229 补 (01:45:32-01:46:28Z 实录: GET_IRON_TOOLS 熔 5 锭 → craftChain('iron_tier') 镐 3 + 剑 2 全用光, 盾没造 — 预设序 镐>剑>盾 且不带木板,
+//   绕过了防护序; 当时 hp1 → GET_ARMOR 让位不提, 盾只能从这条路出): 没盾时清单 镐 → 盾 → 剑, 前置补够盾的 6 木板 (+棍 2 板); 有盾不再造盾。
+export function ironTierRecipe(bot) {
+    if (hasShield(bot)) return [['stick', 2], ['iron_pickaxe', 1], ['iron_sword', 1]];
+    const c = invCounts(bot);
+    const planks = Object.keys(c).filter(k => /_planks$/.test(k)).reduce((t, k) => t + (c[k] || 0), 0);
+    const need = SHIELD_PLANKS + ((c.stick || 0) >= 3 ? 0 : 2);
+    const log = Object.keys(c).filter(k => /_(log|stem)$/.test(k) && c[k] > 0).sort((a, b) => c[b] - c[a])[0];
+    const out = [['stick', 2], ['iron_pickaxe', 1], ['shield', 1], ['iron_sword', 1]];
+    if (planks < need && log) out.unshift([log.replace(/_(log|stem)$/, '_planks'), Math.ceil((need - planks) / 4)]);
+    return out;
+}
 export const HEAL_PRIORITY = 80;   // ★T-0237 养伤: FOOD_FLOOR 70 之上 (二者互斥: 有吃的才 HEAL), 夜链 91-94 / HOLD 95 之下
 /** ★T-0237 能就地养伤: food 已 ≥18, 或包里有 auto_eat 会挑的食物 (同 pickAutoEatFood 口径: 饿时放开生肉/腐肉/生鸡)。 */
 export function healFeasible(world, bot) {
@@ -990,7 +1002,7 @@ export function proposeTasks(world, bot) {
                 }
             } else {
                 push({ kind: PROPOSAL_KIND.GET_IRON_TOOLS, priority: 47, skill: 'craftChain',
-                       args: ['iron_tier'],
+                       args: [ironTierRecipe(bot)],   // ★T-0229 补: 没盾时 镐 → 盾 → 剑 (含盾的 6 木板)
                        rationale: `stone tier + ${ingots} iron ingots — craft iron pickaxe + sword (unlock diamond mining)`,
                        hints: { tier: tier.level, ingots } });
             }

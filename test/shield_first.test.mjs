@@ -81,3 +81,17 @@ test('T-0229: craftArmor 1 粗铁 → 冶炼、补 6 木板、造盾、立即上
     assert.match(craft[1], /shield/);
     assert.equal(bot.inventory.slots[45] && bot.inventory.slots[45].name, 'shield', 'shield in off-hand (arrow_guard reads slot 45)');
 });
+
+test('T-0229 补 (01:46:28Z 实录: craftChain iron_tier 镐+剑吃光 5 锭没盾): GET_IRON_TOOLS 没盾时清单 镐→盾→剑 且前置木板; 有盾不再造盾', async () => {
+    const { ironTierRecipe } = await import('../src/agent/framework/world_model.js');
+    const r = ironTierRecipe(fakeBot({ iron_ingot: 5, spruce_log: 14, spruce_planks: 2, stone_pickaxe: 2 }));
+    const names = r.map(x => x[0]);
+    assert.equal(names[0], 'spruce_planks', JSON.stringify(r));
+    assert.ok(names.indexOf('shield') > names.indexOf('iron_pickaxe') && names.indexOf('shield') < names.indexOf('iron_sword'), JSON.stringify(names));
+    const r2 = ironTierRecipe(fakeBot({ iron_ingot: 5, spruce_log: 14 }, { offhand: 'shield' }));
+    assert.ok(!r2.some(x => x[0] === 'shield'), JSON.stringify(r2));
+    const { proposeTasks } = await import('../src/agent/framework/world_model.js');
+    const w = day();
+    const p = proposeTasks(w, fakeBot({ iron_ingot: 5, spruce_log: 14, stone_pickaxe: 2, crafting_table: 1 })).find(x => x.kind === 'GET_IRON_TOOLS' && x.skill === 'craftChain');
+    assert.ok(p && Array.isArray(p.args[0]) && p.args[0].some(x => x[0] === 'shield'), JSON.stringify(p && p.args));
+});

@@ -10,7 +10,7 @@ const PRESETS = {
     wood_tier: [['oak_planks', 4], ['jungle_planks', 4], ['crafting_table', 1],
                 ['stick', 2], ['wooden_pickaxe', 1], ['wooden_sword', 1], ['wooden_axe', 1]],
     stone_tier: [['stick', 2], ['stone_pickaxe', 1], ['stone_sword', 1], ['stone_axe', 1], ['furnace', 1]],
-    iron_tier: [['stick', 2], ['iron_pickaxe', 1], ['iron_sword', 1], ['shield', 1]],
+    iron_tier: [['stick', 2], ['iron_pickaxe', 1], ['shield', 1], ['iron_sword', 1]],   // ★T-0229 盾先于剑 (5 锭 = 镐 3 + 盾 1, 剩 1 不够剑也先有盾)
     // Rank 3→4 bridge (GET_DIAMOND_GEAR): 3 banked diamonds + 2 sticks → diamond pickaxe
     // (the obsidian unlock). Sword is opportunistic — craftSmart skips it gracefully when
     // only DIAMOND_FLOOR diamonds are banked (no spare 2), without failing the chain.
