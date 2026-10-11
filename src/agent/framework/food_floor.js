@@ -68,7 +68,11 @@ export function healLatchNext(active, hp) {
 }
 /** 养伤期间不派的出门/迁移/远行类 kind (下矿类已由 descentBlocked 按技能名剔除; 这里补非下矿的出门任务)。 */
 export const HEAL_RISKY_KINDS = new Set(['MIGRATE', 'REPLENISH_KIT', 'GET_PORTAL_KIT', 'RECLAIM_FURNACE', 'GET_BED', 'HUNT_PEARLS', 'BANK_GEAR',
-    'GET_IRON_ARMOR_SET', 'GET_DIAMOND', 'GO_UNDERGROUND', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP', 'OPENING_SCOUT', 'GET_BLAZE_RODS', 'ENTER_NETHER', 'GO_END']);
+    'GET_IRON_ARMOR_SET', 'GET_DIAMOND', 'GO_UNDERGROUND', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP', 'OPENING_SCOUT', 'GET_BLAZE_RODS', 'ENTER_NETHER', 'GO_END',
+    // ★T-0287 (监工; 07:06:46Z 实录: 收台坠落 hp 20→1 后 07:06:47-57 NIGHT_SMELT_IRON 的子技能仍在驱动, 洞里疾跑 30 格, 07:06:58 才由反射接手,
+    //   07:07:06 被苦力怕炸死): 夜间熔铁/造甲会动身体 (放炉挖格、收台走路), 夜计划 @94.2 又压过 HEAL@80 → 养伤锁存成立时必须放手,
+    //   夜链 (_hpOkForNightMine 已关) 回落到原地封坑。
+    'NIGHT_SMELT_IRON']);
 export function cannotRegen(hp, food) { return Number.isFinite(hp) && Number.isFinite(food) && hp <= REGEN_HP_MAX && food < FOOD_RELEASE; }
 const COOKED_RE = /^(cooked_\w+|bread|baked_potato)$/;
 

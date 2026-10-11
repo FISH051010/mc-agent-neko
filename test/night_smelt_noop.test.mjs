@@ -94,3 +94,25 @@ test('T-0266 补 (监工): smeltSafe 烧木当燃料时留拍台+折棍的原木
     assert.deepEqual((await run({ coal: 1, spruce_log: 2, raw_iron: 5 })).asked, [5], 'coal covers it');
     assert.deepEqual((await run({ spruce_log: 2, beef: 3 }, 'beef', 3)).asked, [3], 'cooking food keeps the old behaviour');
 });
+
+test('T-0287: 养伤锁存成立 (hp<10) → 夜间熔铁/造甲承诺放手且不再提 (会动身体: 放炉挖格/收台走路), 夜链回落原地封坑', async () => {
+    const { proposeTasks } = await import('../src/agent/framework/world_model.js');
+    const { HEAL_RISKY_KINDS } = await import('../src/agent/framework/food_floor.js');
+    assert.ok(HEAL_RISKY_KINDS.has('NIGHT_SMELT_IRON'));
+    const bot = (inv, extra = {}) => ({ inventory: { items: () => Object.entries(inv).map(([name, count]) => ({ name, count })), slots: [] },
+        game: { dimension: 'overworld' }, entity: { position: { x: 0, y: 20, z: 0 } }, entities: {}, health: 20, food: 20, ...extra });
+    const inv = { iron_ingot: 9, iron_pickaxe: 1, iron_sword: 1, shield: 1, crafting_table: 1, coal: 8, cobblestone: 64 };
+    const w = JSON.parse(JSON.stringify(EMPTY_WORLD));
+    w.time = { ...w.time, phase: 'night', isDay: false }; w.kit = { ...w.kit, picks: 3, pickTier: 'iron', hasTablePath: true };
+    w.nightPlan = { decision: 'SMELT_IRON' };
+    w.vitals = { ...w.vitals, hp: 20, food: 20 };
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, bot(inv)), false, 'healthy: chestplate affordable → keep');
+    assert.ok(proposeTasks(w, bot(inv)).some(p => p.kind === 'NIGHT_SMELT_IRON'));
+    // 07:06:46Z: 坠落后 hp 1 → 下一拍锁存成立
+    w.vitals = { ...w.vitals, hp: 1 };
+    const hurt = bot(inv);
+    const ps = proposeTasks(w, hurt);
+    assert.equal(hurt._healLatch, true, 'heal latch engaged at hp 1');
+    assert.ok(!ps.some(p => p.kind === 'NIGHT_SMELT_IRON'), JSON.stringify(ps.map(p => p.kind)));
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, hurt), true, 'committed night smelt released → kernel interrupts the moving child');
+});
