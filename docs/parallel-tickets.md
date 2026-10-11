@@ -47,7 +47,11 @@ node bots/_supervisor/ticket.mjs mine --as claude-B   # 看自己认领了哪些
 
 ## 工单生命周期
 
-`open → claimed → in_progress → fixed → verifying(=观察中) → closed`（或 `wontfix`）
+`open → claimed → in_progress → fixed → verifying(=观察中) → closed`（或 `wontfix` / `duplicate --of T-xxxx`）
+
+终态三个：`closed`、`wontfix`、`duplicate`（必须 `--of` 指向另一张存在的单，看板上显示 "→ duplicate of T-xxxx" 可点跳转）。
+CLI 每个命令只认白名单参数（如 `update`：`--status --note --commit --prediction --sev --of --as`），不认识的参数直接报错；
+server 拒绝（非法状态等）时 CLI 打印原因和合法值、非零退出，不会再打印 "updated"（10-11 T-0288 静默失败）。
 
 ```
 node bots/_supervisor/ticket.mjs update T-0007 --status in_progress
@@ -56,6 +60,8 @@ node bots/_supervisor/ticket.mjs update T-0007 --status fixed --note "C282 ..." 
 # 部署+游戏内验证后:
 node bots/_supervisor/ticket.mjs update T-0007 --status verifying   # 已部署,盯实机
 node bots/_supervisor/ticket.mjs update T-0007 --status closed --note "实机验证通过:..."
+# 重复单:
+node bots/_supervisor/ticket.mjs update T-0288 --status duplicate --of T-0284 --note "同一机理"
 ```
 
 ## ★回归测试钉死（2026-10-09 立为原则）

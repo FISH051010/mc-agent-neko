@@ -36,6 +36,23 @@ for (let i = 1; i < argv.length; i++) {
 }
 const actor = flags.as || process.env.TICKET_ACTOR || 'claude';
 
+// ★10-11 (worker-death T-0288): `update --status duplicate --resolution …` printed "updated T-0288 → duplicate" while the
+//   server had answered 400 and `--resolution` was silently dropped. Now: every command has an option whitelist (unknown →
+//   error, exit 1), and every write checks the HTTP status (non-2xx → error with the server's reason, exit 1, no "updated").
+const ALLOWED = {
+    help: [], onboard: [], list: [], next: [], show: [],
+    mine: ['as'], claim: ['as'], release: ['as'], comment: ['as'],
+    create: ['as', 'type', 'sev', 'severity', 'title', 'detail'],
+    update: ['as', 'status', 'note', 'commit', 'prediction', 'sev', 'of'],
+};
+function fail(msg) { console.error(`✗ ${msg}`); process.exitCode = 1; }
+function ok(r, what) {
+    if (r.code >= 200 && r.code < 300) return true;
+    const b = (r.body && typeof r.body === 'object') ? r.body : { error: String(r.body) };
+    fail(`${what}: HTTP ${r.code} — ${b.error || JSON.stringify(b)}${Array.isArray(b.valid) ? ` (valid: ${b.valid.join(', ')})` : ''}`);
+    return false;
+}
+
 function req(method, p, body) {
     return new Promise((resolve, reject) => {
         const data = body ? JSON.stringify(body) : null;
@@ -57,9 +74,13 @@ function line(t) {
 async function main() {
     try {
         if (!cmd || cmd === 'help') {
-            console.log('ticket.mjs — commands: onboard | list [status] | next | show <id> | claim <id> --as X | mine --as X | create ... | update <id> --status S | comment <id> "..."');
+            console.log('ticket.mjs — commands: onboard | list [status] | next | show <id> | claim <id> --as X | mine --as X | create ... | update <id> --status S [--of T-xxxx] [--note ..] [--commit sha] | comment <id> "..."');
+            console.log('statuses: open claimed in_progress fixed verifying | terminal: closed wontfix duplicate (--of T-xxxx)');
             return;
         }
+        if (!ALLOWED[cmd]) return fail(`unknown command '${cmd}' (run: ticket.mjs help)`);
+        const bad = Object.keys(flags).filter(k => !ALLOWED[cmd].includes(k));
+        if (bad.length) return fail(`unknown option${bad.length > 1 ? 's' : ''} ${bad.map(k => '--' + k).join(' ')} for '${cmd}' (allowed: ${ALLOWED[cmd].map(k => '--' + k).join(' ') || 'none'})`);
         if (cmd === 'onboard') {
             const sum = (await req('GET', '/api/summary')).body;
             const active = (await req('GET', '/api/tickets?status=open-ish')).body;
@@ -93,8 +114,9 @@ async function main() {
             return;
         }
         if (cmd === 'show') {
-            const t = (await req('GET', `/api/tickets/${pos[0]}`)).body;
-            console.log(JSON.stringify(t, null, 2));
+            const r = await req('GET', `/api/tickets/${pos[0]}`);
+            if (!ok(r, `show ${pos[0]}`)) return;
+            console.log(JSON.stringify(r.body, null, 2));
             return;
         }
         if (cmd === 'mine') {
@@ -106,23 +128,27 @@ async function main() {
         if (cmd === 'claim') {
             const r = await req('POST', `/api/tickets/${pos[0]}/claim`, { actor });
             if (r.code === 409) { console.log(`✗ already claimed by ${r.body.claimedBy} — pick another (run: ticket.mjs next)`); process.exitCode = 1; return; }
+            if (!ok(r, `claim ${pos[0]}`)) return;
             console.log(`✓ ${pos[0]} claimed by ${actor}`);
             return;
         }
-        if (cmd === 'release') { await req('POST', `/api/tickets/${pos[0]}/release`, { actor }); console.log(`released ${pos[0]}`); return; }
-        if (cmd === 'comment') { await req('POST', `/api/tickets/${pos[0]}/comment`, { actor, note: pos.slice(1).join(' ') }); console.log('commented'); return; }
+        if (cmd === 'release') { if (ok(await req('POST', `/api/tickets/${pos[0]}/release`, { actor }), `release ${pos[0]}`)) console.log(`released ${pos[0]}`); return; }
+        if (cmd === 'comment') { if (ok(await req('POST', `/api/tickets/${pos[0]}/comment`, { actor, note: pos.slice(1).join(' ') }), `comment ${pos[0]}`)) console.log('commented'); return; }
         if (cmd === 'create') {
             const r = await req('POST', '/api/tickets', { source: 'manual', actor, type: flags.type, severity: flags.sev || flags.severity, title: flags.title || pos.join(' '), detail: flags.detail || '' });
+            if (!ok(r, 'create')) return;
             console.log(`created ${r.body.ticket ? r.body.ticket.id : '?'}${r.body.merged ? ' (merged into existing)' : ''}`);
             return;
         }
         if (cmd === 'update') {
+            if (flags.of && flags.status !== 'duplicate') return fail("--of only goes with --status duplicate");
+            if (flags.status === 'duplicate' && (!flags.of || flags.of === true)) return fail('--status duplicate needs --of T-xxxx');
             const resolution = (flags.commit || flags.prediction) ? { commit: flags.commit || null, prediction: flags.prediction || null } : undefined;
-            await req('POST', `/api/tickets/${pos[0]}/update`, { actor, status: flags.status, note: flags.note, severity: flags.sev, resolution });
-            console.log(`updated ${pos[0]}${flags.status ? ' → ' + flags.status : ''}`);
+            const r = await req('POST', `/api/tickets/${pos[0]}/update`, { actor, status: flags.status, note: flags.note, severity: flags.sev, resolution, duplicateOf: flags.of });
+            if (!ok(r, `update ${pos[0]}`)) return;
+            console.log(`updated ${pos[0]}${flags.status ? ' → ' + flags.status : ''}${r.body.duplicateOf ? ' of ' + r.body.duplicateOf : ''}`);
             return;
         }
-        console.log('unknown command:', cmd);
     } catch (e) {
         console.error(`✗ ticket-server unreachable on :${PORT} (${e.message}). Start it: node bots/_supervisor/ticket-server.mjs`);
         process.exitCode = 2;

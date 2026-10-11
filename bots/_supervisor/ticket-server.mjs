@@ -29,11 +29,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const TICKETS_DIR = path.join(DIR, 'tickets');
+// TICKET_DIR override: tests run a real server on a temp dir — never against the live tickets/
+const TICKETS_DIR = process.env.TICKET_DIR ? path.resolve(process.env.TICKET_DIR) : path.join(DIR, 'tickets');
 const SEQ_FILE = path.join(TICKETS_DIR, '.seq');
 const PORT = parseInt(process.env.TICKET_PORT || '48920', 10);
 
-const STATUSES = ['open', 'claimed', 'in_progress', 'fixed', 'verifying', 'closed', 'wontfix'];
+// Terminal: closed / wontfix / duplicate (duplicate needs duplicateOf = an existing other ticket; the board links to it).
+const STATUSES = ['open', 'claimed', 'in_progress', 'fixed', 'verifying', 'closed', 'wontfix', 'duplicate'];
 const OPEN_STATUSES = new Set(['open', 'claimed', 'in_progress', 'fixed', 'verifying']);   // not terminal
 
 if (!fs.existsSync(TICKETS_DIR)) fs.mkdirSync(TICKETS_DIR, { recursive: true });
@@ -130,7 +132,7 @@ function listTickets(q) {
     if (q.claimedBy) arr = arr.filter(t => t.claimedBy === q.claimedBy);
     if (q.dedupKey) arr = arr.filter(t => t.dedupKey === q.dedupKey);
     const sev = { critical: 0, high: 1, med: 2, low: 3 };
-    const sts = { open: 0, claimed: 1, in_progress: 2, fixed: 3, verifying: 4, closed: 5, wontfix: 6 };
+    const sts = { open: 0, claimed: 1, in_progress: 2, fixed: 3, verifying: 4, closed: 5, wontfix: 6, duplicate: 7 };
     arr.sort((a, b) => (sts[a.status] - sts[b.status]) || (sev[a.severity] - sev[b.severity]) || (a.createdAt < b.createdAt ? -1 : 1));
     return arr;
 }
@@ -184,13 +186,22 @@ const server = http.createServer(async (req, res) => {
             }
             if (action === 'update') {
                 if (body.status) {
-                    if (!STATUSES.includes(body.status)) return send(res, 400, { error: 'bad status' });
+                    // ★10-11 (worker-death T-0288): 'duplicate' was not a status → 400, but the CLI printed "updated" anyway.
+                    //   Reject with the valid list so a caller can see why.
+                    if (!STATUSES.includes(body.status)) return send(res, 400, { error: `bad status '${body.status}'`, valid: STATUSES });
+                    if (body.status === 'duplicate') {
+                        const of = String(body.duplicateOf || '');
+                        if (!/^T-\d+$/.test(of)) return send(res, 400, { error: "status 'duplicate' needs duplicateOf: 'T-xxxx'" });
+                        if (of === t.id) return send(res, 400, { error: 'a ticket cannot duplicate itself' });
+                        if (!tickets.has(of)) return send(res, 400, { error: `duplicateOf ${of}: no such ticket` });
+                        t.duplicateOf = of;
+                    } else delete t.duplicateOf;
                     t.status = body.status;
                 }
                 if (body.resolution) t.resolution = body.resolution;
                 if (body.severity && ['critical', 'high', 'med', 'low'].includes(body.severity)) t.severity = body.severity;
                 t.updatedAt = nowIso();
-                t.history.push({ ts: nowIso(), actor, action: 'update', note: body.note || (body.status ? `→${body.status}` : '') });
+                t.history.push({ ts: nowIso(), actor, action: 'update', note: body.note || (body.status ? `→${body.status}${t.duplicateOf && body.status === 'duplicate' ? ` of ${t.duplicateOf}` : ''}` : '') });
                 persist(t); return send(res, 200, t);
             }
         }
@@ -213,7 +224,8 @@ const UI_HTML = `<!doctype html><meta charset=utf-8><title>Neko Tickets</title>
  .b{padding:1px 6px;border-radius:4px;font-size:11px}
  .critical{background:#5a1620;color:#ff8a9b}.high{background:#5a3a16;color:#ffc27a}.med{background:#1d3a5a;color:#7abaff}.low{background:#27303a;color:#9aa6b6}
  .open{background:#1a4a2a;color:#86e0a0}.claimed{background:#4a4416;color:#e6d77a}.in_progress{background:#16404a;color:#7ad6e0}
- .fixed{background:#2a2f3a;color:#cdd3de}.verifying{background:#3a2a5a;color:#c49aff}.closed,.wontfix{opacity:.5}
+ .fixed{background:#2a2f3a;color:#cdd3de}.verifying{background:#3a2a5a;color:#c49aff}.closed,.wontfix,.duplicate{opacity:.5}
+ .dup{color:#c49aff;font-size:11px}
  .det{opacity:.85;margin-top:4px;white-space:pre-wrap;font-size:12px}
  button,select,input,textarea{background:#1d2230;color:#cdd3de;border:1px solid #2a2f3a;border-radius:4px;padding:4px 8px;font:inherit}
  button{cursor:pointer}button:hover{background:#27304a}
@@ -230,7 +242,7 @@ const UI_HTML = `<!doctype html><meta charset=utf-8><title>Neko Tickets</title>
    <option value=open-ish>open (active)</option><option value=open>open</option>
    <option value=claimed>claimed</option><option value=in_progress>in_progress</option>
    <option value=fixed>fixed</option><option value=verifying>verifying</option>
-   <option value=closed>closed</option><option value="">all</option></select></label>
+   <option value=closed>closed</option><option value=wontfix>wontfix</option><option value=duplicate>duplicate</option><option value="">all</option></select></label>
  <button onclick=load()>↻</button>
 </header>
 <main>
@@ -258,10 +270,11 @@ async function load(){
 function card(t){
  const ev=t.evidence||{};
  const evs=ev.pos?('pos='+ev.pos.join(',')) : '';
- return '<div class=t><div class=row>'
+ return '<div class=t id=card_'+t.id+'><div class=row>'
   +'<span class=id>'+t.id+'</span>'
   +'<span class="b '+t.severity+'">'+t.severity+'</span>'
   +'<span class="b '+t.status+'">'+t.status+'</span>'
+  +(t.status==='duplicate'&&t.duplicateOf?'<a class=dup href="#" onclick="return goto(\\''+t.duplicateOf+'\\')">→ duplicate of '+t.duplicateOf+'</a>':'')
   +'<span class="b" style="background:#222">'+t.type+'</span>'
   +'<b>'+esc(t.title)+'</b>'
   +(t.occurrences>1?'<span class=meta>×'+t.occurrences+'</span>':'')
@@ -278,10 +291,14 @@ function card(t){
   +'</div></div>';
 }
 function sel(id,cur){return '<select onchange="upd(\\''+id+'\\',this.value)">'
- +['(set status)','open','claimed','in_progress','fixed','verifying','closed','wontfix'].map(s=>'<option'+(s===cur?' selected':'')+'>'+s+'</option>').join('')+'</select>';}
+ +['(set status)','open','claimed','in_progress','fixed','verifying','closed','wontfix','duplicate'].map(s=>'<option'+(s===cur?' selected':'')+'>'+s+'</option>').join('')+'</select>';}
 const actor=id=>document.getElementById('act_'+id).value||'user';
 async function claim(id){await A('/api/tickets/'+id+'/claim','POST',{actor:actor(id)});load();}
-async function upd(id,s){if(s.startsWith('('))return;await A('/api/tickets/'+id+'/update','POST',{actor:actor(id),status:s});load();}
+async function upd(id,s){if(s.startsWith('('))return;
+ const b={actor:actor(id),status:s};
+ if(s==='duplicate'){const of=(prompt(id+' is a duplicate of which ticket? (T-xxxx)')||'').trim();if(!of){load();return;}b.duplicateOf=of;}
+ const r=await A('/api/tickets/'+id+'/update','POST',b);if(r&&r.error)alert(id+': '+r.error);load();}
+async function goto(id){document.getElementById('f').value='';await load();const e=document.getElementById('card_'+id);if(e){e.scrollIntoView({block:'center'});e.style.outline='1px solid #c49aff';}return false;}
 async function create(){const title=document.getElementById('nt').value.trim();if(!title)return;
  await A('/api/tickets','POST',{source:'manual',actor:'user',title,type:document.getElementById('ntype').value,severity:document.getElementById('nsev').value,detail:document.getElementById('ndetail').value});
  document.getElementById('nt').value='';document.getElementById('ndetail').value='';load();}
