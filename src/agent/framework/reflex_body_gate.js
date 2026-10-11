@@ -36,7 +36,10 @@ export function installReflexBodyGate(bot, { onBlock } = {}) {
     if (onBlock) parts.onBlock = onBlock;
     // ★T-0241: count every refusal on the bot so the dispatcher can tell "the reflex borrowed the body" from a real failure
     const blocked = (kind, detail) => { bot._reflexGateBlocks = (bot._reflexGateBlocks || 0) + 1; try { if (parts.onBlock) parts.onBlock(kind, detail); } catch (e) {} };
-    const gated = () => reflexHolds(bot) && inSkill();
+    // ★T-0231 fix (03:58:34 live: '[body-gate] skill shieldFight setGoal refused — mode:self_defense holds the body'): a reflex's
+    //   execute can start from inside a skill's async chain, so both stores may be set — the reflex store wins (execute() always
+    //   sets it), otherwise the gate blocks the reflex's own fight.
+    const gated = () => reflexHolds(bot) && inSkill() && !inReflex();
     const pf = bot.pathfinder;
     if (!parts.pf && pf && typeof pf.setGoal === 'function') {
         parts.pf = true;

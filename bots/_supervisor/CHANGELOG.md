@@ -12,7 +12,14 @@
 
 ---
 
-## C406. ★封闭坑里苦力怕在外 → 真·原地不动 (T-0127 'hold' 不再走 bunkerDown) + bunkerDown 每个移动子分支写 progress（modes.js 需重启,T-0248 death #52,worker-death,⏳待重启）
+## C407. ★★身体所有权闸误拦反射自己的战斗: 两条链标记都在时反射优先（framework/reflex_body_gate.js 需重启,T-0231 回归修,worker-death,⏳待重启）
+
+**证据**: 03:58:34 `[body-gate] skill shieldFight setGoal(GoalNearXZ) refused — mode:self_defense holds the body (T-0231)` —— shieldFight 是 self_defense 自己调的 customSkill。反射 execute 可能从技能异步链里被触发 (两个 AsyncLocalStorage 标记都在), 旧判据 `reflexHolds && inSkill()` 只看技能标记 → 把反射自己的 PVP 寻路也拦了。随后 03:59:46 hp1 (饥饿) 被僵尸 1.9b 打死, 反射接战被闸卡住是帮凶。
+**改动**: gated = reflexHolds && inSkill() && !inReflex() —— execute() 总会设反射标记, 反射链里的一切 (含反射调用的 customSkill) 放行; 纯技能链照旧被拦。
+**可证伪预测**: 不再出现 `[body-gate] skill shieldFight|defendSelf … refused — mode:self_defense`。
+**回滚**: revert, 重启。回归 reflex_body_gate 'T-0231 fix (03:58:34 实录 shieldFight 被拦)' (先红后绿)。
+
+## C406. ★封闭坑里苦力怕在外 → 真·原地不动 (T-0127 'hold' 不再走 bunkerDown) + bunkerDown 每个移动子分支写 progress（modes.js 需重启,T-0248 death #52,worker-death,✅已上线 03:24:23Z a30d5fc）
 
 **证据**: death #52 03:16:04 拂晓 hp1 (food12 回不了血), 夜坑 @109,74,172。03:15:53.5 `creeper 5.7m but pocket has no horizontal exit → hold (no backoff, T-0127)` —— 但代码里 'hold' 与 'bunker' 都执行 bunkerDown, 而 bunkerDown 只在 sealedNightBox 时驻留; 那一拍不成立 (mobility 54.4 → FREE) → bunkerDown 挖 dirt (y74→72) → path=1 → 03:16:01 挖到地表 y76 暴露 → 苦力怕 2.1b 炸死。整段 bunkerDown 无一行 progress (监工: 看不出哪个分支在驱动)。
 **改动**: ① 新 self_preservation.creeperHoldInPocket: 清键/清寻路, 原地等 ≤2s, 挨打或苦力怕 ≤3b 提前返回重评; 不挖不放不走不按键。T-0127 分支 'hold' → 它, 只有 'bunker' (顶还开着) 才 bunkerDown。② bunkerDown 入口与 relocate / no-filler roof-niche dig+walk / cap failed → pillar-up / seal failed → run from swarm 各写一行 `[self_preservation] bunkerDown <step> @x,y,z hp hostiles (T-0248)` (同步骤 3s 限频)。

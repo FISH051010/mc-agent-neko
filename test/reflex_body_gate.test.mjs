@@ -50,6 +50,21 @@ test('T-0231: 插件 tick (无链标记) 与反射链 (含反射调用的 custom
     assert.deepEqual(calls.set, ['jump=true', 'forward=true', 'back=true']);
 });
 
+test('T-0231 fix (03:58:34 实录 shieldFight 被拦): 反射 execute 从技能链里触发时两个标记都在 — 反射标记优先, 照常放行', async () => {
+    const { bot, calls } = fakeBot();
+    bot._bodyOwner = { name: 'mode:self_defense', kind: 'mode' };
+    await skillCtx.run({ skill: 'quickMeal' }, () => reflexCtx.run({ mode: 'self_defense' }, () => runAsSkill('shieldFight', async () => {
+        const g = new GoalNear();
+        bot.pathfinder.setGoal(g);
+        assert.equal(bot.pathfinder.goal, g, 'the reflex fight may path');
+        bot.setControlState('forward', true);
+    })));
+    assert.deepEqual(calls.set, ['forward=true']);
+    await skillCtx.run({ skill: 'quickMeal' }, async () => {
+        assert.throws(() => bot.pathfinder.setGoal(new GoalNear()), /reflex holds the body/, 'the plain skill chain is still gated');
+    });
+});
+
 test('T-0231: 接线 — customSkill 走 runAsSkill; execute 在 reflexCtx 里跑并清掉技能残留寻路目标; initModes 装闸', () => {
     const sk = fs.readFileSync(new URL('../src/agent/library/skills.js', import.meta.url), 'utf8');
     assert.match(sk, /return await runAsSkill\(skillName, \(\) => fn\(bot, ctx, \.\.\.args\)\);/);
