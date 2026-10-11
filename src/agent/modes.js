@@ -4859,7 +4859,12 @@ const modes_list = [
                         const fresh = bot.blockAt(block.position);
                         if (!fresh || fresh.boundingBox !== 'block') return true;
                         // ★T-0131 ②: near death, never open a collapsing column — one block of gravel on the head is lethal.
-                        if ((bot.health || 20) <= 4 && gravityHazard((p) => bot.blockAt(p), fresh.position, fresh.name)) {
+                        //   ★T-0268 death #55 05:30:43 (10-11, 窒息 y-8): exception — when the head is ALREADY inside a block (suffocating),
+                        //   the worst case has happened; refusing every gravity-adjacent dig (head gravel, side diorite under gravel)
+                        //   left no way out at hp4→0. Digging may drop more gravel; not digging is certain death.
+                        const _headB = bot.blockAt(bot.entity.position.floored().offset(0, 1, 0));
+                        const _suffocating = !!(_headB && _headB.boundingBox === 'block');
+                        if ((bot.health || 20) <= 4 && !_suffocating && gravityHazard((p) => bot.blockAt(p), fresh.position, fresh.name)) {
                             bot._gravityHoldUntil = Date.now() + 4000;
                             try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] ★T-0131 gravity dig refused at hp=${Math.round(bot.health || 0)} (${why}) ${fresh.name}@${fresh.position.x},${fresh.position.y},${fresh.position.z} — pick another bearing\n`); } catch (e) {}
                             return false;

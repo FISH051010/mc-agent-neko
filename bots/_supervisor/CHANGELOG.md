@@ -12,13 +12,21 @@
 
 ---
 
+## C411. ★窒息时 T-0131② 低血拒挖重力柱不再生效 (保护规则堵死唯一出路) + pickDryDigSpot 不选原点列（modes.js/mobility_geom.js 需重启,T-0268 death #55,worker-death,⏳待重启）
+
+**证据**: death #55 05:30:43 suffocation y-8 (丢 24 铁+钻石+2 铁镐)。MAROONED 在洞底 y-7, 凿崖上爬挖 tuff 被重力总闸拒 (tuff 上压砂砾) ×20; 05:30:33 mobility 侧移走进 113,-8 (邻 112,-5 'UNSETTLED column still collapsing'), 05:30:35 砂砾落头。之后 reflex_watchdog SUFFOCATION 'dig out NOW' ×4, mobility dig 'Digging aborted' ×2, `★T-0131 gravity dig refused at hp=4/3/2 (ENTOMBED) gravel@…/diorite@…` ×6 → 16→0。另: 重生后 05:31:32 `relocate-dry-dig→-4,64,-5 @-4,64,-5` — pickDryDigSpot 选回了原点列。
+**改动**: ① guardedDig 的 T-0131② (hp≤4 且 gravityHazard → 拒挖): 头部格 (脚+1) 已是实心方块 (正在窒息) 时不适用 —— 最坏情况已发生, 挖也许再落砂砾, 不挖必死。② pickDryDigSpot 跳过 d2===0 (原点列就是刚挖失败的那列)。
+**未覆盖 (上报)**: MAROONED 侧移/行军的落脚格未查头顶重力柱 (走进正在塌的砂砾柱下), 需在 mobility march 选格处加 gravityOverColumn 检查。
+**可证伪预测**: 窒息 + 低血时不再出现 `T-0131 gravity dig refused`; relocate-dry-dig 目标与当前格不同。
+**回滚**: revert, 重启。回归 seal_cap_geometry 'T-0268 death #55' + gravity_column 'T-0131 wiring' (已放宽)。
+
 ## C410. ★botwatch IDLE-DISPATCH 检测器: 白天 kernelDriver ≥3min 零派发即开单（botwatch.mjs + botwatch-trackers.mjs, botwatch 重启生效, worker-tests, ⏳待 botwatch 重启）
 - **触发**: 10-11 04:16:41→04:21:33 白天 4m52s 零派发(零镐 REPLENISH_KIT 在冷却, 其余提案全被门挡), 根因由 T-0259 修掉; 监工要一个通用检测器兜住同类。
 - **判据**: 白天(world_model time.phase=day, 与决策层同口径) + kernelDriver 驱动 + 自最近一次活动起 ≥3min。活动=`[kernel] dispatch →` / 技能进展日志(反射、仲裁、提案、mobility 等后台日志不算, 未知标签算) / vitals 位移>1 格。豁免: HOLD/HEAL、self_preservation FAMINE body freeze、kernel 被 cancel 期间。dedupKey `idle-dispatch-<日期小时>`, 2h 最多 1 张。
 - **回放校准**(10-09→10-11 progress+vitals, 15s 节拍): 04:16 窗口命中(04:19:49 首报); 另 13 段逐段核实均为同类真空档(冷却后无可派 / 承诺落 FREE_PLAY / mineDown 流体秒败循环 / ENTOMBED 口袋站一整个白天 / hp1 smeltSafe 后 8.5min 空站…), 身体在动或技能在出日志时段零命中。FAMINE body freeze 两段经核实为有意静止, 已豁免。
 - **钉子**: test/idle_dispatch.test.mjs(7 条, 含真实 04:16 片段); 各判据变异均红。
 
-## C409. ★入夜庇护原地挖不下去 → 先挪到附近干地再挖 (挖出的土石即封顶料), kite 退为最后手段（modes.js/mobility_geom.js 需重启,T-0261 death #54,worker-death,⏳待重启）
+## C409. ★入夜庇护原地挖不下去 → 先挪到附近干地再挖 (挖出的土石即封顶料), kite 退为最后手段（modes.js/mobility_geom.js 需重启,T-0261 death #54,worker-death,✅已上线 04:38:14Z f82679b）
 
 **证据**: death #54 04:27:54 刚入夜, 04:26:31 刚从水里游出, 包里零填充。04:27:26.0 `bunkerDown enter @0,62,-81` → 0.6s 后 `cap failed → pillar-up fallback` (原地 digDown 一格都没下去 — 邻水守卫拒) → 04:27:29 `seal failed → run from swarm` → kite 25b 到 -16,64,-105 (又是水边, 溺尸) → 04:27:53 `no-filler roof-niche dig+walk` hp3 → 溺尸 0.9b 打死。
 **改动**: mobility_geom.pickDryDigSpot(blockAt, origin, {R:8, hasPick}): 可站、脚下软土 (有镐含石头, 非重力)、周围 2 格 (y-2..+1) 无水/岩浆, 取最近。bunkerDown 首轮下挖后若一格未下且 4b 内无近战怪 → `relocate-dry-dig→x,y,z (T-0261)` 走过去再 digDown ×2, 之后才进封顶/垫柱/run 兜底。

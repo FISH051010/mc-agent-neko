@@ -452,3 +452,12 @@ test('T-0261 补 (监工): 应急取原木给零镐留首镐底线 (3 根 = FIRS
     assert.equal(resolveCapBlock(mk(3, false), { emergency: true }), null, 'last 3 logs kept for table + first pick');
     assert.equal(resolveCapBlock(mk(2, true), { emergency: true }), 'spruce_log');
 });
+test('T-0268 death #55 05:30:43 (10-11 窒息): T-0131② 低血拒挖重力柱在"头已埋在方块里"时不适用; pickDryDigSpot 不选原点列', async () => {
+    const fs = await import('node:fs');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(m, /const _suffocating = !!\(_headB && _headB\.boundingBox === 'block'\);\s*if \(\(bot\.health \|\| 20\) <= 4 && !_suffocating && gravityHazard\(/);
+    const { pickDryDigSpot } = await import('../src/agent/mobility_geom.js');
+    const dirt = (x, y, z) => (y >= 65 ? { name: 'air', boundingBox: 'empty' } : { name: 'dirt', boundingBox: 'block' });
+    const s = pickDryDigSpot(dirt, { x: -4, y: 65, z: -5 }, { R: 8 });
+    assert.ok(s && !(s.x === -4 && s.z === -5), 'live 05:31:32 relocated onto its own cell — must pick a different column');
+});

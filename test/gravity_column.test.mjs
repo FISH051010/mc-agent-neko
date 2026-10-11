@@ -59,7 +59,7 @@ test('T-0131: a falling_block entity still in the column means "not yet"', () =>
 
 test('T-0131: modes.js wiring — guardedDig settles/refuses gravity, every dig-out step honours the hold', () => {
     const src = fs.readFileSync(path.join(root, 'src/agent/modes.js'), 'utf8');
-    assert.match(src, /\(bot\.health \|\| 20\) <= 4 && gravityHazard\(/, 'low-hp gravity dig refusal');
+    assert.match(src, /\(bot\.health \|\| 20\) <= 4 && (!_suffocating && )?gravityHazard\(/, 'low-hp gravity dig refusal (except when already suffocating)');
     assert.match(src, /const st = await settleGravityColumn\(\{/, 'post-dig column settle');
     assert.match(src, /if \(!st\.ok\) \{ bot\._gravityHoldUntil = Date\.now\(\) \+ 4000; return false; \}/);
     assert.match(src, /const gravityHeld = \(\) => \(bot\._gravityHoldUntil \|\| 0\) > Date\.now\(\);/);

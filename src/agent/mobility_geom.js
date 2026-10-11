@@ -197,6 +197,7 @@ export function pickDryDigSpot(blockAt, origin, { R = 8, hasPick = false } = {})
     const wet = (x, y, z) => { const b = blockAt(x, y, z); return !!(b && /water|lava/.test(b.name || '')); };
     for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
         const d2 = dx * dx + dz * dz;
+        if (d2 === 0) continue;   // the origin column is where digging just failed (T-0268 live 05:31:32 'relocate-dry-dig→' its own cell)
         if (d2 > R * R || d2 >= bd) continue;
         for (const dy of [0, -1, 1]) {
             const x = origin.x + dx, y = origin.y + dy, z = origin.z + dz;
