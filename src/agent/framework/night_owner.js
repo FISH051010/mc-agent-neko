@@ -42,6 +42,13 @@ export const NIGHT_DECISION_KIND = Object.freeze({
     DIG_ONE_CAP: 'NIGHT_DIG_ONE',
     SEAL_FORT: 'NIGHT_SEAL',
 });
+// ★T-0274: building the night shelter is a safety action — a reflex that pins the body to save hunger (famineBodyFreeze)
+//   must yield to it. 10-11 06:06-06:08: FOOD_FLOOR→NIGHT_DIG_ONE flip, freeze cleared nightShelter's controls every tick,
+//   hp1 bot stood on the surface 2m16s. Only the shelter kinds — night mining is ordinary work and stays frozen at food 0.
+export const NIGHT_SHELTER_KIND_RE = new RegExp(`^(${NIGHT_DECISION_KIND.DIG_ONE_CAP}|${NIGHT_DECISION_KIND.SEAL_FORT})$`);
+export function shelterOwnsBody({ skill = '', commitmentKind = '' } = {}) {
+    return skill === 'nightShelter' || NIGHT_SHELTER_KIND_RE.test(commitmentKind || '');
+}
 export function nightDecisionCooled(decision, cooldownUntil, now = Date.now()) {
     const k = NIGHT_DECISION_KIND[decision];
     return !!(k && cooldownUntil && cooldownUntil[k] > now);

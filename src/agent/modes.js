@@ -40,7 +40,7 @@ import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, se
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { enclosedAt } from './framework/surface_judge.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
-import { decisionOwnsNightMining, pickFirstNotCooled } from './framework/night_owner.js';
+import { decisionOwnsNightMining, pickFirstNotCooled, shelterOwnsBody } from './framework/night_owner.js';
 import { recordSightings } from './framework/animal_sightings.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
@@ -161,6 +161,8 @@ function famineBodyFreeze(agent, owner) {
     // ★T-0069 (监工加急#3, 17:57:49Z 实录): FOOD_FLOOR 是食物本能关闭时唯一的觅食出口 — 冻身体会让"去拿食物"
     //   永远发生不了 (Normal 饿不死, 只会永久停滞)。承诺是 FOOD_FLOOR 时一律让路 (上浮/侦察/猎杀都要动身体)。
     if (bot._commitment && bot._commitment.kind === 'FOOD_FLOOR') return false;
+    // ★T-0274: at food 0 freezing saves no hunger — never pin the body while it is digging in for the night.
+    if (shelterOwnsBody({ skill, commitmentKind: bot._commitment && bot._commitment.kind })) return false;
     const edible = bot.inventory && bot.inventory.items().some(i => i && i.name && FAMINE_FOOD_RE.test(i.name));
     if (edible) return false;
     const p = bot.entity.position;

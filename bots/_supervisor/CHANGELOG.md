@@ -12,6 +12,14 @@
 
 ---
 
+## C414. ★饥饿冻身不再锁死夜庇护: famineBodyFreeze 让路给 nightShelter / NIGHT_DIG_ONE / NIGHT_SEAL（modes.js 需重启,T-0274,worker-death,⏳待重启）
+- **证据**: 10-11 06:06:36 承诺从 FOOD_FLOOR 翻成 NIGHT_DIG_ONE，06:06:40 派发 nightShelter dig_one。从 06:06:51 到 06:08:52 每 15 秒一条 `FAMINE body freeze ... skill=nightShelter`，2 分 16 秒里 pos 只从 y69 挖到 y67，hp1/food0 的 bot 在地表夜里暴露了 2 分钟以上。06:08:56 bunkerDown（反射本身）接手，7 秒就封好了。
+- **假设**: famineBodyFreeze 的放行条件只有觅食类技能和 FOOD_FLOOR 承诺。承诺一翻到夜庇护，放行就失效，冻身每拍执行 setGoal(null)/stop()/clearControlStates()，把 nightShelter 的挖掘和移动清掉。food 已经是 0，冻身省不下任何饥饿值，不应该挡安全动作。
+- **改动**: night_owner.js 新增 shelterOwnsBody({skill, commitmentKind})：skill 为 nightShelter，或承诺为 NIGHT_DIG_ONE / NIGHT_SEAL 时返回 true。夜间挖矿这类普通工作不算，food 0 时照样冻身。famineBodyFreeze 在 FOOD_FLOOR 放行之后、清控制之前查它。测试 test/famine_freeze_shelter.test.mjs。
+- **可证伪预测**: food0 夜里派发 nightShelter 后，不再出现 `FAMINE body freeze ... skill=nightShelter`，dig_one 在几十秒内封好。白天 food0 无事可做时照常冻身。
+- **回滚法**: 删掉 famineBodyFreeze 里那行 shelterOwnsBody（git revert）。
+
+---
 ## C413. ★夜间暴露判据不再把树冠当屋顶: mobility.enclosed 改走 surface_judge.enclosedAt（modes.js 需重启,T-0265,worker-death,⏳待重启）
 - **证据**: T-0258 审计 C 类。modes.js 两处手写 3x3 网格 ×36 格向上扫描（mobility 分类器、world-model 观察者）把任何实心块都当成顶，树叶和原木也算。密林里裸站在草地上的 bot 会被判 enclosed，于是 shouldNightShelter、MINE_THROUGH_NIGHT、chopWood/achieve 的 NIGHT-BAIL、flee 面包屑、nightBunker 判据都把它当成"已庇护"，夜里不躲也不撤。
 - **假设**: enclosed 的语义本来就是"与开放天空隔绝（封闭地穴）"。树冠下仍然是地表，怪会从侧面走进来，所以树冠下本身就不该算 enclosed。surface_judge 已经有 canopy 规则 (isCanopyBlock)，应当共用这一处。
