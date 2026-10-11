@@ -74,3 +74,25 @@ test('T-0258: no world data (no blockAt) → the old depth-only line y≥62', as
     assert.equal(shouldClimbToSurface(bot(56)), true);
     assert.equal(shouldClimbToSurface(bot(62)), false);
 });
+
+// T-0271 (监工加急, 一阶停滞复发 05:44:58Z @20,62,-10): a 1-deep night pit on the spawn hillside — the ring columns' own ground
+// is higher than feet+2, the old ring scan (from feet+2 up) called that dirt a "roof" → openRing<2 → not surface; surfaceUp's
+// own test said "already at open surface" → replenishKit ① gain 0 ×3 → cooled. A roof is solid ABOVE an air gap; a column that
+// is solid ground up to its surface and open sky above is no roof.
+test('T-0271: pit on a hillside — neighbours whose ground rises above feet+2 are open columns, not roofs', async () => {
+    const { openRingCount } = await import('../src/agent/framework/surface_judge.js');
+    const cells = {};
+    // ground rises to y64..y66 around the bot at y62 (feet), all open sky above the ground
+    for (const [dx, dz, top] of [[4, 0, 64], [-4, 0, 66], [0, 4, 65], [0, -4, 64], [4, 4, 66], [4, -4, 64], [-4, 4, 65], [-4, -4, 66]])
+        for (let y = 55; y <= top; y++) cells[k(dx, y, dz)] = 'dirt';
+    const bn = world(cells);
+    assert.equal(openRingCount(bn, { x: 0.5, y: 62, z: 0.5 }), 8);
+});
+
+test('T-0271: a ring column with an air pocket under rock still counts as roofed (cave / skylight shaft)', async () => {
+    const { openRingCount } = await import('../src/agent/framework/surface_judge.js');
+    const cells = {};
+    for (const [dx, dz] of [[4, 0], [-4, 0], [0, 4], [0, -4], [4, 4], [4, -4], [-4, 4], [-4, -4]]) { cells[k(dx, 63, dz)] = 'stone'; cells[k(dx, 70, dz)] = 'stone'; }
+    // stone at 63 (ground lip), air 64..69, stone at 70 = a cave ceiling over the column
+    assert.equal(openRingCount(world(cells), { x: 0.5, y: 62, z: 0.5 }), 0);
+});

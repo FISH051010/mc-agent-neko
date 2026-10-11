@@ -28,6 +28,11 @@ const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|s
 // (single source moved to src/agent/framework/kit_gate.js — T-0261: emergency wood spending keeps the same floor)
 import { FIRST_PICK_PLANKS_EQ } from '../../../src/agent/framework/kit_gate.js';
 export { FIRST_PICK_PLANKS_EQ };
+// ★T-0271 (05:44:58Z: zero picks, 1 log → '③.5 口袋台 0→1' → '④ break — 棍造不出'): zero picks and wood below the
+//   first-pick floor → don't spend it on a pocket table / bed yet; chop until table+sticks+pick are covered.
+export function holdWoodForFirstPick({ picks, planksEq }) {
+    return picks === 0 && planksEq < FIRST_PICK_PLANKS_EQ;
+}
 export function shouldChopBeforeCrafting({ picks, planksEq }) {
     if (planksEq >= 64) return false;                                  // 不变量已满足, 不砍
     if (picks === 0 && planksEq >= FIRST_PICK_PLANKS_EQ) return false; // 零镐: 先把首镐造出来
@@ -349,7 +354,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     //    (同色羊毛3+板3), 然后才轮到消耗品(镐/棍)。craftRecipeLocal 零产出回退 craftRecipe。
     //    ★排序注: 台在折棍【之前】 — 实录 10:08 最小木量(8板)时折棍先吃 2 板, 台(4板)被
     //    截胡到 2 板断供。台是万物解锁器, 排全队最前。──
-    if (!stop() && !overBudget() && cnt('crafting_table') < 1 && planksHeld() >= 4) {
+    if (!stop() && !overBudget() && cnt('crafting_table') < 1 && planksHeld() >= 4 && !holdWoodForFirstPick({ picks: picks(), planksEq: planksEq() })) {   // ★T-0271
         const tb = cnt('crafting_table');
         let r35 = null;
         try { r35 = await skills.craftRecipeLocal(bot, 'crafting_table', 1); } catch (e) { prog(`replenishKit: ③.5 table err ${e.message}`); }
@@ -359,7 +364,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
         }
         prog(`replenishKit: ③.5 口袋台 ${tb}→${cnt('crafting_table')}`);
     }
-    if (!stop() && !overBudget() && !bot.inventory.items().some(i => /_bed$/.test(i.name || ''))) {
+    if (!stop() && !overBudget() && !bot.inventory.items().some(i => /_bed$/.test(i.name || '')) && !holdWoodForFirstPick({ picks: picks(), planksEq: planksEq() })) {   // ★T-0271
         const wools = {};
         try { for (const it of bot.inventory.items()) if (/_wool$/.test(it.name || '')) wools[it.name] = (wools[it.name] || 0) + it.count; } catch (e) {}
         const best = Object.entries(wools).sort((a, b) => b[1] - a[1])[0];
