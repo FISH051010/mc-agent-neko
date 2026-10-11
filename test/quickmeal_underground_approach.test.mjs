@@ -31,7 +31,7 @@ test('T-0167: 地下接近 0 进展 → 先上浮再接近一次; 上浮算进�
     const { bot, ctx, calls, gotos } = rig({ startY: 56 });
     const r = await quickMeal(bot, ctx, { radius: 48, maxDy: 10, maxMs: 60000 });
     assert.ok(calls.includes('surfaceUp'), `surfaced (calls=${calls})`);
-    assert.equal(gotos.length, 2, 'approach retried after surfacing');
+    assert.ok(gotos.length >= 2, 'approach retried after surfacing');   // T-0238: 接近改多段追踪, 地下那轮会先试 2 段 (没拉近即停) 再上浮
     assert.ok(bot.entity.position.distanceTo({ x: 0, y: 64, z: 44 }) < 3, 'actually reached the pig');
     assert.notEqual(r.failed, true, JSON.stringify(r));
 });

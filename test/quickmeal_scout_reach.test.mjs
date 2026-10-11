@@ -181,3 +181,19 @@ test('T-0230 补 (01:21Z 地表 hp1 food0): 不许挖的侦察 6 段原地不动
     assert.ok(legs.includes('attack'), `found and hunted the cow (${JSON.stringify(legs)})`);
     assert.match(fs.readFileSync(path.join(home, 'bots', '_supervisor', 'progress.txt'), 'utf8'), /retry waypoints with digging allowed/, 'scout itself retried with digging (not just the forced pit exit)');
 });
+
+test('T-0238 (01:41-01:42Z 猪逃 "approached → 7.7/3.0/11.1/9.0b" 全无肉): 接近按猎物实时位置多段追踪, 贴到 ≤3 格才出手', async () => {
+    const goals = [];
+    const pig = { name: 'pig', position: V(20, 70, 0), isValid: true };
+    const bot = { food: 2, health: 18, entity: { position: V(0, 70, 0) }, entities: { 1: pig }, blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {}, setGoal() {}, setMovements() {},
+            goto: async (g) => { goals.push([g.x, g.z]); bot.entity.position = V(g.x, 70, g.z); pig.position = V(pig.position.x + 4, 70, 0); } },   // 每段到点时猪又跑开 4 格
+        clearControlStates() {} };
+    let attackedAt = null;
+    const ctx = { world: { getInventoryCounts: () => ({}) },
+        skills: { customSkill: async () => {}, consume: async () => {}, pickupNearbyItems: async () => {},
+                  attackEntity: async (_b, t) => { attackedAt = t.position.distanceTo(bot.entity.position); } } };
+    await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000 });
+    assert.ok(goals.length >= 2, `re-targeted the moving pig (${JSON.stringify(goals)})`);
+    assert.ok(goals[1][0] > goals[0][0], 'second leg aims at the pig\'s new position');
+});

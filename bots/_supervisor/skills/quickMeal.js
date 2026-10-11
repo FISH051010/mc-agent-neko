@@ -363,10 +363,22 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         // ★18:04:35 实录: attackEntity 预检"远于 4 格且无清晰路径就放弃" → 41.7 格的羊 0 秒收手、零肉。
         //   先安全寻路贴近 (≤2 格, 限时 20s; 动物会走动, 用实时 position), 再出手。
         if (target.position.distanceTo(bot.entity.position) > 3.5) {
+            // ★T-0238 (01:41:45-01:42:43Z 实录: 4 次 "approached pig → 7.7/3.0/11.1/9.0b" 全无肉): 只对出发时的坐标寻一次路,
+            //   猪边走边逃, 到点时已离开 3-11 格, attackEntity 预检 (>4 格且无清晰路径) 直接放弃。改为追踪: 每段用猎物的实时位置
+            //   重新寻路 (≤8s/段, ≤4 段, ≤20s), 贴到 ≤3 格即止; 连续 2 段没拉近 ≥0.5 格 → 停 (够不着, 别空耗)。
             const approach = async () => {
                 setSafeMovements(bot);
-                try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 2)), Math.min(left(), 20000)); } catch (e) {}
-                haltPath(bot);
+                const tEnd = Date.now() + Math.min(left(), 20000);
+                let stale = 0;
+                for (let k = 0; k < 4 && Date.now() < tEnd && !bot.interrupt_code && target.isValid !== false; k++) {
+                    const dBefore = target.position.distanceTo(bot.entity.position);
+                    if (dBefore <= 3) break;
+                    try { await raceI(bot, bot.pathfinder.goto(new goals.GoalNear(Math.floor(target.position.x), Math.floor(target.position.y), Math.floor(target.position.z), 1)), Math.min(8000, tEnd - Date.now())); } catch (e) {}
+                    haltPath(bot);
+                    const dAfter = target.position.distanceTo(bot.entity.position);
+                    stale = dBefore - dAfter < 0.5 ? stale + 1 : 0;
+                    if (stale >= 2) break;
+                }
             };
             const d0 = target.position.distanceTo(bot.entity.position);
             await approach();
