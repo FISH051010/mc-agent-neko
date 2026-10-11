@@ -3323,6 +3323,8 @@
 
 - **★C441-S 重力门日志写出真正的风险格 + mobility 救援挖掘逐块记录 (T-0268 尾巴, 监工)**（2026-10-11，worker-stuck，T-0268）: death #55 复盘两处看不清: ① dig-gate 刷 'overhead gravity column: tuff above own head — sidestep first' ×10+ — tuff 不是重力块, 风险是它上方的砂砾; ② MAROONED-climb/挖出路径从不记录挖了哪块, '谁让砂砾落下来' 无法确认。修: skills.js 新导出 overheadGravityCell (返回 {x,y,z,name} 真正的重力格; overheadGravityRisk 改为基于它, 语义不变); bot.dig 总闸拒挖文案改为 'overhead gravity column: gravel@x,y,z in the column above tuff@x,y,z (feet y=…) — sidestep first', progress 行同步; mobility guardedDig 每次挖成写一行 '[mobility] dug <block>@x,y,z (<why>) feet=… gravityAbove=<上方 4 格重力块> hp=… (T-0268b)', 限频 1s。test/gravity_gate_log.test.mjs (T-0268b ×2)。src → 随下次重启上线。全套 850/850。
 
+- **★C442-S 一阶停滞复发: 坡地夜坑被判'不在地表' (T-0258 环形检查回归) + ③.5 首镐留木 (T-0271, 监工加急)**（2026-10-11，worker-stuck，T-0271）: death #55 重生后白天 05:37-05:47 0 原木 0 镐。05:44:58Z @20,62,-10 出生点坡地上的 1 格深夜坑: replenishKit START onSurface=false → '① surfaceUp result y 62→62 (gain 0.0)' 5ms ×3 → REPLENISH_KIT 冷却。surfaceUp.log 'already at open surface' — surface_judge 的环形检查从脚+2 往上扫邻列, 坡地上邻列自己的地面高于脚+2, 泥土被当成'屋顶' → openRing<2 → 不在地表; surfaceUp 完成判定 (旧判据 OR) 却说已在地表 → 两判据打架 (T-0244 同类, 由我 T-0258 引入)。另 '③ planks 0→4 (from spruce_log x1)' → '③.5 口袋台 0→1' → '④ break — 棍造不出': 唯一原木做成台, 首镐还差 5 板。修: ① surface_judge 新导出 columnRoofed — 邻列从脚的高度往上先跳过该列自己的地面 (连续实心), 进入空气后再遇非树冠实心/液体才算顶, 整列 maxDy 内无空气 (山体内) 算顶; openRingCount 改用它 (中心列 rockRoofAbove 不变)。② replenishKit 新导出 holdWoodForFirstPick({picks,planksEq}) = 零镐且 planksEq<FIRST_PICK_PLANKS_EQ, ③.5 口袋台与随身床都受它门控 (木料先留给首镐)。test/surface_judge.test.mjs 追加 T-0271 ×2 (坡地坑邻列地面高 → 8 列开阔; 空气层上盖岩 → 仍算顶)、test/replenish_first_pick_hold.test.mjs (T-0271 ×2)。③ IDLE_FALLBACK chopWood 被解冻的 REPLENISH_KIT 每秒抢断属决策层, 已转 worker-tier。surface_judge 已被进程缓存 → 需重启。全套全绿。
+
 ---
 
 ---

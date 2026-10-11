@@ -45,11 +45,30 @@ export function rockRoofAbove(blockAt, feet, maxDy = ROOF_SCAN_DY) {
 export const SURFACE_RING_SPACING = 4;
 export const SURFACE_RING_MIN_OPEN = 2;
 const RING = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-/** How many of the 8 ring columns have no rock roof above feet level. */
+/**
+ * ★T-0271 (05:44:58Z @20,62,-10: a 1-deep night pit on the spawn hillside — the neighbours' ground rose above feet+2 and the
+ * old scan called that dirt a roof → ring 0 → "not surface" while surfaceUp said "already at open surface" → ① gain 0 ×3).
+ * A roof over a column is solid ABOVE an air gap: walk up from feet level, skip the column's own ground (solid from below),
+ * and only a non-canopy solid / fluid after air counts. Never reaching air within maxDy (inside a mountain) = roofed.
+ */
+export function columnRoofed(blockAt, x, feetY, z, maxDy = ROOF_SCAN_DY) {
+    const fy = Math.floor(feetY);
+    let seenAir = false;
+    for (let dy = 0; dy <= maxDy; dy++) {
+        let b = null;
+        try { b = blockAt({ x, y: fy + dy, z }); } catch (e) { b = null; }
+        const n = (b && b.name) || 'air';
+        const solid = !!(b && b.boundingBox === 'block' && !isCanopyBlock(b));
+        if (!seenAir) { if (!solid) seenAir = true; continue; }   // still in the column's own ground (or water at the surface)
+        if (FLUID_RE.test(n) || solid) return true;
+    }
+    return !seenAir;
+}
+/** How many of the 8 ring columns are open (no roof above their own ground). */
 export function openRingCount(blockAt, feet, spacing = SURFACE_RING_SPACING, maxDy = ROOF_SCAN_DY) {
     let n = 0;
     for (const [dx, dz] of RING) {
-        if (rockRoofAbove(blockAt, { x: Math.floor(feet.x) + dx * spacing, y: feet.y, z: Math.floor(feet.z) + dz * spacing }, maxDy) == null) n++;
+        if (!columnRoofed(blockAt, Math.floor(feet.x) + dx * spacing, feet.y, Math.floor(feet.z) + dz * spacing, maxDy)) n++;
     }
     return n;
 }
