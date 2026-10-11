@@ -197,3 +197,21 @@ test('T-0238 (01:41-01:42Z 猪逃 "approached → 7.7/3.0/11.1/9.0b" 全无肉):
     assert.ok(goals.length >= 2, `re-targeted the moving pig (${JSON.stringify(goals)})`);
     assert.ok(goals[1][0] > goals[0][0], 'second leg aims at the pig\'s new position');
 });
+
+test('T-0238 补 (02:06:07Z 分段追踪后仍 5.1b → attackEntity 放弃): 剩 3.5-8 格 → GoalFollow 动态跟随贴到 ≤2.5 格再出手', async () => {
+    const pig = { name: 'pig', position: V(20, 70, 0), isValid: true };
+    let followed = null;
+    const bot = { food: 0, health: 1, entity: { position: V(0, 70, 0) }, entities: { 1: pig }, blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {},
+            setGoal(g, dyn) { if (g && g.constructor.name === 'GoalFollow') { followed = !!dyn; bot.entity.position = V(pig.position.x - 2, 70, 0); } },
+            setMovements() {},
+            goto: async (g) => { bot.entity.position = V(pig.position.x - 5, 70, 0); } },   // 分段寻路每次都停在 5 格外 (猪在走)
+        clearControlStates() {} };
+    let attackedAt = null;
+    const ctx = { world: { getInventoryCounts: () => ({}) },
+        skills: { customSkill: async () => {}, consume: async () => {}, pickupNearbyItems: async () => {},
+                  attackEntity: async (_b, t) => { attackedAt = t.position.distanceTo(bot.entity.position); } } };
+    await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000 });
+    assert.equal(followed, true, 'dynamic GoalFollow used');
+    assert.ok(attackedAt != null && attackedAt <= 2.5, `attacked at ${attackedAt}`);
+});

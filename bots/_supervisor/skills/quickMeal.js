@@ -379,6 +379,16 @@ export default async function quickMeal(bot, ctx, opts = {}) {
                     stale = dBefore - dAfter < 0.5 ? stale + 1 : 0;
                     if (stale >= 2) break;
                 }
+                // ★T-0238 补 (02:05:51-02:06:07Z 实录: 分段追踪后仍停在 5.1b, attackEntity >4 格放弃): 剩 3.5-8 格 → 动态跟随
+                //   (GoalFollow + setGoal(goal, true), pathfinder 追移动目标的标准做法) ≤5s, 贴到 ≤2.5 格; 5s 内拉不近就停。
+                const dLeft = target.position.distanceTo(bot.entity.position);
+                if (dLeft > 3.5 && dLeft <= 8 && target.isValid !== false && !bot.interrupt_code) {
+                    try { bot.pathfinder.setGoal(new goals.GoalFollow(target, 1), true); } catch (e) {}
+                    const tf = Date.now() + Math.min(5000, Math.max(0, left() - 2000));
+                    while (Date.now() < tf && !bot.interrupt_code && target.isValid !== false && target.position.distanceTo(bot.entity.position) > 2.5)
+                        await new Promise(r => setTimeout(r, 150));
+                    haltPath(bot);
+                }
             };
             const d0 = target.position.distanceTo(bot.entity.position);
             await approach();
