@@ -12,6 +12,23 @@
 
 ---
 
+## C418. 观测: 摔落探针，记录 ≥5 格摔落起跳时的持身者、技能、按键和寻路目标（modes.js 需重启,T-0288,worker-death,⏳待重启）
+- **证据**: death #56 前段。07:06:46Z 从 y18 摔到 y-6，24 格，-17hp，附近无怪。前后只有 smeltSafe 放炉失败 (07:06:45.467) 和 mobility POCKET (07:06:45.791)，0.7 秒里是谁在驱动身体完全没有记录。
+- **假设**: 未知。候选有 smeltSafe 的 placeBlockNearby 定位、POCKET 反射、unstuck 等，现有日志区分不了。
+- **改动**: 新增 framework/fall_probe.js。createFallTracker 是纯函数：离地时快照，跳跃取最高点，入水即终止，落地后落差 ≥5 格才记录。installFallProbe 挂在 physicsTick 上，initModes 时安装。日志格式为 `[fall] drop=.. y a→b from x,y,z hp a→b owner=.. skill=.. keys=.. goal=..`。测试 test/fall_probe.test.mjs。离线无法复现 (移动者未知)，游戏内回退信号就是这一行日志。
+- **可证伪预测**: 下次 ≥5 格摔落时 progress.txt 会出现 [fall] 行，直接指出驱动者。
+- **回滚法**: 删掉 initModes 里的 installFallProbe 调用。
+
+---
+
+## C417. ★苦力怕退避循环按窗口净位移判卡: 跳着顶墙抖动不再骗过单步判据（modes.js/mobility_geom.js 需重启,T-0285 death #56,worker-death,⏳待重启）
+- **证据**: death #56，07:07:06Z，cause=creeper，y-12 洞穴，hp9，手上空，4 只苦力怕。combat_log 07:07:03.5→07:07:05.97 位置在 (-78.7,-250)、(-78.4,-249.7)、(-78.6,-249.8) 之间，ground=false、vy=0.33，即跳着顶墙。苦力怕 464014 距离 6.5→2.8m 后引爆。这段时间 progress.txt 没有任何 `creeper backoff wedged` 行。
+- **假设**: 退避循环按单步判卡 (每 160ms 移动 <0.12 格则 stuckRun++，否则清零)。跳着顶墙每步抖动超过 0.12 格，stuckRun 一直被清零，2.5 秒净位移不到 0.5 格却从未进入 wedge 分支 (punch-back / interpose / 紧急封坑)。与 T-0091 同类：抖动骗过单步判据。
+- **改动**: mobility_geom 新增 runNetStuck(trail)：最近 8 个采样 (约 1.3 秒) 的首尾水平净位移 <1.0 格即判卡。退避循环每步记录位置，净位移判卡时 stuckRun = max(stuckRun+1, 8)，立即进入 wedge 分支。原单步判据保留。测试 test/creeper_run_net_stuck.test.mjs。
+- **可证伪预测**: 再遇到苦力怕退避顶墙抖动，约 1.3 秒内出现 `creeper backoff wedged` 和 punch-back / interpose 日志，不会再站着等苦力怕走到 3 米内。
+- **回滚法**: 删掉 runTrail / runNetStuck 两行 (git revert)。
+
+---
 ## C416. ★夜挖承诺 vs 封坑 hold 互顶整夜: kernelDriver 等子技能时心跳不刷新 + hold 不看下挖门（kernelDriver/modes.js/night_owner.js 需重启,T-0282,worker-death,⏳待重启）
 - **证据**: 10-11 06:46-06:52Z @-171,58,-195，夜里 hp20 food20。kernel 承诺 DUSK_MINE_NIGHT，每分钟派一次 mineDown(targetY 12)。06:47:26 mineDown 已经下挖 29 格，bunkerDown 抢身 (`Digging aborted [by owner=mode:self_preservation]`)，之后 `sealed night hold: w=20..90` 整夜持身。T-0231 闸拒掉 mineDown 的前进和寻路，mineDown 每次都判 wedge honest fail；夜计划属于 NOOP_EXEMPT，不进冷却，整夜零下挖。
 - **假设**: ① kernelDriver 只在循环顶部写 bot._kernelDriverActive，等子技能期间不刷新。mineDown 跑了 10 秒以后，decisionOwnsNightMining 判"派发器不在线"，shouldNightShelter 转 true，bunkerDown 抢身。② 封好以后的 sealed hold 等待循环和 coveredNightHoldStatus 都不看 decisionOwnsNightMining，一旦封上就持身到天亮。③ 让位判据没有包含决策层的下挖门，两边口径不一致。
