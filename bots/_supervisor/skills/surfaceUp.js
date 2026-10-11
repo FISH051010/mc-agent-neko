@@ -16,7 +16,9 @@ const { goals, Movements } = mfp;
 // Real-time debug log (appendFileSync, unbuffered) — skill log() goes to block-buffered
 // stdout which the supervisor can't read for minutes, leaving surfaceUp un-debuggable.
 const DBG = path.resolve(process.cwd(), 'bots', '_supervisor', 'surfaceUp.log');
-const dbg = (s) => { try { fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
+// ★T-0244: last decision line (not ENTER/EXIT bookkeeping) — handed to the caller as bot._surfaceUpWhy on a zero-gain exit
+let _lastDbg = '';
+const dbg = (s) => { if (!/^(ENTER|EXIT|modes frozen)/.test(s)) _lastDbg = s; try { fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 
 /**
  * ★death #17 (10-10 02:37:09, 第二次 = T-0169 同形): surfaceUp 冻结 self_defense/self_preservation 整段上浮, 自己又不处理
@@ -86,6 +88,15 @@ export function sidestepOutOfGravity(blockAt, feet, span = 4) {
         if (!best || (open && !best.open)) best = { d: [dx, dz], open };
     }
     return best ? best.d : null;
+}
+/**
+ * ★T-0244 (live 10-11 03:03:23-26Z @-12,53,71: 'vertical-first … breachable → skip GoalY staircase' then 'fallback: gravity
+ * column over shaft … no gravity-free side column — stop', ×3 in 7ms each → REPLENISH_KIT cooled): the straight-up climb
+ * refuses to dig up under gravel with nowhere to sidestep, so the vertical-first gate must not pick it there either — let
+ * the GoalY staircase route around (pathfinder never mines under a falling block). Same predicate both places.
+ */
+export function verticalBlockedByGravity(blockAt, feet, span = 4) {
+    return gravityAboveShaft(blockAt, feet, span) && !sidestepOutOfGravity(blockAt, feet, span);
 }
 
 /** bot 碰撞箱 (±0.3) 完全落在 cell 这一列内 — 侧移出重力柱要以此为准, 不是脚坐标刚跨界 (T-0172 03:17 @109,39,-69)。 */
@@ -666,6 +677,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
         return false;
     };
     const entryYSU = yNow();      // ★C362-broad 观测: EXIT 处对照入口 y, 打 'surfaceUp gained' 进度日志
+    try { bot._surfaceUpWhy = ''; _lastDbg = ''; } catch (e) {}   // ★T-0244 no stale reason from a previous climb
     let c362Broad = false;        // 本次是否走了放宽后的无镐破顶路径 (climbToSurface 闭包内赋值)
     dbg(`ENTER y=${yNow()} target=${targetY} scaffold=${scafCount()} goalY=${typeof (goals.GoalY || goals.GoalYLevel)}`);
     if (surfaceReady()) { dbg('already at open surface'); return true; }
@@ -725,6 +737,8 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     } finally {
       try { _freeze.release(); } catch (e) {}
     }
+    // ★T-0244: a climb that gained nothing tells the caller why (replenishKit/quickMeal log it to progress)
+    try { bot._surfaceUpWhy = yNow() > entryYSU ? '' : String(_lastDbg || '').slice(0, 180); } catch (e) {}
     dbg(`EXIT y=${yNow()} (target ${targetY})`);
     // ★孤儿协程截止的可观测退出: 到点主动交还身体, 不再清 interrupt_code / 不再与调用方下一步打架。
     if (kernelYieldRequested(bot, enteredAtSU)) {
@@ -772,6 +786,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
         const below = bot.blockAt(cc.offset(0, -1, 0));
         const footed = !!(below && below.boundingBox === 'block' && !/water|lava|fire|cactus|magma/.test(below.name || ''));
         if (!footed && scafCount() === 0) return false;   // 无稳定落脚 + 无垫料 → 让寻路器找路
+        if (verticalBlockedByGravity((p) => bot.blockAt(p), cc)) return false;   // ★T-0244 砂砾柱且无侧列 → 竖爬会拒挖, 交 PRIMARY 绕行
         const topDy = Math.max(6, Math.min(24, targetY - cc.y + 2));
         for (let dy = 2; dy <= topDy; dy++) {
             const b = bot.blockAt(cc.offset(0, dy, 0));

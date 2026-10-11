@@ -3247,6 +3247,8 @@
 
 - **★C425-S 身体闸拒绝不再算子技能 strike, 有上限 (T-0241)**（2026-10-11，worker-stuck，T-0241）: live 10-11 02:25:21-02:27:53Z self_preservation (苦力怕 8.2m bunker / sealed night hold) 反复短促持身, T-0231 闸拒 mineDown 的走路/寻路 ('[body-gate] skill mineDown setControlState(forward) refused'), 换址每候选 ~1.6s 失败 → DONE failed ×3 → ★dispatch-cooldown DUSK_MINE_NIGHT 5min。被反射借走身体≠技能做不到。修: reflex_body_gate 每次拒绝 bot._reflexGateBlocks++ (导出 reflexGateRefusals); kernelDriver 派发前后快照, 子技能期间被拒过且结果失败 → settleDispatch(gateRefused) 按 deferred 结算 (不计 strike, 不清零, 进度行 'deferred, no strike (n/6 in 10min, T-0241)')。上限 (监工): 同一 kind 10min 内 ≥GATE_DEFER_LIMIT=6 次被拒式 deferred 后恢复正常计 strike → 反射整夜持身也会照常冷却, 不成无 strike 重派空转。test/gate_refusal_no_strike.test.mjs (T-0241 ×5, 含整夜持身用例)。kernelDriver(顶层 sticky)+src 闸 → 需重启。全套 738/738。
 
+- **★C426-S surfaceUp 竖直优先门与竖爬兜底判据同源: 砂砾柱下无侧列时走阶梯寻路 (T-0244, worker-tier 转)**（2026-10-11，worker-stuck，T-0244）: live 10-11 03:03:23-26Z @-12,53,71 y53 白天无怪 — replenishKit ① surfaceUp ×3 每次 7ms 'gain 0.0' → ZERO delta → REPLENISH_KIT 冷却 5min (quickMeal 的 surfaceUp 也 53→53)。surfaceUp.log: 'vertical-first: overhead column clear/breachable → skip GoalY staircase' 接着 'fallback: gravity column over shaft … no gravity-free side column — stop'。竖直优先门把砂砾当"可破"跳过阶梯, 竖爬兜底 (T-0172) 又拒绝在砂砾下往上挖 → 两条路都不走。修: 新导出 verticalBlockedByGravity = gravityAboveShaft && !sidestepOutOfGravity, straightUpViable 命中即 false → 走 GoalY 阶梯 (pathfinder 不在下落方块下挖, 自行绕路); 零上升退出记 bot._surfaceUpWhy (最后一条判断), replenishKit '① surfaceUp result' 行带 '— why: …', 不再无声秒退。test/surfaceup_vertical_gravity.test.mjs (T-0244 ×4)。热加载 (surfaceUp/replenishKit 均子技能)。全套 748/748。
+
 ---
 
 ---

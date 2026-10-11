@@ -236,7 +236,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
         }
         const ya = bot.entity.position.y;
         surfaceYGain = Math.max(surfaceYGain, ya - yb);
-        prog(`replenishKit: ① surfaceUp result y ${Math.round(yb)}→${Math.round(ya)} (gain ${(ya - yb).toFixed(1)}) onSurface=${onSurface()}`);
+        prog(`replenishKit: ① surfaceUp result y ${Math.round(yb)}→${Math.round(ya)} (gain ${(ya - yb).toFixed(1)}) onSurface=${onSurface()}${(ya - yb) < 1 && bot._surfaceUpWhy ? ` — why: ${bot._surfaceUpWhy}` : ''}`);   // ★T-0244
         // 上不去也不 return — 地下仍可用手里的 log 折板/折棍/补镐 (静态 kit 思路);
         // 只有 chopWood 是地表专属步。
     }
