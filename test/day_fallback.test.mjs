@@ -107,3 +107,16 @@ test('T-0275: 刚杀掉的猎物地标 (25s 内仍"新鲜") — 实体已没了�
     const ff = proposeTasks(w, b).find(p => p.kind === 'FOOD_FLOOR');
     assert.ok(ff && ff.args[0].scout === true, JSON.stringify(ff && ff.args));
 });
+
+test('T-0275: 作废只认地标旁的活猎物 — 刚杀后留下的掉落物 / 僵尸 / 20 格外的猪都不算', async () => {
+    // worker-tests 变异 10-11: 不判实体种类 (任何实体都算活猎物) 与核对半径 6→64, 上一条照绿。杀鸡后地标旁正好躺着
+    // item 实体 (羽毛/生鸡肉) — 不判种类它就把地标续上, T-0275 原样复发。
+    const { liveAnimalLandmark } = await import('../src/agent/framework/world_model.js');
+    const lm = { x: 45, y: 64, z: 0, dist: 3, age: 2000, meta: 'chicken' };
+    const bot = { entity: { position: new Vec3(43, 64, 0) }, entities: {
+        1: { name: 'item', position: new Vec3(45, 64, 0) },
+        2: { name: 'zombie', position: new Vec3(47, 64, 2) },
+        3: { name: 'pig', position: new Vec3(65, 64, 0) },
+    } };
+    assert.equal(liveAnimalLandmark(lm, bot), null);
+});
