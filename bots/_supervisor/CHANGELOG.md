@@ -3360,6 +3360,8 @@
 
 - **★C445-S edge_unstick 对所有 SWIM* 状态让位 (含 SWIM_STUCK), 不再把 swim 反射拖离岸 (T-0276, 监工实时)**（2026-10-11，worker-stuck，T-0276）: live 10-11 06:26:38→06:28:40Z 黄昏 @-3,62,-62 — mob=SWIM_STUCK 贴着 1 格高草岸 (截帧), [swim] 70+ 轮只在 2×3 格内打转; 同时 edge_unstick 每 3-4s 'wedged ~2450ms (jump-fail, replan #4…#24 +back-off relocate)'。edge_unstick 原对 SWIM/POCKET/ENTOMBED 让位, 漏了 SWIM_STUCK → 把 swim 反射按跳当楔死, T-0239 的后退+侧移 700ms 一次次把 bot 拖离岸边。修: 让位条件改 /^SWIM/ (SWIM、SWIM_STUCK…), 水里交给 swim 反射。test/edge_unstick_swim_stuck.test.mjs (T-0276 ×1)。src → 需重启。全套 898/898。
 
+- **★C446-S 'Digging aborted' 真凶修根: mineflayer-pathfinder resetPath 只停自己的挖掘 + 不再误删全部 diggingAborted 监听 (T-0260)**（2026-10-11，worker-stuck，T-0260）: 探针 10-11 06:25:15Z 抓到 '[dig-abort] dirt@(25, 64, -12) by=pf.setMovements < executePathfindingPhase < goToGoal < goToPosition'。机理: pathfinder 自己挖路块时 digging=true; 技能 (mineDown 等) 调 bot.dig 时 mineflayer 先 stopDigging 停掉 pathfinder 那次, 再同步建新挖掘任务; pathfinder 那次的 .catch → resetPath('dig_error') 一个微任务后执行, digging 仍为 true → bot.stopDigging() 停掉的已是技能刚开始的那次 → 'Digging aborted [by owner=- …]' 1-3ms (04:22:54-57Z mineDown 首挖 ×3 → GO_UNDERGROUND 冷却; 帧全在 node_modules, 探针过滤后无名)。setMovements/setGoal 触发 resetPath 同形。另 detectDiggingStopped 用 removeAllListeners(event, fn) — Node 忽略 fn, 删光 diggingAborted 全部监听 (含探针)。修 (patches/mineflayer-pathfinder+2.4.5.patch, patch-package 重生成, T-0207 等旧改动全保留): 记 digTargetPos; resetPath 仅当 bot.targetDigBlock 正是自己的 digTargetPos 才 stopDigging, 否则只清自己的 digging 标志; detectDiggingStopped 改 removeListener。可复现性: npm pack 全新 2.4.5 + git apply 干净, 结果与线上 node_modules 逐字一致 (仅 CRLF)。test/pathfinder_dig_reset.test.mjs (T-0260 ×3, 断言补丁已在 node_modules 生效 + 补丁文件含改动)。需重启。全套 901/901。
+
 ---
 
 ---
