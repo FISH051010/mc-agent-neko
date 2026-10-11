@@ -18,6 +18,15 @@
 // state; no infinite retry (out-of-blocks + can't-dig → return false, kernel cooldown
 // spaces out genuinely impossible dispatches).
 // Invoked via: {"skill":"nightShelter",["dig_one"]}  ctx = { skills, world, mc, Vec3, log }
+
+// ★T-0254 (live 10-11 03:55:49→03:56:36Z @61,16,58, dawn tod≈23300→24000: NIGHT_SEAL dispatched every 1.5s ×29 — the hold
+//   loop's direct day test (t<12800 || t>23000) said "day" at dawn and returned true at once, while world_model's phase
+//   (modes.js: day <12000 ≤ dusk <13000 ≤ night <23000 ≤ dawn) still proposed the night plan → success, no strike, spin.
+//   Same line as the decision layer: only phase 'day' ends the shelter; dusk and dawn are held. Pure, no module state.
+export function shelterDayAt(tod) {
+    return Number.isFinite(tod) && tod >= 0 && tod < 12000;
+}
+
 export default async function nightShelter(bot, ctx, mode = 'seal', opts = {}) {
     const { skills, world, Vec3, log } = ctx;
     const maxMs = (opts && opts.maxMs) || 120000;
@@ -288,7 +297,7 @@ export default async function nightShelter(bot, ctx, mode = 'seal', opts = {}) {
     // an inline kernel dispatch starves — trusting it here could hold past dawn forever).
     const holdAnchor = bot.entity.position.clone();
     const hpAtHold = bot.health;
-    const isDayDirect = () => { try { const t = bot.time.timeOfDay; return t < 12800 || t > 23000; } catch (e) { return isDay(); } };
+    const isDayDirect = () => { try { return shelterDayAt(bot.time.timeOfDay); } catch (e) { return isDay(); } };   // ★T-0254 same day line as world_model phase
     const hostileClose = (r) => { try { return Object.values(bot.entities || {}).some(e => e && e !== bot.entity && e.position && ctx.mc.isHostile(e) && e.position.distanceTo(bot.entity.position) < r); } catch (e) { return false; } };
     let lastHp = hpAtHold;
     while (!isDay() && !isDayDirect() && Date.now() - t0 < maxMs) {

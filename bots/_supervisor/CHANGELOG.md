@@ -3262,6 +3262,8 @@
 
 - **★C429-S replenishKit 地表判据与 T-0189 同源 + surfaceUp 兜底迭代逐块查截止 (T-0251, 监工指派)**（2026-10-11，worker-stuck，T-0251）: live 10-11 03:42:17Z — y72 地表云杉树干下 START onSurface=false (原木算封顶) → '① underground (y=72) → surfaceUp target 63' → 'y 72→72 (gain 0.0) onSurface=true' 白干一轮; 03:42:22 承诺翻 GET_ARMOR, surfaceUp fallback 一轮迭代 (挖顶+pillarUp+3×manualPillar) 不查截止, 到 26.6 才退 (kernel 24.7 force halt, T-0206)。修: replenishKit 新导出 shouldClimbForKit({y,sky,oldSurface}) — skyOpenAt===true (T-0189, food_floor/quickMeal 同一判据, 既有导出) 或 y≥SURFACE_UP_TARGET_Y=63 (surfaceUp 自身目标, 无处可爬) 或旧顶扫描 (树叶冠层光照<14 时仍认地表) → 不上浮; onSurface 改用它。surfaceUp fallback 头顶清挖循环 (h 2..4) 与手动垫柱循环逐步查 deadlineHit, 迭代中段命中即 break → 承诺翻转让位从 ~4.6s 收到一步。test/replenish_onsurface_sky.test.mjs (T-0251 ×4)。热加载。全套 772/772。
 
+- **★C430-S nightShelter 黎明/黄昏不再秒退空转: hold 循环白天判据与 world_model phase 同线 (T-0254)**（2026-10-11，worker-stuck，T-0254）: live 10-11 03:55:49→03:56:36Z @61,16,58 y16 黎明 (tod≈23300→24000) — kernel 每 1.5s 派 nightShelter('seal') ×29: 'digOneCapOne: y=16 too low — downgrade to seal' → '封箱禁用 … 原地裸 hold' → hold 循环直判白天 isDayDirect = t<12800||t>23000 已说 day → 立即 return true → 成功不计 strike → 重派。world_model phase (modes.js) 是 day<12000 ≤ dusk<13000 ≤ night<23000 ≤ dawn, 决策层黎明/黄昏仍提夜计划, 技能 hold 却在 dawn 与 dusk 前段 (12000-12800) 都当白天 = 同一空转两个窗口。修: 导出纯函数 shelterDayAt(tod) = 0≤tod<12000 (与 phase 'day' 同线), isDayDirect 改用它 (仍直读 bot.time, 不依赖可能被饿死的 _world 刷新) → 黄昏/黎明照常守到 phase day。test/shelter_dawn_spin.test.mjs (T-0254 ×2)。热加载。全套 778/778。
+
 ---
 
 ---
