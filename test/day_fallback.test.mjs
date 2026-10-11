@@ -78,3 +78,15 @@ test('T-0271: 兜底 chopWood 正在跑, 零镐零木 REPLENISH_KIT 冷却到期
     const ff = { kind: 'FOOD_FLOOR', priority: 89, skill: 'quickMeal', args: [] };
     assert.equal(commitGoal(e, [ff, rk], w).kind, 'FOOD_FLOOR');
 });
+
+test('T-0271: 同活但紧急 — 零镐 TOOL_UPKEEP@PICKLESS (原地造镐几秒) 抢下兜底砍木; 非紧急的 TOOL_UPKEEP@47 照等兜底跑完', async () => {
+    // worker-tests 变异 10-11: 删掉 hold 分支的 isEmergency 豁免上一条照绿 — 它的紧急例 FOOD_FLOOR/quickMeal 本就不算同活,
+    // 到不了那个判断。真会撞上的是零镐造镐: TOOL_UPKEEP 既算同活 (木<16) 又是紧急, 没豁免就一直砍木不造镐。
+    const { commitGoal, PICKLESS_UPKEEP_PRIORITY } = await import('../src/agent/framework/world_model.js');
+    const fb = { kind: 'IDLE_FALLBACK', skill: 'chopWood', args: [8] };
+    const mk = () => { const b = mkBot({ oak_planks: 8, stick: 4 }); b._commitment = { ...fb, since: Date.now() }; b._currentSkill = 'chopWood'; return b; };
+    const urgent = { kind: 'TOOL_UPKEEP', priority: PICKLESS_UPKEEP_PRIORITY, skill: 'craftChain', args: ['wooden_pickaxe', 1] };
+    assert.equal(commitGoal(mk(), [urgent], mkWorld()).kind, 'TOOL_UPKEEP', 'pickless craft-in-place preempts the fallback chop');
+    const routine = { ...urgent, priority: 47 };
+    assert.equal(commitGoal(mk(), [routine], mkWorld()).kind, 'IDLE_FALLBACK', 'routine upkeep is the same work → waits for the chop');
+});

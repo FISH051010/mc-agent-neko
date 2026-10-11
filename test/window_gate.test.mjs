@@ -63,3 +63,26 @@ test('T-0269: 窗口总闸 — 容器窗口一直不关 (残留) → 超时关�
     assert.deepEqual(await awaitContainerClosed(inv, 'equip'), { waited: 0, closed: false });
     assert.equal(installWindowGate(bot), false, 'idempotent');
 });
+
+test('T-0269: 总闸覆盖全部四个口 — equip / unequip / toss / tossStack 各自都等容器窗口关了才落到原方法', async () => {
+    // worker-tests 变异 10-11: 从包装清单里删掉 toss (或 equip / tossStack) 上面三条照绿 — 它们只走 unequip→equip 这一条路
+    for (const m of ['equip', 'unequip', 'toss', 'tossStack']) {
+        const seen = [];
+        const bot = { currentWindow: { type: 'minecraft:crafting' }, closeWindow() {} };
+        for (const k of ['equip', 'unequip', 'toss', 'tossStack']) bot[k] = async () => { seen.push([k, bot.currentWindow]); };
+        installWindowGate(bot);
+        setTimeout(() => { bot.currentWindow = null; }, 150);
+        await bot[m]({ name: 'shield' }, 'off-hand');
+        assert.deepEqual(seen, [[m, null]], `${m} ran with the container window still open`);
+    }
+});
+
+test('T-0269: modes.js 真的装了总闸, 且装在它自己的 equip 包装之后 (最外层)', async () => {
+    // worker-tests 变异 10-11: 删掉 modes.js 的 installWindowGate 调用 → 上面全绿, 总闸成了死代码, 丢盾死法原样回来
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const inst = src.search(/try \{ skills\.installWindowGate\(bot\); \} catch \(e\) \{\}/);
+    const wrap = src.search(/bot\.equip = async \(item, destination, \.\.\.args\) => \{/);
+    assert.ok(inst > 0, 'installWindowGate is called');
+    assert.ok(wrap > 0 && inst > wrap, 'installed after (outside) the modes equip wrapper');
+});
