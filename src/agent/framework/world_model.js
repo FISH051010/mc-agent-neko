@@ -1329,13 +1329,16 @@ export function proposeTasks(world, bot) {
                            rationale: `armor before diamonds: iron pick in hand + ${rawIron + ingots} iron — smelt & craft protection-first (chest>legs>helm>boots), wear it`,
                            hints: { tier: tier.level, iron: rawIron + ingots, night: true } });
                 } else if (ingots < 3 && rawIron > 0) {
-                    push({ kind: TASK.NIGHT_SMELT_IRON, priority: 94, skill: 'smeltSafe',
+                    // ★T-0250 (监工 03:29Z 实录: 入夜先承诺 DUSK_MINE_NIGHT@94 (当时 raw_iron 1), 挖到第 3 块粗铁后同为 @94 的熔铁抢不下 —
+                    //   夜计划之间只有 ≥NIGHT_ARMOR_PRIORITY 的 NIGHT_SMELT_IRON 能抢下整夜下矿 (T-0192), 盾/铁镐整夜造不出):
+                    //   熔铁/合成铁器两版与造甲版同优先级, 走同一条抢占。
+                    push({ kind: TASK.NIGHT_SMELT_IRON, priority: NIGHT_ARMOR_PRIORITY, skill: 'smeltSafe',
                            args: ['raw_iron', Math.min(rawIron, 5)],
                            rationale: `night tier lock-in: ${rawIron} raw_iron + no iron pick — smelt it (persistent iron tier; iron sword/shield for night survival)`,
                            hints: { tier: tier.level, rawIron, night: true } });
                 } else {
-                    push({ kind: TASK.NIGHT_SMELT_IRON, priority: 94, skill: 'craftChain',
-                           args: ['iron_tier'],
+                    push({ kind: TASK.NIGHT_SMELT_IRON, priority: NIGHT_ARMOR_PRIORITY, skill: 'craftChain',
+                           args: [ironTierRecipe(bot)],   // ★T-0250 同白天 GET_IRON_TOOLS: 盾 → 镐 → 剑 + 补盾的 6 木板
                            rationale: `night tier lock-in: ${ingots} iron ingots — craft iron pickaxe+sword+shield (persistent tier-up, not a wood relapse)`,
                            hints: { tier: tier.level, ingots, night: true } });
                 }

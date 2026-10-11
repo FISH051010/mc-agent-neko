@@ -104,13 +104,23 @@ export function needsToolUpkeep({ sufficientForUnderground, pickTier, counts }) 
 //   木头不算 → SMELT_IRON 永不触发, 10 粗铁锁在包里。而 smeltItem (mcdata.getSmeltingFuel) 本就认原木/木板 (1.5 件/个)。
 //   与执行端同口径: 可冶炼件数 = 煤×8 + 木料×1.5, 木料先扣 2 原木留给棍/台 (铁镐柄 + 熔炉 3×3 要台)。
 export const WOOD_FUEL_RESERVE_LOGS = 2;
-export function smeltableUnits(counts) {
+// ★T-0250 (监工: 燃料口径统一成一个函数): 煤/木炭 = 8 个, 原木/木板 = 1.5 个 (原版燃料表)。所有'燃料够不够'的判断都走这里;
+//   合成要用的木料先扣 (reservePlanks: 盾 6 板 / 拍台 4 板 / 折棍 2 板, 不够从原木按 1 原木 = 4 板折; reserveLogs: 留作日后拍台的原木)。
+export function fuelUnitsFrom({ coal = 0, logs = 0, planks = 0 } = {}) {
+    return coal * 8 + Math.floor((Math.max(0, logs) + Math.max(0, planks)) * 1.5);
+}
+export function fuelUnits(counts, { reservePlanks = 0, reserveLogs = 0 } = {}) {
     counts = counts || {};
     const coal = (counts['coal'] || 0) + (counts['charcoal'] || 0);
-    const logs = Object.keys(counts).filter(k => k.endsWith('_log')).reduce((s, k) => s + (counts[k] || 0), 0);
-    const planks = Object.keys(counts).filter(k => k.endsWith('_planks')).reduce((s, k) => s + (counts[k] || 0), 0);
-    const woodItems = Math.max(0, logs - WOOD_FUEL_RESERVE_LOGS) + planks;
-    return coal * 8 + Math.floor(woodItems * 1.5);
+    let logs = Object.keys(counts).filter(k => k.endsWith('_log')).reduce((s, k) => s + (counts[k] || 0), 0);
+    let planks = Object.keys(counts).filter(k => k.endsWith('_planks')).reduce((s, k) => s + (counts[k] || 0), 0);
+    const usePlanks = Math.min(planks, reservePlanks); planks -= usePlanks;
+    const rest = reservePlanks - usePlanks;
+    if (rest > 0) { const l = Math.ceil(rest / 4); logs -= l; planks += l * 4 - rest; }
+    return fuelUnitsFrom({ coal, logs: logs - reserveLogs, planks });
+}
+export function smeltableUnits(counts) {
+    return fuelUnits(counts, { reserveLogs: WOOD_FUEL_RESERVE_LOGS });
 }
 
 // ★T-0157 (监工加急 10-10; 19:57:04→20:00:06 实录: GET_ARMOR→craftArmor ×3 秒败 → 5min 冷却): 背包 11 粗铁, 但
@@ -138,7 +148,7 @@ export function armorCraftFeasible(counts, cost, { tableNear = false, furnaceNea
     const needSmelt = Math.max(0, (cost || 0) - (counts['iron_ingot'] || 0));
     if (needSmelt > 0) {
         if (!furnaceNear && !(counts['furnace'] > 0) && sum(FURNACE_STONE_RE) < 8) return { ok: false, why: 'no-furnace' };
-        const fuel = ((counts['coal'] || 0) + (counts['charcoal'] || 0)) * 8 + Math.floor((logs + planks) * 1.5);
+        const fuel = fuelUnitsFrom({ coal: (counts['coal'] || 0) + (counts['charcoal'] || 0), logs, planks });   // ★T-0250 同一燃料公式 (台/盾木板已在上面扣掉)
         if (fuel < needSmelt) return { ok: false, why: `no-fuel ${fuel}<${needSmelt}` };
     }
     return { ok: true, why: '' };

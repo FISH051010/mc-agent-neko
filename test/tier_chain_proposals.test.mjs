@@ -34,7 +34,8 @@ test('T-0097: once >=3 ingots are in hand the same night plan crafts the iron ti
         kit: { picks: 1, pickTier: 'stone' } });
     const p = find(proposeTasks(w, bot), 'NIGHT_SMELT_IRON');
     assert.equal(p.skill, 'craftChain');
-    assert.deepEqual(p.args, ['iron_tier']);
+    // ★T-0250: 夜里合成铁器同白天 GET_IRON_TOOLS 用 ironTierRecipe (没盾: 盾 → 镐 → 剑 + 补盾木板)
+    assert.ok(Array.isArray(p.args[0]) && p.args[0].some(x => x[0] === 'iron_pickaxe'), JSON.stringify(p.args));
 });
 
 test('T-0097: NIGHT_SMELT_IRON releases on an iron pick OR when nothing is left to smelt/craft (no smeltSafe no-op spin)', () => {
