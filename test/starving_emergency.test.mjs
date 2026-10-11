@@ -62,3 +62,11 @@ test('T-0230: quickMeal 包里 1 生鸡 + 0 煤 + food 0 → 吃生鸡 (不再�
     assert.deepEqual(eaten, ['chicken']);
     assert.equal(r.ok, true, JSON.stringify(r));
 });
+
+test('T-0230 护栏边界 (监工审): 已承诺的紧急任务本拍不在 proposals 里 → _cPri 退回 50, 优先级 >50 的紧急 (零镐补镐@94.5 / FOOD_FLOOR@70) 照样抢, 不会卡死', () => {
+    const mats = [{ name: 'cobblestone', count: 12 }, { name: 'spruce_log', count: 4 }];
+    const b = bot({ inventory: { items: () => mats, slots: [] } }); b._commitment = { kind: 'FOOD_FLOOR', skill: 'quickMeal', args: [{}], since: 0 };
+    assert.equal(commitGoal(b, [P.TU], world()).kind, 'TOOL_UPKEEP', 'committed FOOD_FLOOR absent from proposals → TOOL_UPKEEP still preempts');
+    const b2 = bot({ inventory: { items: () => mats, slots: [] } }); b2._commitment = { kind: 'TOOL_UPKEEP', skill: 'craftChain', args: [[]], since: 0 };
+    assert.equal(commitGoal(b2, [P.FF], world()).kind, 'FOOD_FLOOR', 'committed TOOL_UPKEEP absent (priority unknown → not emergency) → starving FOOD_FLOOR preempts');
+});
