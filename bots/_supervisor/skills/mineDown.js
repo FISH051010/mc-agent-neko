@@ -17,6 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { ensureCarriedTable } from '../../../src/agent/framework/ensure_table.js';   // ★T-0264 shared pocket-table primitive
 import { reflexGateRefusals, reflexHolds } from '../../../src/agent/framework/reflex_body_gate.js';   // ★T-0267 borrowed body ≠ wedge
+import { installDigAbortProbe, DIG_ABORT_PROBE_V } from '../../../src/agent/framework/dig_abort_probe.js';   // ★T-0260
 // ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
 //   每个拒跑/abort 原因都对监工不可见。现在同时落 progress.txt — 拒跑闸 / DONE 结果 / abort 原因一行一条。
 const PROG_MD = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -368,34 +369,8 @@ export function digInterrupter(bot) {
 //   cooled; also 03:25:29). mineflayer raises 'Digging aborted' only from bot.stopDigging(), which emits 'diggingAborted'
 //   synchronously — the listener's stack holds the real caller (bot.stopDigging itself is reassigned per dig, so it can't be
 //   wrapped). Installed once per bot from a hot-reloaded skill; frames outside node_modules, top 4.
-// v2 (10-11 05:30:41/44Z mobility "dig retry … Digging aborted" left no caller trace — only mineDown read _lastDigAbort back):
-//   every abort writes one throttled "[dig-abort] <block> by=<caller frames> holder=<body owner> skill=<skill>" line itself.
-//   Versioned: a newer hot-reloaded probe replaces the listener it stored (v1 was anonymous — it only records, left in place;
-//   never removeAllListeners: mineflayer-pathfinder listens to diggingAborted too). opts.sink replaces the progress write (tests).
-export const DIG_ABORT_PROBE_V = 2;
-export function installDigAbortProbe(bot, { sink } = {}) {
-    try {
-        if (!bot || typeof bot.on !== 'function' || bot._digAbortProbe === DIG_ABORT_PROBE_V) return;
-        if (bot._digAbortListener && typeof bot.removeListener === 'function') { try { bot.removeListener('diggingAborted', bot._digAbortListener); } catch (e) {} }
-        bot._digAbortProbe = DIG_ABORT_PROBE_V;
-        const fn = (block) => {
-            try {
-                const frames = String(new Error().stack || '').split('\n').slice(1).map(s => s.trim())
-                    .filter(s => s && !/node_modules|node:internal|node:events|EventEmitter|installDigAbortProbe|\bemit\b|\bfn\b/.test(s))
-                    .slice(0, 4).map(s => s.replace(/^at /, '').replace(/\(?[A-Za-z]:[\\/].*?[\\/](src|bots)[\\/]/, '($1/').replace(/^file:\/\/\/.*?[\\/](src|bots)[\\/]/, '$1/'));
-                const blk = block ? `${block.name}@${block.position}` : '-';
-                bot._lastDigAbort = { at: Date.now(), block: blk, by: frames.join(' < ') };
-                if (Date.now() - (bot._digAbortLogAt || 0) < 2000) return;
-                bot._digAbortLogAt = Date.now();
-                const line = `[dig-abort] ${blk} by=${bot._lastDigAbort.by || '?'} holder=${(bot._bodyOwner && bot._bodyOwner.name) || '-'} skill=${bot._currentSkill || '-'} (T-0260)`;
-                if (typeof sink === 'function') sink(line);
-                else fs.appendFileSync(path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt'), `[${new Date().toISOString()}] ${line}\n`);
-            } catch (e) {}
-        };
-        bot._digAbortListener = fn;
-        bot.on('diggingAborted', fn);
-    } catch (e) {}
-}
+// ★T-0260 dig-abort probe lives in src/agent/framework/dig_abort_probe.js (modes installs it at startup); re-exported here.
+export { installDigAbortProbe, DIG_ABORT_PROBE_V };
 
 // ★T-0139: heading memory for step-0 terrain aborts, shared by the fluid abort and the no-floor (cave void)
 //   abort. The no-floor abort used to skip it → every re-dispatch walked the same deterministic heading into
