@@ -15,8 +15,19 @@ test('T-0267: a step that moved is progress; a still step during a gate refusal 
     assert.equal(stepOutcome({ descended: false, movedHoriz: false, gateBlocked: false, reflexWaits: 0 }), 'wedge');
 });
 
-test('T-0267: bounded — past REFLEX_STEP_WAITS_MAX reflex holds in one dispatch a still step counts as a wedge again', () => {
-    assert.equal(stepOutcome({ descended: false, movedHoriz: false, gateBlocked: true, reflexWaits: REFLEX_STEP_WAITS_MAX }), 'wedge');
+test('T-0267 + T-0282: bounded — past REFLEX_STEP_WAITS_MAX reflex holds the dispatch yields (reflex-exhausted), not a wedge', () => {
+    // ★T-0282 (监工): 原先等满后算楔死 → wedge-final moveAway 8b + 记楔死朝向 (06:46-06:52Z sealed night hold 整夜如此)
+    assert.equal(stepOutcome({ descended: false, movedHoriz: false, gateBlocked: true, reflexWaits: REFLEX_STEP_WAITS_MAX }), 'reflex-exhausted');
+    assert.equal(stepOutcome({ descended: false, movedHoriz: false, gateBlocked: false, reflexWaits: REFLEX_STEP_WAITS_MAX }), 'wedge', 'not gate-blocked → still a real wedge');
+});
+
+test('T-0282: reflex-exhausted 让位退出 — 不进楔死恢复链 (不 moveAway/不记朝向), 返回失败+reflexHeld 交 kernel 的 T-0241 被拒式计数', () => {
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
+    const i = src.indexOf("if (_so === 'reflex-exhausted') {");
+    const j = src.indexOf("if (_so === 'wedge') noProg++");
+    assert.ok(i > 0 && j > i, 'reflex-exhausted is handled before the wedge/noProg chain');
+    assert.match(src.slice(i, j), /reflexYield = true;[\s\S]*break;/);
+    assert.ok(src.includes('if (reflexYield) r.reflexHeld = true;'));
 });
 
 test('T-0267: mineDown snapshots gate refusals around the walk and waits for the reflex instead of counting noProg', () => {

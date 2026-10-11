@@ -352,6 +352,10 @@ export const REFLEX_STEP_WAITS_MAX = 8;
 export function stepOutcome({ descended, movedHoriz, gateBlocked, reflexWaits = 0 }) {
     if (descended || movedHoriz) return 'progress';
     if (gateBlocked && reflexWaits < REFLEX_STEP_WAITS_MAX) return 'reflex';
+    // ★T-0282 (监工; 06:46-06:52Z @-171,58,-195: sealed night hold 整夜持身, 每次派发等满 8 次后被当成楔死 → "wedge x6/x7 at same spot —
+    //   moveAway 8b + honest fail", 记楔死朝向, 每次空耗 ~1min): 还是被反射拒 = 让位, 不是楔死 — 不走楔死恢复链 (不 moveAway/不记朝向),
+    //   以失败+reflexHeld 退出, kernel 按 T-0241 计"被拒式 deferred" (6 次/10min 上限兜底)。
+    if (gateBlocked) return 'reflex-exhausted';
     return 'wedge';
 }
 
@@ -540,6 +544,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
     let voidBridges = 0;   // ★T-0139 reopened: cave steps bridged / dropped this dispatch (≤48)
     let reflexWaits = 0;   // ★T-0267 steps held by a reflex this dispatch (≤REFLEX_STEP_WAITS_MAX)
+    let reflexYield = false;   // ★T-0282 等满仍被拒 → 让位退出
     let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0, deferredByShooter = false;   // ★T-0225 deferredByShooter   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1); ★T-0203 cavity re-heading (≤3)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
     const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
@@ -1227,6 +1232,11 @@ export default async function mineDown(bot, ctx, opts = {}) {
             while (reflexHolds(bot) && Date.now() - _tw < 4000 && !bot.interrupt_code && bot.health > 0) await new Promise(r => setTimeout(r, 200));
             continue;
         }
+        if (_so === 'reflex-exhausted') {   // ★T-0282 让位退出, 不是楔死
+            reflexYield = true;
+            abort = `reflex (${(bot._bodyOwner && bot._bodyOwner.name) || '?'}) held the body ${reflexWaits}+ steps — yield to it, not a wedge (no moveAway, T-0282)`;
+            break;
+        }
         if (_so === 'wedge') noProg++; else noProg = 0;
         if (noProg >= 2) {
             // ★P2-8: 楔死不再立刻放弃 — 先走幽灵格恢复链 (re-dig/blacklist/sidestep 换向), 只有
@@ -1242,6 +1252,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     let inv = {}; try { for (const it of bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count; } catch (e) {}
     const r = { endY: Math.round(bot.entity.position.y), dug, oreVeins: ore, hp: Math.round(bot.health), food: bot.food, abort, raw_iron: inv.raw_iron || 0, iron_ore: 0, wedgeRecoveries, wedgeFinal };
     if (deferredByShooter) r.deferred = true;   // ★T-0225 kernel: deferred ≠ failure
+    if (reflexYield) r.reflexHeld = true;   // ★T-0282 仍记失败 (无进展), kernel 见 gate 拒过 → T-0241 被拒式 deferred 计数
     // ★KERNEL-CONTRACT FIX (return-contract audit 2026-07-02): this is the file's ONLY return and
     // it was always truthy with no failed key, so every ZERO-PROGRESS exit reset the kernel's
     // dispatch-failure counter (kernel.js failed-sniff = threw / ===false / ok===false /
