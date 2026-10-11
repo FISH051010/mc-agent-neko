@@ -21,15 +21,18 @@
 
 ---
 
-## C412. ★watchdog 不再随会话的 Job Object 一起被回收: ensure-stack 改用 Win32_Process.Create 拉起（ensure-stack.ps1 纳入 git 跟踪,T-0270,worker-death,🟡已生效）
-- **证据**: 10-11 13:35:21 后 watchdog.log 静默，没有 RESTART 行也没有退出行，main 宕了 7 分钟（13:35 到 13:42），直到某个会话的 SessionStart 钩子重新拉起 watchdog。旧 watchdog pid 5668 是 10-10 01:30 由某会话的 ensure-stack 用 Start-Process 拉起的。实测：Start-Process 起的子进程 IsProcessInJob=True；Invoke-CimMethod Win32_Process Create 起的子进程 IsProcessInJob=False，父进程是 WmiPrvSE。
-- **假设**: Start-Process 的子进程继承了 Claude 会话的 Job Object。发起会话结束时 job 被整体终止，watchdog 被强杀，来不及写日志，它拉起的 main/bridge 等也一起被杀。
-- **改动**: ensure-stack.ps1 改为 Invoke-CimMethod Win32_Process Create（带 CurrentDirectory=$proj），失败时才回退到 Start-Process 并打印 WARN。watchdog.ps1 头注释的启动方式同步修正。.gitignore 放行 bots/_supervisor/ensure-stack.ps1（原先被 bots/_supervisor/* 排除，只在主工作树有一份没被跟踪的文件）。测试 test/ensure_stack_detach.test.mjs。
-- **可证伪预测**: 换宿主后 watchdog 的 IsProcessInJob=False，它新拉起的 main/bridge 也是 False；任何 Claude 会话结束都不再导致 watchdog.log 静默断档。
-- **回滚法**: ensure-stack.ps1 恢复为 Start-Process（git revert）。
+## C412. ★watchdog 单点无人看管 → botwatch 反向保活 + watchdog 退出留痕 + ensure-stack 脱离会话 job（botwatch/watchdog 需重启,T-0270,worker-death,⏳待重启）
+- **证据**: 10-11 13:35:21 之后 watchdog.log 再无输出：没有 RESTART 行，没有 stop 文件，Application 日志也没有崩溃事件。main 宕了 7 分钟（13:35 到 13:42），最后是某个会话的 SessionStart 钩子碰巧跑了 ensure-stack 才恢复。所有会话记录里，那个时间窗都没有任何杀进程的工具调用。旧 watchdog 5668 的子进程 botwatch 34756 和 main 32716 都活了下来，说明它是被单独强杀的，不是随 job 一起回收。**凶手未查明**：PowerShell 事件日志已滚动覆盖。
+- **假设**: 不论凶手是谁，真正的缺陷是 watchdog 是单点：它死了以后没有任何进程负责把它拉起来。另外，原来的日志无法区分"被外部强杀"和"自己崩溃退出"。
+- **改动**:
+  ① botwatch 加入 WATCHDOG KEEPER，每 60 秒检查一次。判死需要两个信号同时成立：watchdog.log 最后一行时间戳超过 300 秒，且没有 watchdog.ps1 进程（查询时排除查询进程自身的 PID）。判死后调用 ensure-stack 拉起，ensure-stack 本身幂等，再加上 watchdog 自己的单例互斥锁防双开。限频为 5 分钟一次，拉起后仍然是死的就计为失败次数。每次拉起都往 ALERTS.txt 写一行，内容包括最后心跳时间和死前最后一行日志。如果进程在但日志静默，判为 hung，只报警不拉起。
+  ② watchdog.ps1 主循环外包一层 try/catch/finally，正常退出和异常退出都会写一行 `watchdog EXIT why=...`。以后日志停在心跳行、又没有 EXIT 行，就说明是被外部强杀。
+  ③ 加固：ensure-stack 改用 Win32_Process.Create 拉起 watchdog，失败才回退到 Start-Process。实测 Start-Process 的子进程 IsProcessInJob=True，会继承发起会话的 job，job 一旦被终止就会连坐。ensure-stack.ps1 同时纳入 git 跟踪（.gitignore 放行）。
+  测试：test/watchdog_keeper.test.mjs、test/ensure_stack_detach.test.mjs。
+- **可证伪预测**: 再出现 watchdog 消失时，最多 6 分钟内 ALERTS.txt 会出现 `WATCHDOG DOWN → botwatch revive` 并且栈自动恢复，不需要依赖会话钩子。watchdog 正常停止时 log 末尾有 EXIT 行。
+- **回滚法**: git revert（botwatch keeper 那个 setInterval 可以单独删掉）。
 
 ---
-
 ## C411. ★窒息时 T-0131② 低血拒挖重力柱不再生效 (保护规则堵死唯一出路) + pickDryDigSpot 不选原点列（modes.js/mobility_geom.js 需重启,T-0268 death #55,worker-death,⏳待重启）
 
 **证据**: death #55 05:30:43 suffocation y-8 (丢 24 铁+钻石+2 铁镐)。MAROONED 在洞底 y-7, 凿崖上爬挖 tuff 被重力总闸拒 (tuff 上压砂砾) ×20; 05:30:33 mobility 侧移走进 113,-8 (邻 112,-5 'UNSETTLED column still collapsing'), 05:30:35 砂砾落头。之后 reflex_watchdog SUFFOCATION 'dig out NOW' ×4, mobility dig 'Digging aborted' ×2, `★T-0131 gravity dig refused at hp=4/3/2 (ENTOMBED) gravel@…/diorite@…` ×6 → 16→0。另: 重生后 05:31:32 `relocate-dry-dig→-4,64,-5 @-4,64,-5` — pickDryDigSpot 选回了原点列。

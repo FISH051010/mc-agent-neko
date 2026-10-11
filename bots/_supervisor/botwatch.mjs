@@ -39,7 +39,8 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState, STUCK_MOBILITY_RE } from './bb-readers.mjs';
 // tracker/predicate logic lives in botwatch-trackers.mjs (pinned by test/botwatch_trackers.test.mjs)
-import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, makeIdleDispatchTracker, mobilityStaleActive, makeCooldownChurnTracker } from './botwatch-trackers.mjs';
+import { makeFrozenAliveTracker, frozenAliveActive, makeWedgeTracker, falseHoldActive, makeSurvivalChurnTracker, survivalChurnActive, _REFLEX_RE, mobilityStuckActive, bootstrapDeadlockActive, falseShelterActive, makeIdleDispatchTracker, mobilityStaleActive, makeCooldownChurnTracker, makeWatchdogKeeper, watchdogLastBeat, watchdogReviveAlert, WATCHDOG_STALE_S } from './botwatch-trackers.mjs';
+import { execFile } from 'child_process';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -443,3 +444,48 @@ async function tick() {
 console.log(`sentinel: world-model-driven, debounced(fire+clear), close-loop verify. heartbeat ${HEARTBEAT_SEC}s, poll ${POLL_MS / 1000}s, ticket :${TICKET_PORT}`);
 tick();
 setInterval(() => { tick().catch(e => console.error('tick err', e && e.message)); }, POLL_MS);
+
+// ── ★T-0270 WATCHDOG KEEPER: reverse keep-alive (watchdog keeps botwatch alive, botwatch keeps the watchdog alive) ──
+const PROJ = path.resolve(DIR, '..', '..');
+const wdKeeper = makeWatchdogKeeper();
+let wdHungAlertAt = 0;
+function readWatchdogTail() {
+    try {
+        const f = path.join(PROJ, 'watchdog.log'); const st = fs.statSync(f); const n = Math.min(st.size, 8192);
+        const fd = fs.openSync(f, 'r'); const buf = Buffer.alloc(n); fs.readSync(fd, buf, 0, n, st.size - n); fs.closeSync(fd);
+        return buf.toString('utf8');
+    } catch (e) { return ''; }
+}
+function watchdogProcAlive() {   // true/false; null when the query itself failed (→ never revive on a blind read)
+    return new Promise((resolve) => {
+        execFile('powershell', ['-NoProfile', '-Command',
+            "@(Get-CimInstance Win32_Process -Filter \"Name='powershell.exe' or Name='pwsh.exe'\" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*watchdog.ps1*' -and $_.CommandLine -like '*-File*' }).Count"],
+            { timeout: 30000, windowsHide: true }, (err, out) => {
+                if (err) return resolve(null);
+                const n = parseInt(String(out).trim(), 10);
+                resolve(Number.isFinite(n) ? n > 0 : null);
+            });
+    });
+}
+async function watchdogKeeperTick() {
+    if (process.platform !== 'win32') return;
+    const beat = watchdogLastBeat(readWatchdogTail());
+    const t = now();
+    // cheap path: a fresh log line means alive — only pay for the process query when the log has gone quiet
+    const procAlive = (Number.isFinite(beat.ts) && (t - beat.ts) / 1000 <= WATCHDOG_STALE_S) ? true : await watchdogProcAlive();
+    const d = wdKeeper.decide({ procAlive, lastBeatMs: beat.ts, now: t });
+    const stamp = new Date(t).toISOString().slice(5, 19).replace('T', ' ');
+    if (d.action === 'hung' && t - wdHungAlertAt > 30 * 60000) {
+        wdHungAlertAt = t;
+        try { fs.appendFileSync(path.join(PROJ, 'ALERTS.txt'), `[${stamp}] WATCHDOG HUNG: process alive but watchdog.log silent ${Math.round(d.ageS)}s — not relaunching (singleton holder)\n`); } catch (e) {}
+        console.log(`[${stamp}] WATCHDOG HUNG: log silent ${Math.round(d.ageS)}s`);
+    }
+    if (d.action !== 'revive') return;
+    const line = watchdogReviveAlert({ stamp, ageS: d.ageS, beat, failStreak: d.failStreak });
+    try { fs.appendFileSync(path.join(PROJ, 'ALERTS.txt'), line + '\n'); } catch (e) {}
+    try { fs.appendFileSync(path.join(PROJ, 'watchdog.log'), `[${new Date(t).toISOString()}] botwatch keeper: watchdog DOWN (no process, log silent ${Math.round(d.ageS)}s) — running ensure-stack\n`); } catch (e) {}
+    console.log(line);
+    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(DIR, 'ensure-stack.ps1')],
+        { timeout: 60000, windowsHide: true, cwd: PROJ }, (err, out) => console.log(`[${stamp}] ensure-stack: ${err ? 'ERR ' + err.message : String(out).trim().split(/\r?\n/)[0]}`));
+}
+setInterval(() => { watchdogKeeperTick().catch(e => console.error('keeper err', e && e.message)); }, 60000);

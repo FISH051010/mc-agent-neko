@@ -195,6 +195,10 @@ $prevStale = 999999   # 首轮不误判;之后每轮 heartbeat 末尾校准为�
 # 80 ticks (40min) → restart. Night-holds (~7min) stay safely under the threshold.
 $stuckTicks = 0; $lastVitPos = $null; $lastInvTotal = -1
 $tick = 0; $deathAnchor = -1; $deathAnchorTick = 0; $lastSpiralAlertTick = -999
+# ★T-0270: every exit that runs PowerShell code leaves a 'watchdog EXIT' line (break / terminating exception / Ctrl+C).
+#   A TerminateProcess (-Force kill) can't — so a log that ends on a heartbeat with no EXIT line = killed from outside.
+$wdExitWhy = 'loop-break'
+try {
 while ($true) {
     if (Test-Path (Join-Path $proj 'watchdog.stop')) {
         Add-Content $log "[$(Get-Date -Format o)] watchdog.stop found - exiting"
@@ -549,4 +553,9 @@ while ($true) {
         }
     } catch {}
     Start-Sleep -Seconds 30
+}
+} catch {
+    $wdExitWhy = "exception: $($_.Exception.Message)"
+} finally {
+    try { Add-Content $log "[$(Get-Date -Format o)] watchdog EXIT (pid $PID) why=$wdExitWhy" } catch {}
 }

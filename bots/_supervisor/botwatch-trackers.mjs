@@ -182,3 +182,48 @@ export function makeIdleDispatchTracker({ idleMs = IDLE_DISPATCH_MS } = {}) {
         },
     };
 }
+
+// ── WATCHDOG KEEPER (T-0270): reverse keep-alive. watchdog.ps1 keeps botwatch alive; botwatch keeps the watchdog alive. ──
+// 10-11 13:35 the watchdog was killed from outside (no EXIT line, siblings in the same job survived) and the stack stayed
+// down 7 min until some session's SessionStart hook happened to run ensure-stack. Dead = BOTH signals: no watchdog.ps1
+// process AND watchdog.log silent past staleS (heartbeat cadence ~130s). Relaunch goes through ensure-stack (idempotent,
+// WMI launch outside any job) and the watchdog's own singleton mutex, throttled to one attempt per minGapMs.
+export const WATCHDOG_STALE_S = 300;
+export const WATCHDOG_REVIVE_GAP_MS = 5 * 60000;
+const WD_TS_RE = /^\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/;
+/** Last line + its timestamp (ms) from the tail of watchdog.log; ts null when no line carries one. */
+export function watchdogLastBeat(logTail) {
+    const lines = String(logTail || '').split(/\r?\n/).filter(l => l.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (/botwatch keeper:/.test(lines[i])) continue;   // our own revive note is not a watchdog heartbeat
+        const m = WD_TS_RE.exec(lines[i]);
+        if (m) { const ts = Date.parse(m[1]); if (Number.isFinite(ts)) return { ts, line: lines[i], tail: lines.slice(-5) }; }
+    }
+    return { ts: null, line: null, tail: lines.slice(-5) };
+}
+/** procAlive: true/false/null(unknown); lastBeatMs from watchdogLastBeat. → 'ok' | 'hung' | 'revive' | 'throttled' */
+export function makeWatchdogKeeper({ staleS = WATCHDOG_STALE_S, minGapMs = WATCHDOG_REVIVE_GAP_MS } = {}) {
+    let lastReviveAt = -Infinity, failStreak = 0, pendingCheck = false;
+    return {
+        decide({ procAlive, lastBeatMs, now }) {
+            const ageS = Number.isFinite(lastBeatMs) ? (now - lastBeatMs) / 1000 : Infinity;
+            const beatFresh = ageS <= staleS;
+            if (pendingCheck) {   // outcome of the previous revive: did a watchdog come back?
+                pendingCheck = false;
+                if (procAlive === true || beatFresh) failStreak = 0; else failStreak++;
+            }
+            if (beatFresh || procAlive === null) return { action: 'ok', ageS, failStreak };
+            if (procAlive === true) return { action: 'hung', ageS, failStreak };   // process there but silent: mutex holder, don't double-launch
+            if (now - lastReviveAt < minGapMs) return { action: 'throttled', ageS, failStreak };
+            lastReviveAt = now; pendingCheck = true;
+            return { action: 'revive', ageS, failStreak };
+        },
+    };
+}
+/** One ALERTS.txt line with the first-hand scene: last heartbeat time + the last log line before death. */
+export function watchdogReviveAlert({ stamp, ageS, beat, failStreak = 0 }) {
+    const last = beat && beat.line ? beat.line.slice(0, 200) : '(watchdog.log empty)';
+    const at = beat && Number.isFinite(beat.ts) ? new Date(beat.ts).toISOString() : '?';
+    const fails = failStreak > 0 ? ` (previous revive FAILED x${failStreak})` : '';
+    return `[${stamp}] WATCHDOG DOWN → botwatch revive via ensure-stack${fails}: no watchdog.ps1 process, log silent ${Math.round(ageS)}s, last beat ${at} | last line: ${last}`;
+}
