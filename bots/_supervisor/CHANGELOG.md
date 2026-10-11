@@ -12,7 +12,14 @@
 
 ---
 
-## C398. ★逃跑中被射手打中 → 先挡视线, 挡住就停跑（modes.js/mobility_geom.js 需重启,T-0226 death #22 逃生部分,worker-death,⏳待重启）
+## C399. ★★身体所有权闸: 反射 mode 持身期间, 技能调用链的寻路目标/移动键/清键一律拒绝（modes.js/skills.js/framework/reflex_body_gate.js 需重启,T-0231,worker-death,⏳待重启）
+
+**证据**: death #22 04:51:13 act_trace `ctrl forward,back,right,sneak,sprint` + `path=1` + act=mode:self_preservation — branchMine 的寻路与 sprintFlee 同时驱动身体。ws 派发的受监督技能 (kernelDriver→子技能) 不在 ActionManager 里跑, 反射 execute()→runAction 的 stop() 只停 ActionManager 的 action, 停不到它; 仲裁器判"反射赢", 技能照样 setGoal/按键; sprintFlee 入口还把全局 interrupt_code 吞掉。= 让位没有以接收方独占为前提。
+**改动**: 新 framework/reflex_body_gate.js — AsyncLocalStorage 标两条链: skillCtx (skills.customSkill 经 runAsSkill 运行) / reflexCtx (execute 在其中跑 mode 函数; 反射内调的 customSkill 不进 skillCtx)。installReflexBodyGate 包 bot.pathfinder.setGoal / setControlState / clearControlStates: 反射持身 (bot._bodyOwner.kind==='mode') 且调用来自技能链 → setGoal 抛 'reflex holds the body' (goto reject 不悬挂), 按键置真/清键忽略; setGoal(null)/松键放行; 无链标记的插件 tick (pathfinder/pvp physicsTick) 放行。execute() 接管前清掉技能残留的 pathfinder goal; initModes 装闸 (execute 里幂等补装, 防 pathfinder 晚加载)。拒绝时 progress `[body-gate] skill X setGoal(...) refused — mode:Y holds the body (T-0231)` (5s 限频)。
+**可证伪预测**: 反射持身时不再出现 act=mode:* 且 path=1 的混合驱动 / forward+back 冲突控制; 出现 `[body-gate] … refused` 日志。
+**风险/回滚**: 技能里未 try 的直接 setGoal 会抛错 → 子技能失败, kernel 重派 (可接受)。revert, 重启。回归 test/reflex_body_gate.test.mjs。
+
+## C398. ★逃跑中被射手打中 → 先挡视线, 挡住就停跑（modes.js/mobility_geom.js 需重启,T-0226 death #22 逃生部分,worker-death,✅已上线 23:32:04Z f1e54e6）
 
 **证据**: death #22 04:51:25 y14 黄昏, 石剑 0 甲。04:51:13 中箭 4.6b (hp12) → self_preservation sprintFlee 持身, act 全程 mode:self_preservation, 9s 4 箭 12→8→7→4→0 (骷髅 5.6→2.4b)。progress 无 `shot while disengaged` = C382 的 coverFromShooter 从没执行 —— 它挂在 self_defense 的 ranged-unreachable-trap 让位分支, 而 self_preservation 持身时 self_defense 这一拍轮不到。在射程内冲刺 = 继续当靶子。
 **改动**: sprintFlee 每拍 (1.5s 限频): 2.5s 内挨过打且 16b 内有射手 → mobility_geom.fleeCoverFirst({shooterDist, meleeNear}) (射手 1.5–16b 且 4b 内无近战怪追) → 停步 skills.coverFromShooter, 挡住 → 结束逃跑躲掩体后; 挡不住 → 继续跑。排在隧道封堵/移动之前。

@@ -6,6 +6,7 @@ import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
 import { lowHpMovementProfile } from '../framework/mobility_signals.js';
+import { runAsSkill } from '../framework/reflex_body_gate.js';
 import { planWaterStep } from '../mobility_geom.js';
 import settings from "../../../settings.js";
 import path from 'path';
@@ -7298,7 +7299,9 @@ export async function customSkill(bot, skillName, ...args) {
     const prevSkill = bot._currentSkill;
     try {
         bot._currentSkill = skillName;
-        return await fn(bot, ctx, ...args);
+        // ★T-0231: run in the skill call-chain context so the reflex body gate can pause this skill's pathing/keys while a
+        //   reflex mode owns the body (reflex-invoked customSkills stay in the reflex chain — see reflex_body_gate.runAsSkill).
+        return await runAsSkill(skillName, () => fn(bot, ctx, ...args));
     } finally {
         // Restore ONLY while we are still the holder. A Promise.race-orphaned inner skill
         // (achieve.js races customSkill vs timeouts; the loser keeps running detached) can

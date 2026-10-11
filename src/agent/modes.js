@@ -11,6 +11,7 @@ import convoManager from './conversation.js';
 import fs from 'fs';
 import Vec3 from 'vec3';
 import { appendTelemetry } from '../utils/telemetry.js';
+import { installReflexBodyGate, reflexCtx } from './framework/reflex_body_gate.js';
 // Framework v2 lava_guard — pure read predicate (no lane, no flag), safe to call
 // from a reflex. Wires the blueprint §E.2 "never clutch over lava" guard into the
 // live MLG reflex below (the inline floor-scan skipped lava: boundingBox 'empty'≠'block').
@@ -7501,12 +7502,19 @@ async function execute(mode, agent, func, timeout=-1) {
     mode.activeSince = Date.now();
     // ★所有权令牌: 与 mode.active 同生同灭; finally 只释放自己的 (owner-tag 语义 —
     // 若期间被后来者覆写, release 是 no-op)。
+    // ★T-0231: the supervised skill (ws/kernelDriver child) does not run inside ActionManager, so runAction's stop() never
+    //   reaches it — drop its stale pathfinder goal now; the reflex body gate then refuses its setGoal/keys until we release.
+    try {
+        if (!(agent.bot._reflexGateParts && agent.bot._reflexGateParts.pf)) installReflexBodyGate(agent.bot);   // late pathfinder load
+        const _prev = agent.bot._bodyOwner;
+        if (!(_prev && _prev.kind === 'mode') && agent.bot.pathfinder && agent.bot.pathfinder.goal) agent.bot.pathfinder.setGoal(null);
+    } catch (e) {}
     setBodyOwner(agent.bot, `mode:${mode.name}`, 'mode');
     let code_return;
     try {
-        code_return = await agent.actions.runAction(`mode:${mode.name}`, async () => {
+        code_return = await reflexCtx.run({ mode: mode.name }, () => agent.actions.runAction(`mode:${mode.name}`, async () => {
             await func();
-        }, { timeout });
+        }, { timeout }));
     } finally {
         if (mode._burstSeq === _burst) {
             mode.active = false;
@@ -7693,6 +7701,15 @@ export function initModes(agent) {
     _agent = agent;
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();
+    // ★T-0231: one owner drives the body — while a reflex mode holds it, skill-chain setGoal/keys are refused.
+    try {
+        installReflexBodyGate(agent.bot, { onBlock: (kind, detail) => {
+            const b = agent.bot;
+            if (Date.now() - (b._reflexGateLogAt || 0) < 5000) return;
+            b._reflexGateLogAt = Date.now();
+            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [body-gate] skill ${b._currentSkill || '-'} ${kind}(${detail}) refused — ${b._bodyOwner && b._bodyOwner.name} holds the body (T-0231)\n`); } catch (e) {}
+        } });
+    } catch (e) {}
     if (agent.task) {
         agent.bot.restrict_to_inventory = agent.task.restrict_to_inventory;
     }
