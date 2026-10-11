@@ -37,10 +37,22 @@ export function recordSightings(lm, entities, now = Date.now(), observer = null)
     return dirty;
 }
 
-/** 最近一次 (按距离, 同距取新) 某类动物的目击: ≤maxDist、≤maxAgeMs。返回 {type,x,y,z,dist,ageMs,count} 或 null。 */
+/** ★T-0273 ③ (监工拍板): 目击权重 — 群体 (猪/牛/羊/哞菇 ≥2) 优先, 单只鸡随时间衰减 (>2h 几乎不算: 多半已被吃掉/走散)。
+ *  家畜群体不会自己消失 (不刷新也不 despawn), 衰减慢; 单只 (尤其鸡) 衰减快。 */
+export const SIGHTING_HOUR_MS = 3600 * 1000;
+export function sightingWeight(n, age) {
+    const herd = (n.count || 1) >= 2;
+    const chicken = n.type === 'chicken';
+    const base = herd && !chicken ? 3 : herd ? 1.5 : chicken ? 1 : 1.2;
+    const decay = (!herd && chicken)
+        ? (age <= 2 * SIGHTING_HOUR_MS ? 1 - 0.5 * age / (2 * SIGHTING_HOUR_MS) : 0.05)
+        : Math.max(0.25, 1 - age / (24 * SIGHTING_HOUR_MS));
+    return base * decay;
+}
+/** 最佳目击 (按 距离/权重 最小; 权重见 sightingWeight): ≤maxDist、≤maxAgeMs。返回 {type,x,y,z,dist,ageMs,count} 或 null。 */
 export function nearestSighting(lm, typeRe, pos, { maxDist = SIGHTING_TARGET_MAX_DIST, maxAgeMs = SIGHTING_MAX_AGE_MS, now = Date.now(), newerThan = 0 } = {}) {
     if (!lm || !pos) return null;
-    let best = null;
+    let best = null, bestScore = Infinity;
     for (const key of Object.keys(lm)) {
         const n = lm[key];
         if (!n || n.kind !== 'sighting' || !typeRe.test(n.type || '')) continue;
@@ -48,7 +60,8 @@ export function nearestSighting(lm, typeRe, pos, { maxDist = SIGHTING_TARGET_MAX
         if (age > maxAgeMs || (n.ts || 0) <= newerThan) continue;
         const d = Math.hypot(n.x - pos.x, n.z - pos.z);
         if (d > maxDist) continue;
-        if (!best || d < best.dist) best = { type: n.type, x: n.x, y: n.y, z: n.z, dist: +d.toFixed(1), ageMs: age, count: n.count || 1 };
+        const score = Math.max(d, 1) / sightingWeight(n, age);
+        if (score < bestScore) { bestScore = score; best = { type: n.type, x: n.x, y: n.y, z: n.z, dist: +d.toFixed(1), ageMs: age, count: n.count || 1 }; }
     }
     return best;
 }

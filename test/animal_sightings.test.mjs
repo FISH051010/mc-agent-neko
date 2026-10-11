@@ -86,8 +86,22 @@ test('T-0273: 亲眼看过空的近处目击删掉 (≤24b 没刷新到), 远处
     assert.ok(lm['sighting:sheep@0,0'], 'what is visible now is recorded');
     assert.equal(SIGHTING_CLEAR_R, 24);
     // 下一轮侦察指向下一个真没看过的点, 不再是那只被吃掉的鸡
-    assert.equal(near(lm, /^(chicken|pig)$/, { x: 8, y: 64, z: -4 }).x, 45);
+    assert.notEqual(near(lm, /^(chicken|pig)$/, { x: 8, y: 64, z: -4 }).x, 10, 'never the eaten chicken again');   // ③ 权重下 4h 单只鸡几乎不算 → 去猪那边
     // 不传 observer (旧调用) 行为不变
     const lm2 = { 'sighting:chicken@0,-1': { kind: 'sighting', type: 'chicken', x: 10, y: 64, z: -2, ts: old, count: 1 } };
     rec(lm2, {}, now); assert.ok(lm2['sighting:chicken@0,-1']);
+});
+
+test('T-0273 ③: 目击按权重选 — 群体 (猪/牛/羊 ≥2) 优先, >2h 的单只鸡几乎不算; 同类同龄仍按距离', async () => {
+    const { nearestSighting: near, sightingWeight } = await import('../src/agent/framework/animal_sightings.js');
+    const now = Date.now(), H = 3600 * 1000;
+    const lm = {
+        a: { kind: 'sighting', type: 'chicken', x: 11, y: 64, z: 0, ts: now - 4 * H, count: 1 },    // 近, 4h 单只鸡
+        b: { kind: 'sighting', type: 'pig', x: 67, y: 64, z: 0, ts: now - 1 * H, count: 3 },        // 远, 猪群
+    };
+    assert.equal(near(lm, /^(chicken|pig)$/, { x: 0, y: 64, z: 0 }, { now }).type, 'pig', 'herd beats a stale lone chicken');
+    assert.ok(sightingWeight({ type: 'chicken', count: 1 }, 3 * H) < 0.1, 'lone chicken >2h barely counts');
+    assert.ok(sightingWeight({ type: 'cow', count: 2 }, 0) > sightingWeight({ type: 'chicken', count: 1 }, 0));
+    const fresh = { c: { kind: 'sighting', type: 'chicken', x: 10, y: 64, z: 0, ts: now, count: 1 }, d: { kind: 'sighting', type: 'chicken', x: 30, y: 64, z: 0, ts: now, count: 1 } };
+    assert.equal(near(fresh, /^chicken$/, { x: 0, y: 64, z: 0 }, { now }).x, 10, 'same kind & age → nearest');
 });
