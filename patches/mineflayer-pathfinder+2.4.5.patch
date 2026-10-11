@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..62de100 100644
+index b38bd30..27c4809 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -14,6 +14,7 @@ const interactableBlocks = require('./lib/interactable.json')
@@ -10,15 +10,16 @@ index b38bd30..62de100 100644
    const ladderId = bot.registry.blocksByName.ladder.id
    const vineId = bot.registry.blocksByName.vine.id
    let stateMovements = new Movements(bot)
-@@ -24,6 +25,7 @@ function inject (bot) {
+@@ -24,6 +25,8 @@ function inject (bot) {
    let path = []
    let pathUpdated = false
    let digging = false
++  let digTargetPos = null // ★T-0260: the block THIS pathfinder is digging — resetPath must never stop someone else's dig
 +  let waterSettleStart = 0
    let placing = false
    let placingBlock = null
    let lastNodeTime = performance.now()
-@@ -61,6 +63,10 @@ function inject (bot) {
+@@ -61,6 +64,10 @@ function inject (bot) {
    }
  
    bot.pathfinder.getPathTo = (movements, goal, timeout) => {
@@ -29,16 +30,42 @@ index b38bd30..62de100 100644
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
      const { value: { result, astarContext: context } } = generator.next()
      astarContext = context
-@@ -123,6 +129,8 @@ function inject (bot) {
+@@ -116,17 +123,29 @@ function inject (bot) {
+ 
+   function detectDiggingStopped () {
+     digging = false
+-    bot.removeAllListeners('diggingAborted', detectDiggingStopped)
+-    bot.removeAllListeners('diggingCompleted', detectDiggingStopped)
++    digTargetPos = null
++    // ★T-0260: removeAllListeners(event, fn) ignores fn and dropped EVERY diggingAborted listener — remove only ours
++    bot.removeListener('diggingAborted', detectDiggingStopped)
++    bot.removeListener('diggingCompleted', detectDiggingStopped)
+   }
+ 
    function resetPath (reason, clearStates = true) {
      if (!stopPathing && path.length > 0) bot.emit('path_reset', reason)
      path = []
 +    waterSettleStart = 0
 +    bot._underwaterMiningSettling = false
      if (digging) {
-       bot.on('diggingAborted', detectDiggingStopped)
-       bot.on('diggingCompleted', detectDiggingStopped)
-@@ -140,6 +148,8 @@ function inject (bot) {
+-      bot.on('diggingAborted', detectDiggingStopped)
+-      bot.on('diggingCompleted', detectDiggingStopped)
+-      bot.stopDigging()
++      // ★T-0260: bot.stopDigging() stops WHATEVER dig is current. When a skill's bot.dig replaced ours, our dig's .catch →
++      //   resetPath('dig_error') ran a microtask later and killed the skill's brand-new dig ('Digging aborted' in 1-3ms).
++      //   Stop only our own dig; otherwise our dig is already gone — just drop the flag.
++      if (bot.targetDigBlock && digTargetPos && bot.targetDigBlock.position && bot.targetDigBlock.position.equals(digTargetPos)) {
++        bot.on('diggingAborted', detectDiggingStopped)
++        bot.on('diggingCompleted', detectDiggingStopped)
++        bot.stopDigging()
++      } else {
++        digging = false
++        digTargetPos = null
++      }
+     }
+     placing = false
+     pathUpdated = false
+@@ -140,6 +159,8 @@ function inject (bot) {
    }
  
    bot.pathfinder.setGoal = (goal, dynamic = false) => {
@@ -47,7 +74,7 @@ index b38bd30..62de100 100644
      stateGoal = goal
      dynamicGoal = dynamic
      bot.emit('goal_updated', goal, dynamic)
-@@ -160,6 +170,14 @@ function inject (bot) {
+@@ -160,6 +181,14 @@ function inject (bot) {
    }
  
    bot.pathfinder.stop = () => {
@@ -62,7 +89,7 @@ index b38bd30..62de100 100644
      stopPathing = true
    }
  
-@@ -170,6 +188,16 @@ function inject (bot) {
+@@ -170,6 +199,16 @@ function inject (bot) {
        const curPoint = path[i]
        if (curPoint.toBreak.length > 0 || curPoint.toPlace.length > 0) break
        const b = bot.blockAt(new Vec3(curPoint.x, curPoint.y, curPoint.z))
@@ -79,7 +106,7 @@ index b38bd30..62de100 100644
        if (b && (b.type === waterType || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
-@@ -481,7 +509,35 @@ function inject (bot) {
+@@ -481,10 +520,39 @@ function inject (bot) {
  
      // Handle digging
      if (digging || nextPoint.toBreak.length > 0) {
@@ -115,7 +142,11 @@ index b38bd30..62de100 100644
          digging = true
          const b = nextPoint.toBreak.shift()
          const block = bot.blockAt(new Vec3(b.x, b.y, b.z), false)
-@@ -524,6 +580,9 @@ function inject (bot) {
++        digTargetPos = block ? block.position : null
+         const tool = bot.pathfinder.bestHarvestTool(block)
+         fullStop()
+ 
+@@ -524,6 +592,9 @@ function inject (bot) {
          bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
            lockUseBlock.release()
            placingBlock = nextPoint.toPlace.shift()
@@ -125,7 +156,7 @@ index b38bd30..62de100 100644
          }, err => {
            console.error(err)
            lockUseBlock.release()
-@@ -557,6 +616,7 @@ function inject (bot) {
+@@ -557,6 +628,7 @@ function inject (bot) {
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
                  bot.setControlState('sneak', false)
@@ -133,7 +164,7 @@ index b38bd30..62de100 100644
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -611,6 +671,9 @@ function inject (bot) {
+@@ -611,6 +683,9 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
