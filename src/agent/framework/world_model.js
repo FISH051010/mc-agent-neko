@@ -28,7 +28,7 @@ import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch,
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
 import { hostileActionableNear } from './hostile_reach.js';
-import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways } from './armor_gate.js';
+import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways, hasShield, protectionHaveNames, SHIELD_PLANKS } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
@@ -229,14 +229,14 @@ export function ironArmorBudget(bot) {
     const hasIronPlusPick = invCount(bot, /^(iron|diamond|netherite)_pickaxe$/) > 0;
     return ironForArmor(bot) - (hasIronPlusPick ? 0 : IRON_PICK_RESERVE);
 }
-function armorItemNames(bot) { try { return bot.inventory.items().map(i => i.name).filter(n => /_(helmet|chestplate|leggings|boots|sword)$/.test(n)); } catch (e) { return []; } }   // ★T-0170 含剑 (防护序里的铁剑)
 // ★T-0157: craftArmor 本轮要造的那件的成本 (与技能端同序: keepInv 关 → 防护序挑造得起的; 否则 cheapest-first)。
-function nextArmorCost(world, bot) {
+// ★T-0229: 返回 [件名, 铁成本]; 盾排第一且不吃铁镐预留额 (shieldBudget = 全部铁)。
+function nextArmorPiece(world, bot) {
+    if (!hasShield(bot) && ironForArmor(bot) >= 1) return ['shield', 1];
     if (keepInventoryOff() === true) {
-        const nx = nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot), { withSword: hasIronTierPick(world) });
-        return nx ? nx[1] : null;
+        return nextProtectionPiece(protectionHaveNames(bot), ironArmorBudget(bot), { withSword: hasIronTierPick(world), shieldBudget: ironForArmor(bot) });
     }
-    return ARMOR_PIECE_COST[Math.min(3, (world.vitals && world.vitals.armor) || 0)];
+    return ['armor', ARMOR_PIECE_COST[Math.min(3, (world.vitals && world.vitals.armor) || 0)]];
 }
 function blockNear(bot, name, r = 4) {
     try {
@@ -246,9 +246,9 @@ function blockNear(bot, name, r = 4) {
 }
 /** ★T-0157 台/熔炉/燃料齐不齐 — 提案门与 isGoalDone 同一谓词 (缺料时技能必拒, 不提也不粘)。 */
 export function armorCraftBlocked(world, bot) {
-    const cost = nextArmorCost(world, bot);
-    if (cost == null) return false;   // 无可造件 — ironArmorGoalDone 管
-    return !armorCraftFeasible(invCounts(bot), cost, { tableNear: blockNear(bot, 'crafting_table'), furnaceNear: blockNear(bot, 'furnace') }).ok;
+    const nx = nextArmorPiece(world, bot);
+    if (!nx) return false;   // 无可造件 — ironArmorGoalDone 管
+    return !armorCraftFeasible(invCounts(bot), nx[1], { tableNear: blockNear(bot, 'crafting_table'), furnaceNear: blockNear(bot, 'furnace'), planksNeed: nx[0] === 'shield' ? SHIELD_PLANKS : 0 }).ok;
 }
 // ★T-0164 滞留熔炉 (smeltSafe 落盘 stranded_smelt.json): ≤64 格、≤3h 内的记录 → RECLAIM_FURNACE 回炉取锭+收炉。
 // ★T-0164 迟滞 (21:03:29 实录: reclaimFurnace 走路途中绕出 64 格 → isGoalDone 判完成 → 承诺翻给 GET_IRON_TOOLS, 8 锭仍在炉里,
@@ -274,6 +274,7 @@ export function ironSmeltFuelBlocked(bot) {
     return ingots < 3 && raw > 0 && ingots + raw >= 3 && smeltableUnits(invCounts(bot)) < 3 - ingots;
 }
 function ironArmorGoalDone(world, bot) {
+    if (!hasShield(bot) && ironForArmor(bot) >= 1) return false;   // ★T-0229 第一块铁先造盾 (不吃铁镐预留额)
     const pieces = Math.min(4, (world.vitals && world.vitals.armor) || 0);
     if (pieces >= 4) return true;
     return ironArmorBudget(bot) < ARMOR_PIECE_COST[pieces];
@@ -1009,7 +1010,7 @@ export function proposeTasks(world, bot) {
         //   Requires armor>=4 (GET_ARMOR@68 closes that first) so the bot never strip-mines the
         //   deep diamond band unarmored. @46: above GO_UNDERGROUND@45 so a kitted iron bot heads for
         //   the diamond band on purpose instead of the open-ended shallow descent.
-        if (hasIronTierPick(w) && diamondDiveReady(bot) && diamondArmorReady(equippedArmorNames(bot), keepInventoryOff()) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot) && foodSafeForUnderground
+        if (hasIronTierPick(w) && diamondDiveReady(bot) && diamondArmorReady(equippedArmorNames(bot), keepInventoryOff(), { shield: hasShield(bot) }) && (vitals.armor || 0) >= 1 && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot) && foodSafeForUnderground
             && kit.sufficientForUnderground
             && (!foodInstincts || invCount(bot, /^(cooked_\w+|bread|apple|baked_potato|carrot|beef|porkchop|mutton)$/) >= 2 || vitals.food >= 16)) {   // ★2026-07-06 satiety 档(贫瘠世界口粮存不下, 满腹+灰区兜底+keepInv 等效); ★T-0092 (worker-sync): armor>=4(full set=24 iron, unreachable since GET_ARMOR yields at <4) → armor>=1(reachable from one craftArmor pass) so an iron-tooled+lightly-armored bot actually commits GET_DIAMOND → mineDiamonds descends to y-52. NOT >=0. ★tool-budget: also gated on kit.sufficientForUnderground (spare-with-table or field-recraft kit) like GO_UNDERGROUND — the skill-side pick guard is the LAST line, not the plan; TOOL_UPKEEP@47 restores the invariant first. ★dive rations (task #9): >=2 carried edibles or GET_FOOD stocks first — the y12 famine surfacing (checkpoint #6) ate the whole night's descent.
             // Dispatch the DEDICATED mineDiamonds skill: it water-aware-descends to the diamond band,
@@ -1331,7 +1332,7 @@ export function proposeTasks(world, bot) {
                 // ★T-0128: only when mineDiamonds will actually run (stone escort pick) — else it DEFERs 3×, the
                 //   dispatch cooldown revokes the WHOLE night plan and the bot spends the night exposed.
                 // ★T-0151: keepInventory=false 时无胸甲档护甲不下深层挖钻 (回落挖铁 / 夜间造甲)
-                if (hasIronTierPick(w) && diamondDiveReady(bot) && diamondArmorReady(equippedArmorNames(bot), keepInventoryOff()) && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot)) {
+                if (hasIronTierPick(w) && diamondDiveReady(bot) && diamondArmorReady(equippedArmorNames(bot), keepInventoryOff(), { shield: hasShield(bot) }) && diamondsOnHand(bot) < diamondTarget(bot) && !diamondGearComplete(bot)) {
                     const _nTgt = diamondTarget(bot);   // ★相位: 无钻镐→3(造首镐), 有钻镐→40(夜里也滚雪球)
                     push({ kind: TASK.DUSK_MINE_NIGHT, priority: 94, skill: 'mineDiamonds',
                            args: [_nTgt],
@@ -1651,7 +1652,7 @@ export function isGoalDone(kind, world, bot) {
         case PROPOSAL_KIND.GET_IRON_TOOLS:   return hasIronTierPick(w) || ironSmeltFuelBlocked(bot);   // ★T-0176 缺燃料熔不出 3 锭即释放 (否则 holding commitment 继续派 smeltSafe 必拒)
         // ★T-0097 NIGHT_SMELT_IRON done = same target (an iron-tier pick exists) — holds the night
         // commitment sticky across the smelt→craft hand-off until the iron pickaxe is actually crafted.
-        case TASK.NIGHT_SMELT_IRON:          if (hasIronTierPick(w)) return !nextProtectionPiece([...equippedArmorNames(bot), ...armorItemNames(bot)], ironArmorBudget(bot), { withSword: true });   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
+        case TASK.NIGHT_SMELT_IRON:          if (hasIronTierPick(w)) return !nextProtectionPiece(protectionHaveNames(bot), ironArmorBudget(bot), { withSword: true, shieldBudget: ironForArmor(bot) });   /* ★T-0229 含盾 */   // ★T-0151: 镐到手后继续造甲, 没有造得起的下一件才释放
             return (invCount(bot, /^raw_iron$/) === 0 && invCount(bot, /^iron_ingot$/) < 3);   // ★FIX (worker-sync 0630 frozen-alive): the sticky NIGHT_SMELT_IRON deadlocked into a smeltSafe no-op spin — chosen at dusk w/ raw_iron≥3, but once the iron was smelted+consumed WITHOUT reaching hasIronTierPick (ingots banked/used, no lasting iron pick), it stayed sticky dispatching smeltSafe('raw_iron',N) at raw_iron=0 → no-op every 1.5s, frozen until watchdog (live: pinned 9min @54,58 mob=FREE/ENC). Release when there's nothing left to smelt OR craft → re-evaluate → mine more iron. Does NOT gate pick-making.
         // ★P1-4 GET_IRON_ARMOR_SET 复活后语义 = 采集端(下铁带补铁库存), done 与提案门(RUNG 1.5)共用
         // ironDemandTotal = max(缺甲总成本, portal kit 铁成本): 铁攒够总需求即释放(demand=0 时恒真,

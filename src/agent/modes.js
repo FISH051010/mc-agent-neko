@@ -6732,7 +6732,7 @@ const modes_list = [
                     && actionable === 0 && food > 6 && hasTablePath && !_stuckMob;
                 // ★T-0151 先甲后钻 (监工拍板): 铁镐已到手 + 还有造得起的下一件甲 (胸>腿>盔>靴) → 夜里接着冶炼造甲,
                 //   排在整夜下矿之前 (地下封闭坑里冶炼合成是安全的; keepInventory=false 无甲下深层最贵)。
-                const _armorHave = [...equippedArmorNames(bot), ...Object.keys(counts).filter(k => /_(helmet|chestplate|leggings|boots|sword)$/.test(k) && counts[k] > 0)];   // ★T-0170 含剑 (铁剑在防护序里)
+                const _armorHave = [...equippedArmorNames(bot), ...Object.keys(counts).filter(k => /_(helmet|chestplate|leggings|boots|sword)$/.test(k) && counts[k] > 0), ...(counts['shield'] > 0 ? ['shield'] : [])];   // ★T-0170 含剑 (铁剑在防护序里); ★T-0229 含盾
                 const _armorNightWarranted = armorNightWarranted({ hasIronPick: _hasIronPickDec, actionable, food, hasTablePath, stuckMob: _stuckMob, canSmeltHere: _canSmeltHere,
                     armorHave: _armorHave, rawIron: _rawIronDec, ingots: _ironIngotsDec, fuelUnits: smeltableUnits(counts) });   // ★T-0192 抽纯函数 (armor_gate), 不变量测试钉住
                 // ── ★用户令 2026-07-08 夜间行为白名单参数 ──

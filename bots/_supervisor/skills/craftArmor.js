@@ -18,10 +18,12 @@
 // locals only); no infinite retry (stall>=2 on the same piece → stop).
 // Invoked via: {"skill":"craftArmor"}  ctx = { skills, world, mc, Vec3, log }
 // ★T-0151 防护优先序 (胸 > 腿 > 盔 > 靴), 与 framework/armor_gate.PROTECTION_ORDER 同序。
+// ★T-0229 盾第一 (监工拍板: 三次骷髅死, arrow_guard 只差一面盾): 盾 > 胸 > 腿 > (铁剑) > 盔 > 靴; 盾 1 锭 + 6 木板, 不吃铁镐预留额, 造好即上副手。
 export const PROTECTION_PIECES = (tier) => tier === 'diamond'
     ? [['diamond_chestplate', 8], ['diamond_leggings', 7], ['diamond_helmet', 5], ['diamond_boots', 4]]
-    : [['iron_chestplate', 8], ['iron_leggings', 7], ['iron_helmet', 5], ['iron_boots', 4]];
-export const PROTECTION_PIECES_WITH_SWORD = [['iron_chestplate', 8], ['iron_leggings', 7], ['iron_sword', 2], ['iron_helmet', 5], ['iron_boots', 4]];
+    : [['shield', 1], ['iron_chestplate', 8], ['iron_leggings', 7], ['iron_helmet', 5], ['iron_boots', 4]];
+export const PROTECTION_PIECES_WITH_SWORD = [['shield', 1], ['iron_chestplate', 8], ['iron_leggings', 7], ['iron_sword', 2], ['iron_helmet', 5], ['iron_boots', 4]];
+const SHIELD_PLANKS = 6;
 export default async function craftArmor(bot, ctx, opts = {}) {
     const { skills, world, log } = ctx;
     const maxMs = (opts && opts.maxMs) || 180000;
@@ -32,7 +34,7 @@ export default async function craftArmor(bot, ctx, opts = {}) {
     // [name, cost] CHEAPEST-FIRST so scarce material becomes some protection asap. 钻甲用钻石数 (同 4/5/7/8)。
     const PIECES = TIER === 'diamond'
         ? [['diamond_boots', 4], ['diamond_helmet', 5], ['diamond_leggings', 7], ['diamond_chestplate', 8]]
-        : [['iron_boots', 4], ['iron_helmet', 5], ['iron_leggings', 7], ['iron_chestplate', 8]];
+        : [['shield', 1], ['iron_boots', 4], ['iron_helmet', 5], ['iron_leggings', 7], ['iron_chestplate', 8]];   // ★T-0229 盾先
     const ARMOR_RE = /_helmet$|_chestplate$|_leggings$|_boots$/;
     // 完成判据用"本档"甲件 (钻甲: 4 件钻甲; 铁甲: 沿用全甲件 — 铁阶段只有铁甲)。
     const TIER_RE = TIER === 'diamond' ? /^diamond_(helmet|chestplate|leggings|boots)$/ : ARMOR_RE;
@@ -87,13 +89,13 @@ export default async function craftArmor(bot, ctx, opts = {}) {
         const _goodSword = () => { try { return bot.inventory.items().some(i => /^(iron|diamond|netherite)_sword$/.test(i.name)); } catch (e) { return false; } };
         const _order = (TIER === 'iron' && _hasIronPick()) ? PROTECTION_PIECES_WITH_SWORD : PROTECTION_PIECES(TIER);
         const target = (opts && opts.order === 'protection')
-            ? (_order.find(([n, c]) => (n === 'iron_sword' ? !_goodSword() : !havePiece(n)) && c <= _matBudget()) || null)
+            ? (_order.find(([n, c]) => (n === 'iron_sword' ? !_goodSword() : !havePiece(n)) && c <= (n === 'shield' ? _matTotal() : _matBudget())) || null)
             : PIECES.find(([n]) => !havePiece(n));
         if (!target) break; // full set held/worn (or nothing affordable in protection order) — done
         const [piece, cost] = target;
 
         // ★材料保留额执行点: 这件甲会吃掉镐的保留材料 → 停 (钻甲留 9 钻给 3 钻镐; 铁甲留 3 铁给镐)。
-        if (cost > _matBudget()) {
+        if (cost > (piece === 'shield' ? _matTotal() : _matBudget())) {   // ★T-0229 盾不吃铁镐预留额
             log(bot, `craftArmor[${TIER}]: RESERVE gate — ${piece} costs ${cost} but budget is ${_matBudget()} `
                 + `(mat ${_matTotal()}, reserve ${_matReserve()}) — stopping, material goes to the pickaxe first.`);
             break;
@@ -119,8 +121,19 @@ export default async function craftArmor(bot, ctx, opts = {}) {
 
         // Craft via craftChain's array-preset form (handles table placement under canopy).
         const before = inv()[piece] || 0;
-        await skills.customSkill(bot, 'craftChain', [[piece, 1]]).catch(() => {});
+        const recipe = [[piece, 1]];
+        if (piece === 'shield') {   // craftChain 只合成清单里列出的木板 → 先补够 6 木板
+            const c = inv();
+            const planks = Object.keys(c).filter(k => /_planks$/.test(k)).reduce((t, k) => t + (c[k] || 0), 0);
+            const log = Object.keys(c).filter(k => /_(log|stem)$/.test(k) && c[k] > 0).sort((a, b) => c[b] - c[a])[0];
+            if (planks < SHIELD_PLANKS && log) recipe.unshift([log.replace(/_(log|stem)$/, '_planks'), Math.ceil((SHIELD_PLANKS - planks) / 4)]);
+        }
+        await skills.customSkill(bot, 'craftChain', recipe).catch(() => {});
         const after = inv()[piece] || 0;
+        if (piece === 'shield' && after > before) {   // 造好即上副手 — arrow_guard 认 slot 45, 别等第一支箭才去换
+            await skills.equip(bot, 'shield').catch(() => {});
+            log(bot, `craftArmor: shield crafted → off-hand (slot45=${(bot.inventory.slots[45] && bot.inventory.slots[45].name) || 'none'})`);
+        }
 
         // NO-PROGRESS cutoff: never infinite-retry the same failing craft (red line).
         if (after > before) { crafted++; stall = 0; }
@@ -152,5 +165,5 @@ export default async function craftArmor(bot, ctx, opts = {}) {
     log(bot, `craftArmor[${TIER}] done: crafted ${crafted}, newly worn ${newlyWorn > 0 ? newlyWorn : 0}, ${TIER} armor held+worn=${have}/4, `
         + (TIER === 'diamond' ? `diamond=${inv()['diamond'] || 0} diaPicks=${_diaPicksN()} ` : `iron_ingot=${inv()['iron_ingot'] || 0} raw_iron=${inv()['raw_iron'] || 0} `) + `hp=${Math.round(bot.health || 0)}`
         + (progressed ? '' : ' — NO progress this dispatch → false (kernel 3-strike cooldown).'));
-    return progressed ? have : false;
+    return progressed ? (have || crafted || newlyWorn || true) : false;   // ★T-0229 只造了盾时 have=0 也要真值
 }

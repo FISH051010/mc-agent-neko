@@ -3,7 +3,11 @@
 //   无甲下深层是最贵的赌注 (历史死亡 86% 无甲)。
 // ① 防护优先序 (胸 > 腿 > 盔 > 靴): 能造几件造几件 (每件挑造得起的最高防护);
 // ② keepInventory=false 时钻石下潜要求护甲点 ≥8 或已穿胸甲; keepInventory=true 不加门。
-export const PROTECTION_ORDER = [['iron_chestplate', 8], ['iron_leggings', 7], ['iron_helmet', 5], ['iron_boots', 4]];
+// ★T-0229 盾牌第一 (监工战略拍板 10-10: #13/#21/#22 三次骷髅死, bot 从没有盾; arrow_guard 早已装好 — 每拍弹道预测 + 副手举盾,
+//   只差一面盾)。盾 = 1 铁锭 + 6 木板, 最便宜的一档防护 → 防护序首位; 不受"给铁镐留 3 铁"的预留额约束 (1 锭换挡箭, 收益高于晚 1 锭的镐)。
+export const SHIELD_PIECE = ['shield', 1];
+export const SHIELD_PLANKS = 6;
+export const PROTECTION_ORDER = [SHIELD_PIECE, ['iron_chestplate', 8], ['iron_leggings', 7], ['iron_helmet', 5], ['iron_boots', 4]];
 export const DIAMOND_ARMOR_MIN_POINTS = 8;
 const POINTS = {
     leather: { helmet: 1, chestplate: 3, leggings: 2, boots: 1 },
@@ -29,26 +33,40 @@ export function chestTierArmor(names) {
     return armorPoints(names) >= DIAMOND_ARMOR_MIN_POINTS || (names || []).some(n => /_chestplate$/.test(n));
 }
 // ★T-0170 (监工: 剑排在胸/腿之后、盔/靴之前): 已有铁镐时防护序插入铁剑 (2 锭), 已有铁+剑则跳过。
-export const PROTECTION_ORDER_WITH_SWORD = [['iron_chestplate', 8], ['iron_leggings', 7], ['iron_sword', 2], ['iron_helmet', 5], ['iron_boots', 4]];
+export const PROTECTION_ORDER_WITH_SWORD = [SHIELD_PIECE, ['iron_chestplate', 8], ['iron_leggings', 7], ['iron_sword', 2], ['iron_helmet', 5], ['iron_boots', 4]];
 const IRON_PLUS_SWORD_RE = /^(iron|diamond|netherite)_sword$/;
 /** 按防护优先序挑下一件: 跳过已有(穿着或背包里)的, 挑铁料预算造得起的第一件; 都造不起 → null。
  *  withSword: 已有铁镐 → 序里含铁剑 (haveNames 里有铁+剑即视为已有)。 */
-export function nextProtectionPiece(haveNames, budget, { withSword = false } = {}) {
+/** shieldBudget: 盾不吃铁镐预留额 → 调用方传未扣预留的铁总量 (默认同 budget)。 */
+export function nextProtectionPiece(haveNames, budget, { withSword = false, shieldBudget = budget } = {}) {
     const names = haveNames || [];
     const have = new Set(names.map(n => (pieceOf(n) || {}).slot).filter(Boolean));
     const hasGoodSword = names.some(n => IRON_PLUS_SWORD_RE.test(n));
     for (const [name, cost] of (withSword ? PROTECTION_ORDER_WITH_SWORD : PROTECTION_ORDER)) {
         if (name === 'iron_sword') { if (!hasGoodSword && cost <= budget) return [name, cost]; continue; }
+        if (name === 'shield') { if (!names.includes('shield') && cost <= shieldBudget) return [name, cost]; continue; }
         const slot = pieceOf(name).slot;
         if (have.has(slot)) continue;
         if (cost <= budget) return [name, cost];
     }
     return null;
 }
-/** keepInventory=false 时钻石下潜前置; keepInventory 为 true/未知 → 不加门。 */
-export function diamondArmorReady(equippedNames, keepInvOff) {
+/** 盾在副手 (slot 45) 或背包里。 */
+export function hasShield(bot) {
+    try { return !!((bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield') || bot.inventory.items().some(i => i.name === 'shield')); } catch (e) { return false; }
+}
+/** 防护序"已有"名单: 穿着的甲 + 背包里的甲/剑/盾 + 副手。 */
+export function protectionHaveNames(bot) {
+    const out = [...equippedArmorNames(bot)];
+    try { for (const i of bot.inventory.items()) if (/_(helmet|chestplate|leggings|boots|sword)$|^shield$/.test(i.name || '')) out.push(i.name); } catch (e) {}
+    try { const o = bot.inventory.slots[45]; if (o && o.name) out.push(o.name); } catch (e) {}
+    return out;
+}
+/** keepInventory=false 时钻石下潜前置; keepInventory 为 true/未知 → 不加门。
+ *  ★T-0229: 盾也算一档防护 — 胸甲档 + 有盾才下深层 (shield 不传 = 旧口径, 只看胸甲档)。 */
+export function diamondArmorReady(equippedNames, keepInvOff, { shield = true } = {}) {
     if (keepInvOff !== true) return true;
-    return chestTierArmor(equippedNames);
+    return chestTierArmor(equippedNames) && !!shield;
 }
 
 /** ★T-0192 夜间"先甲后钻"判据 (纯函数, 原在 modes.js computeNightPlan 闭包内): 铁镐在手 + 安全 (无可动敌对、food>6、有台路、

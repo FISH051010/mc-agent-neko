@@ -34,10 +34,12 @@ function nightWorld(decision) {
 }
 
 test('T-0151: 防护优先序 — 11 铁先胸甲(8); 7 铁腿(7); 已有胸甲且只剩 3 铁 → 无可造', () => {
-    assert.deepEqual(nextProtectionPiece([], 11), ['iron_chestplate', 8]);
-    assert.deepEqual(nextProtectionPiece([], 7), ['iron_leggings', 7]);
-    assert.equal(nextProtectionPiece(['iron_chestplate'], 3), null);
-    assert.deepEqual(PROTECTION_PIECES('iron').map(p => p[0]), ['iron_chestplate', 'iron_leggings', 'iron_helmet', 'iron_boots']);
+    // ★T-0229: 盾排第一 — 没盾时先盾; 有盾后同旧序
+    assert.deepEqual(nextProtectionPiece([], 11), ['shield', 1]);
+    assert.deepEqual(nextProtectionPiece(['shield'], 11), ['iron_chestplate', 8]);
+    assert.deepEqual(nextProtectionPiece(['shield'], 7), ['iron_leggings', 7]);
+    assert.equal(nextProtectionPiece(['shield', 'iron_chestplate'], 3), null);
+    assert.deepEqual(PROTECTION_PIECES('iron').map(p => p[0]), ['shield', 'iron_chestplate', 'iron_leggings', 'iron_helmet', 'iron_boots']);
 });
 
 test('T-0151: 钻石甲门 — 胸甲或护甲点≥8; keepInventory=false 才生效', () => {
@@ -56,13 +58,14 @@ test('T-0151: 夜间 SMELT_IRON 在已有铁镐时改派 craftArmor(protection),
     assert.equal(p.skill, 'craftArmor');
     assert.equal(p.args[0].order, 'protection');
     assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, fakeBot(LIVE)), false, '11 iron, no chest → keep crafting');
-    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, fakeBot({ ...LIVE, raw_iron: 3 }, ['iron_chestplate'])), true, 'chest worn + 3 iron → nothing affordable → release');
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, fakeBot({ ...LIVE, raw_iron: 3, shield: 1 }, ['iron_chestplate'])), true, 'shield + chest worn + 3 iron → nothing affordable → release');
+    assert.equal(isGoalDone('NIGHT_SMELT_IRON', w, fakeBot({ ...LIVE, raw_iron: 3 }, ['iron_chestplate'])), false, 'T-0229: no shield + 3 iron → shield still affordable → keep');
 });
 
 test('T-0151: keepInventory=false 无胸甲 → 夜钻冲刺不派 mineDiamonds (回落挖铁); 穿胸甲后放行', () => {
     const w = nightWorld('MINE_THROUGH_NIGHT');
     const bare = proposeTasks(w, fakeBot(LIVE)).filter(x => x.kind === 'DUSK_MINE_NIGHT');
     assert.ok(bare.length && bare.every(x => x.skill !== 'mineDiamonds'), `bare: ${bare.map(x => x.skill)}`);
-    const armored = proposeTasks(w, fakeBot(LIVE, ['iron_chestplate'])).filter(x => x.kind === 'DUSK_MINE_NIGHT');
+    const armored = proposeTasks(w, fakeBot({ ...LIVE, shield: 1 }, ['iron_chestplate'])).filter(x => x.kind === 'DUSK_MINE_NIGHT');   // ★T-0229 胸甲 + 盾
     assert.ok(armored.some(x => x.skill === 'mineDiamonds'), `armored: ${armored.map(x => x.skill)}`);
 });

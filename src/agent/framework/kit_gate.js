@@ -118,7 +118,8 @@ export function smeltableUnits(counts) {
 //   决策层提了技能层必拒的 craftArmor (铁律 2)。造一件甲 = 台 (合成) + 熔炉 (缺锭时) + 燃料 (缺锭件数), 缺一不可。
 //   口径同 smeltSafe/smeltItem: 台 = 带着/4 格内有/4 木板/1 原木; 熔炉 = 带着/4 格内有/8 圆石类; 燃料 = 煤×8 + 木料×1.5 (扣掉拍台的木)。
 const FURNACE_STONE_RE = /^(cobblestone|cobbled_deepslate|blackstone)$/;
-export function armorCraftFeasible(counts, cost, { tableNear = false, furnaceNear = false } = {}) {
+// ★T-0229: planksNeed — 盾另需 6 木板 (扣完拍台之后还要有; 原木 1 = 4 木板)。
+export function armorCraftFeasible(counts, cost, { tableNear = false, furnaceNear = false, planksNeed = 0 } = {}) {
     counts = counts || {};
     const sum = (re) => Object.keys(counts).filter(k => re.test(k)).reduce((s, k) => s + (counts[k] || 0), 0);
     let logs = sum(/_log$/), planks = sum(/_planks$/);
@@ -126,6 +127,13 @@ export function armorCraftFeasible(counts, cost, { tableNear = false, furnaceNea
         if (planks >= 4) planks -= 4;
         else if (logs >= 1) logs -= 1;   // 1 原木 → 4 木板 → 台, 不剩
         else return { ok: false, why: 'no-table' };
+    }
+    if (planksNeed > 0) {
+        let need = planksNeed - Math.min(planks, planksNeed);
+        planks -= Math.min(planks, planksNeed);
+        const useLogs = Math.ceil(need / 4);
+        if (useLogs > logs) return { ok: false, why: `no-planks ${planksNeed}` };
+        logs -= useLogs; planks += useLogs * 4 - need;
     }
     const needSmelt = Math.max(0, (cost || 0) - (counts['iron_ingot'] || 0));
     if (needSmelt > 0) {

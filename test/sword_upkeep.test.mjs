@@ -50,9 +50,11 @@ test('T-0170: 决策层 — live 状态提 TOOL_UPKEEP 且清单含石剑', () =
 });
 
 test('T-0170: 防护序含铁剑 — 胸 > 腿 > 铁剑 > 盔 > 靴; 已有铁剑跳过; 不带 withSword 时序不变', () => {
-    assert.deepEqual(nextProtectionPiece([], 11, { withSword: true }), ['iron_chestplate', 8]);
-    assert.deepEqual(nextProtectionPiece(['iron_chestplate', 'iron_leggings', 'stone_sword'], 3, { withSword: true }), ['iron_sword', 2]);
-    assert.deepEqual(nextProtectionPiece(['iron_chestplate', 'iron_leggings', 'iron_sword'], 5, { withSword: true }), ['iron_helmet', 5]);
-    assert.equal(nextProtectionPiece(['iron_chestplate', 'iron_leggings'], 3), null, 'legacy order unchanged');
-    assert.deepEqual(PROTECTION_PIECES_WITH_SWORD.map(p => p[0]), ['iron_chestplate', 'iron_leggings', 'iron_sword', 'iron_helmet', 'iron_boots']);
+    // ★T-0229: 盾排在最前 (盾 > 胸 > 腿 > 铁剑 > 盔 > 靴); 以下"已有"名单都带盾, 验铁剑的相对位置不变
+    assert.deepEqual(nextProtectionPiece([], 11, { withSword: true }), ['shield', 1]);
+    assert.deepEqual(nextProtectionPiece(['shield'], 11, { withSword: true }), ['iron_chestplate', 8]);
+    assert.deepEqual(nextProtectionPiece(['shield', 'iron_chestplate', 'iron_leggings', 'stone_sword'], 3, { withSword: true }), ['iron_sword', 2]);
+    assert.deepEqual(nextProtectionPiece(['shield', 'iron_chestplate', 'iron_leggings', 'iron_sword'], 5, { withSword: true }), ['iron_helmet', 5]);
+    assert.equal(nextProtectionPiece(['shield', 'iron_chestplate', 'iron_leggings'], 3), null, 'legacy order unchanged');
+    assert.deepEqual(PROTECTION_PIECES_WITH_SWORD.map(p => p[0]), ['shield', 'iron_chestplate', 'iron_leggings', 'iron_sword', 'iron_helmet', 'iron_boots']);
 });
