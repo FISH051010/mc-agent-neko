@@ -46,9 +46,11 @@ test('C231 base state: water short-circuits to SWIM (classifySwim then decides),
 });
 
 
-const trapBot = ({ oxygen = 10, enclosed = true, above = 'stone', state = 'ENTOMBED' } = {}) => ({
+const trapBot = ({ oxygen = 10, enclosed = true, above = 'stone', state = 'ENTOMBED', at = Date.now(), skillDigAgo = Infinity, mobilityOn = true } = {}) => ({
     oxygenLevel: oxygen,
-    _mobility: { enclosed, state },
+    _mobility: { enclosed, state, at },
+    _lastSkillDigAt: Number.isFinite(skillDigAgo) ? Date.now() - skillDigAgo : 0,
+    modes: { isOn: (m) => (m === 'mobility' ? mobilityOn : true) },
     entity: { position: new Vec3(69.5, 48, 12.5) },
     blockAt: (p) => (p.y === 50 ? { name: above, boundingBox: /water|lava|air/.test(above) ? 'empty' : 'block' } : { name: 'water', boundingBox: 'empty' }),
 });
@@ -63,6 +65,14 @@ test('T-0104: no yield in open water, with air/water overhead, or before oxygen 
     assert.equal(sealedWaterTrapYield(trapBot({ above: 'water' })), false);
     assert.equal(sealedWaterTrapYield(trapBot({ above: 'air' })), false);
     assert.equal(sealedWaterTrapYield(trapBot({ oxygen: 20 })), false);
+});
+
+test('T-0232 drown 23:09:34 (10-10): 只让给"真在接"的 ENTOMBED — 分类陈旧 / mobility 关着 / 技能正在挖 (采矿心跳压住挖出) → 不让, 自己上浮', () => {
+    // live 23:08:30→23:09:34: ENTOMBED for 64s while branchMine kept digging (T-0121 heartbeat) → both yielded → drowned mining.
+    assert.equal(sealedWaterTrapYield(trapBot({ skillDigAgo: 2000 })), false, 'a skill is digging — the dig-out reflex defers to it');
+    assert.equal(sealedWaterTrapYield(trapBot({ at: Date.now() - 20000 })), false, 'stale classification');
+    assert.equal(sealedWaterTrapYield(trapBot({ mobilityOn: false })), false, 'mobility frozen (e.g. by surfaceUp)');
+    assert.equal(sealedWaterTrapYield(trapBot()), true, 'live ENTOMBED rescue — yield as before');
 });
 
 test('T-0180: no handoff gap — swim reflex only yields once ENTOMBED owns the trap, and drowning escalates to ENTOMBED immediately (death #11)', () => {

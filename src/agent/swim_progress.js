@@ -1,3 +1,5 @@
+import { purposefulDigActive } from './framework/mobility_signals.js';
+
 // ★T-0091: horizontal net-progress model for the SWIM state.
 //
 // The old SWIM_STUCK detector re-anchored whenever the bot drifted >1 block from the anchor, so any
@@ -86,6 +88,18 @@ export function sealedWaterTrapYield(bot) {
     const _hCap = bot.blockAt(bot.entity.position.offset(0, 2, 0));
     const _headCapped = _hCap && _hCap.boundingBox === 'block' && !/water|lava/.test(_hCap.name || '');
     // ★T-0180: only yield once the ENTOMBED dig-out actually owns the trap — else nobody acts (the 12s gap).
-    const _rescuing = !!(bot._mobility && bot._mobility.state === 'ENTOMBED');
-    return !!(_drownSub && _subEnc && _headCapped && _rescuing);
+    // ★T-0232 death 23:09:34 (10-10, 溺死): SWIM 缺氧升 ENTOMBED 后 64s 无挖出 — branchMine 一直在挖, T-0121 采矿心跳让 mobility
+    //   不当被困处理; 本函数又因 state==='ENTOMBED' 让位 → 两边互让, 水下挖矿到溺死。接收方须真在接 (entombedRescueLive)。
+    return !!(_drownSub && _subEnc && _headCapped && entombedRescueLive(bot));
+}
+
+/** ENTOMBED 挖出此刻真在接: 5s 内新鲜分类 (每 2s 一评)、mobility 开着、且没有技能在挖 (否则挖出反射被采矿心跳 T-0121 压着不会动)。 */
+export function entombedRescueLive(bot, now = Date.now()) {
+    const m = bot && bot._mobility;
+    if (!m || m.state !== 'ENTOMBED') return false;
+    const fresh = (Number.isFinite(m.at) && now - m.at < 5000) || (Number.isFinite(m.since) && now - m.since < 5000);
+    if (!fresh) return false;
+    try { if (bot.modes && typeof bot.modes.isOn === 'function' && !bot.modes.isOn('mobility')) return false; } catch (e) {}
+    if (purposefulDigActive(bot, now)) return false;
+    return true;
 }

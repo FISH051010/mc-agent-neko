@@ -22,7 +22,10 @@ const dbg = (s) => { try { fs.appendFileSync(DBG, `[${new Date().toISOString()}]
  * 威胁 → 僵尸 0.8b 连打 17→0, 背包有石剑却零出手 (让位没人接)。冻结的前提是"此刻没危险"; 一旦有危险就把身体还给反射。
  * hostiles: [{name, d, dy}] ; hurtAgoMs: 距上次掉血。纯函数。
  */
-export function surfaceUpDangerYield({ hurtAgoMs, hostiles }) {
+export function surfaceUpDangerYield({ hurtAgoMs, hostiles, headInWater = false, oxygen = 20 }) {
+    // ★T-0232 death 19:59:40 (10-10, 溺死): surfaceUp 向上挖穿进水体, 在水里爬 15s, swim 救援要等 surfaceUp 返回才拿到身体 (O2 已 -1)。
+    //   上浮冻着 self_preservation (溺水分支) 又不管氧气 → 头在水里且 O2<12 = 危险, 当场还给反射。
+    if (headInWater && Number.isFinite(oxygen) && oxygen < 12) return true;
     const melee = (hostiles || []).filter(h => h && !/creeper|skeleton|stray|pillager|witch|ghast|blaze/i.test(h.name || ''));
     if (melee.some(h => h.d < 3.5 && Math.abs(h.dy || 0) <= 2)) return true;            // 贴脸近战怪 — 够得着我
     // ★T-0224 death #21: 骷髅在 8b 外持续射中 (04:37:04 −5) 时上浮照爬 → 射手射程 ~16b 也算
@@ -701,7 +704,9 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
             hs = Object.values(bot.entities || {}).filter(e => e && e !== bot.entity && e.position && ctx.mc && ctx.mc.isHostile && ctx.mc.isHostile(e))
                 .map(e => ({ name: e.name, d: e.position.distanceTo(me), dy: e.position.y - me.y }));
         } catch (e) {}
-        if (!surfaceUpDangerYield({ hurtAgoMs: Date.now() - (bot.lastDamageTime || 0), hostiles: hs })) return false;
+        let _hw = false;
+        try { const hb = bot.blockAt(bot.entity.position.offset(0, 1.62, 0)); _hw = !!(hb && /water/.test(hb.name || '')); } catch (e) {}
+        if (!surfaceUpDangerYield({ hurtAgoMs: Date.now() - (bot.lastDamageTime || 0), hostiles: hs, headInWater: _hw, oxygen: bot.oxygenLevel })) return false;
         _suDangerHit = true;
         try { for (const m of ['self_defense', 'self_preservation']) if (m in prevModes) { bot.modes.setOn(m, prevModes[m]); delete prevModes[m]; } } catch (e) {}
         try { bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop(); } catch (e) {}

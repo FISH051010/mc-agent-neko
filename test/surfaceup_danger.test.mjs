@@ -24,3 +24,11 @@ test('death #17: 危险检查并进 deadlineHit (所有主循环都查它), 触�
     assert.match(chk, /surfaceUpDangerYield\(/);
     assert.match(chk, /for \(const m of \['self_defense', 'self_preservation'\]\)[^\n]*bot\.modes\.setOn\(m, prevModes\[m\]\)/, 'reflexes unfrozen at once, not only in the finally');
 });
+
+test('T-0232 drown 19:59:40: 上浮途中头在水里且 O2<12 → 当场还给反射 (self_preservation 溺水分支); 满氧或头在水外不算', () => {
+    assert.equal(surfaceUpDangerYield({ hurtAgoMs: 1e9, hostiles: [], headInWater: true, oxygen: 5 }), true);
+    assert.equal(surfaceUpDangerYield({ hurtAgoMs: 1e9, hostiles: [], headInWater: true, oxygen: 18 }), false, 'a quick dip with full air');
+    assert.equal(surfaceUpDangerYield({ hurtAgoMs: 1e9, hostiles: [], headInWater: false, oxygen: 0 }), false, 'stale O2 on land');
+    const s = fs.readFileSync(new URL('../bots/_supervisor/skills/surfaceUp.js', import.meta.url), 'utf8');
+    assert.match(s, /surfaceUpDangerYield\(\{ hurtAgoMs: [^\n]*headInWater: _hw, oxygen: bot\.oxygenLevel \}\)/);
+});

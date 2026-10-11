@@ -12,7 +12,14 @@
 
 ---
 
-## C399. ★★身体所有权闸: 反射 mode 持身期间, 技能调用链的寻路目标/移动键/清键一律拒绝（modes.js/skills.js/framework/reflex_body_gate.js 需重启,T-0231,worker-death,⏳待重启）
+## C400. ★溺水不互让: 只让给"真在接"的 ENTOMBED 挖出 + surfaceUp 泡在水里当场还给反射（swim_progress.js 需重启; surfaceUp.js 热加载,T-0232 挂起期 B 组,worker-death,⏳待重启）
+
+**证据**: #7 23:09:34 溺死: 23:08:30 SWIM 缺氧升 ENTOMBED (T-0174 classifySwim), 之后 64s branchMine 在水下一直挖 (dig=stone/lapis, vy=-0.01), 23:09:26 起溺水伤 16→0; 无任何 [swim]/挖出日志 —— T-0121 采矿心跳让 mobility 不把"技能在挖"当被困 (挖出不动), sealedWaterTrapYield 又因 state==='ENTOMBED' 让 self_preservation 让位 = 两边互让。#2 19:59:40 溺死: surfaceUp 向上挖穿进水体, 冻着 self_preservation 在水里爬 15s, swim 等 surfaceUp 返回才接手, O2 已 -1、hp1。
+**改动**: ① swim_progress.entombedRescueLive: ENTOMBED 是 5s 内新鲜分类 (每 2s 一评)、mobility 开着、且无技能在挖 (purposefulDigActive) 才算接收方在接; sealedWaterTrapYield 改用它, 否则 self_preservation 自己上浮。② surfaceUpDangerYield 加 headInWater && O2<12 → 危险, 当场解冻反射放弃上浮 (头部判据用眼高 +1.62)。
+**可证伪预测**: 水下 ENTOMBED + 技能挖掘时 self_preservation 照常 'heading for air'; surfaceUp 水中出现 `★danger mid-climb`; 不再出现技能持身水下挖到溺死。
+**回滚**: revert, 重启。回归 submerged_trap 'T-0232' + surfaceup_danger 'T-0232'。
+
+## C399. ★★身体所有权闸: 反射 mode 持身期间, 技能调用链的寻路目标/移动键/清键一律拒绝（modes.js/skills.js/framework/reflex_body_gate.js 需重启,T-0231,worker-death,✅已上线 01:23:28Z 86034a5）
 
 **证据**: death #22 04:51:13 act_trace `ctrl forward,back,right,sneak,sprint` + `path=1` + act=mode:self_preservation — branchMine 的寻路与 sprintFlee 同时驱动身体。ws 派发的受监督技能 (kernelDriver→子技能) 不在 ActionManager 里跑, 反射 execute()→runAction 的 stop() 只停 ActionManager 的 action, 停不到它; 仲裁器判"反射赢", 技能照样 setGoal/按键; sprintFlee 入口还把全局 interrupt_code 吞掉。= 让位没有以接收方独占为前提。
 **改动**: 新 framework/reflex_body_gate.js — AsyncLocalStorage 标两条链: skillCtx (skills.customSkill 经 runAsSkill 运行) / reflexCtx (execute 在其中跑 mode 函数; 反射内调的 customSkill 不进 skillCtx)。installReflexBodyGate 包 bot.pathfinder.setGoal / setControlState / clearControlStates: 反射持身 (bot._bodyOwner.kind==='mode') 且调用来自技能链 → setGoal 抛 'reflex holds the body' (goto reject 不悬挂), 按键置真/清键忽略; setGoal(null)/松键放行; 无链标记的插件 tick (pathfinder/pvp physicsTick) 放行。execute() 接管前清掉技能残留的 pathfinder goal; initModes 装闸 (execute 里幂等补装, 防 pathfinder 晚加载)。拒绝时 progress `[body-gate] skill X setGoal(...) refused — mode:Y holds the body (T-0231)` (5s 限频)。
