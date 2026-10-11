@@ -438,3 +438,17 @@ test('T-0261 death #54: 原地挖不下去 (邻水) 且无近战贴身 → 挪�
     const bd = m.slice(m.indexOf('bunkerDown: async function'), m.indexOf('// CAP FIRST (highest priority', m.indexOf('bunkerDown: async function')));
     assert.match(bd, /if \(Math\.floor\(bot\.entity\.position\.y\) >= y0\) \{[\s\S]*pickDryDigSpot\([\s\S]*goToPosition\([\s\S]*digDown\(bot, 1\)/, 'relocate-dry-dig runs before cap/pillar/run');
 });
+test('T-0261 补 (监工): 应急取原木给零镐留首镐底线 (3 根 = FIRST_PICK_PLANKS_EQ 12 板) — 有镐全用; 常量单一来源', async () => {
+    const { resolveCapBlock } = await import('../src/agent/library/skills.js');
+    const { emergencyWoodAllowed, FIRST_PICK_PLANKS_EQ } = await import('../src/agent/framework/kit_gate.js');
+    const rk = await import('../bots/_supervisor/skills/replenishKit.js');
+    assert.equal(rk.FIRST_PICK_PLANKS_EQ, FIRST_PICK_PLANKS_EQ, 'replenishKit re-exports the single source');
+    assert.equal(emergencyWoodAllowed({ picks: 0, planksEq: 16 }), true, '4 logs, no pick: may spend one (3 left = 12)');
+    assert.equal(emergencyWoodAllowed({ picks: 0, planksEq: 12 }), false, '3 logs, no pick: that is the first pick');
+    assert.equal(emergencyWoodAllowed({ picks: 1, planksEq: 4 }), true, 'with a pick: spend them all');
+    const registry = minecraftData('1.21.1');
+    const mk = (logs, pick) => ({ registry, inventory: { items: () => [{ name: 'spruce_log', count: logs }, ...(pick ? [{ name: 'wooden_pickaxe', count: 1 }] : [])] } });
+    assert.equal(resolveCapBlock(mk(9, false), { emergency: true }), 'spruce_log', '04:25 bag: 9 logs, spend down to 3');
+    assert.equal(resolveCapBlock(mk(3, false), { emergency: true }), null, 'last 3 logs kept for table + first pick');
+    assert.equal(resolveCapBlock(mk(2, true), { emergency: true }), 'spruce_log');
+});

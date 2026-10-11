@@ -8,6 +8,7 @@ import { unclimbVines } from './vine_unstick.js';
 import { lowHpMovementProfile } from '../framework/mobility_signals.js';
 import { runAsSkill } from '../framework/reflex_body_gate.js';
 import { acquireModeFreeze } from '../framework/mode_freeze.js';
+import { emergencyWoodAllowed } from '../framework/kit_gate.js';
 import { planWaterStep } from '../mobility_geom.js';
 import settings from "../../../settings.js";
 import path from 'path';
@@ -6375,7 +6376,9 @@ export function resolveCapBlock(bot, { emergency = false } = {}) {
     if (pref) return pref;
     // ★T-0226 实录 04:25:08–25 (骷髅连射 16→12, 背包只有 spruce_log×9 ≈36 板 < 64 储备): 挡箭/堵路 'no-material' ×4。
     //   储备线保的是工具链, 不该比命贵 —— emergency (挡箭/堵路/被围) 时原木也可用 (一两根的事)。
-    const woodOk = emergency || woodAboveReserve(bot);
+    // ★T-0261 补: 应急也给零镐留首镐木料底线 (3 根原木) — emergencyWoodAllowed, 有镐时可全用。
+    const _picks = items.filter(it => it && /_pickaxe$/.test(it.name || '')).reduce((s, it) => s + (it.count || 1), 0);
+    const woodOk = emergency ? emergencyWoodAllowed({ picks: _picks, planksEq: woodPlankEq(bot) }) : woodAboveReserve(bot);
     const nonWood = items.find(it => it && it.count > 0 && !CAP_WOOD_RE.test(it.name) && isCapBlockName(it.name, reg));
     if (nonWood) return nonWood.name;
     const wood = woodOk ? items.find(it => it && it.count > 0 && CAP_WOOD_RE.test(it.name) && isCapBlockName(it.name, reg)) : null;

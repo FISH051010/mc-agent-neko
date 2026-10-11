@@ -25,7 +25,9 @@ const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|s
 // ★2026-10-09 新世界开局实录: 揣 12 原木(planksEq=50)、0 镐 0 台, ② 仍要砍到 planksEq>=64 才肯进
 //   ③/④ 合成 —— 首把镐被压在 "再砍 4 根" 后面, 一轮派发 120s 全烧在砍树上。人类玩家 3 根原木就
 //   先做台+木镐(有镐才谈得上后面的一切)。判据: 零镐且木料已够 台(4)+镐(3)+棍(1)+余量 → 先合成。
-export const FIRST_PICK_PLANKS_EQ = 12;
+// (single source moved to src/agent/framework/kit_gate.js — T-0261: emergency wood spending keeps the same floor)
+import { FIRST_PICK_PLANKS_EQ } from '../../../src/agent/framework/kit_gate.js';
+export { FIRST_PICK_PLANKS_EQ };
 export function shouldChopBeforeCrafting({ picks, planksEq }) {
     if (planksEq >= 64) return false;                                  // 不变量已满足, 不砍
     if (picks === 0 && planksEq >= FIRST_PICK_PLANKS_EQ) return false; // 零镐: 先把首镐造出来

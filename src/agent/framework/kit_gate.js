@@ -77,6 +77,17 @@ export function toolUpkeepPlan({ picks, pickTier, counts, woodUnits }) {
 //   死了也便宜" — 本世界 keepInv 关, 且裸装夜里在出生点重生 = 裸 hold → 死 → 再重生的死循环, 比自埋更贵。T-0107 的
 //   自埋树底是旧 digOneCapOne 一夜一片往下沉 (y66→y62) + 天亮没人挖出; 现在 digOneCapOne 已封不再挖 (T-0105),
 //   天亮由 ENTOMBED 挖出接手。故: 无镐但脚下是可徒手挖的软土 (非重力) → 也可挖三填一 (只挖 1 格)。
+// ★首镐木料底线 (唯一来源; replenishKit 从这里导出): 零镐时 台(4)+镐(3)+棍(1)+余量 = 12 板当量 ≈ 3 根原木。
+export const FIRST_PICK_PLANKS_EQ = 12;
+/**
+ * ★T-0261 补 (监工): 应急 (挡箭/垫柱) 可以动用原木, 但零镐时原木是一阶命根 — 用掉这一根后仍须 ≥ FIRST_PICK_PLANKS_EQ,
+ * 否则第二天退回一阶停滞 (T-0256)。有镐时可全用。planksEq 为当前木料板当量 (原木 ×4)。
+ */
+export function emergencyWoodAllowed({ picks, planksEq }) {
+    if (picks > 0) return planksEq >= 4;
+    return planksEq - 4 >= FIRST_PICK_PLANKS_EQ;
+}
+
 export function digOneCapViable({ picks, gravityPit, y, softFloor = false }) {
     return !gravityPit && y > 16 && (picks >= 1 || !!softFloor);
 }
