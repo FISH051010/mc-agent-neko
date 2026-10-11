@@ -414,6 +414,7 @@ class WSMessageServer {
                     held: (bot.heldItem && bot.heldItem.name) || 'empty',   // exposes digging-with-wrong-tool
                     pickFx,                                                  // effective (non-worn-out) pickaxes
                     armor,                                                   // ★C314-A worn armor pieces (none = defenseless → swarm death risk)
+                    offhand: (bot.inventory && bot.inventory.slots && bot.inventory.slots[45] && bot.inventory.slots[45].name) || 'empty',   // ★T-0229 副手 (arrow_guard 只认 slot45 的盾)
                     // mobAge: 距 mobility 分类器上次成功评定的秒数 (每 ~2s 一评; null=从未评定)。T-0124 后加: 分类器
                     //   可能静默停摆 (那次是漏 import 的 ReferenceError 被吞 1.5h), state 字段本身看不出来。
                     //   ★T-0126b: 从未分类过 (重启后 mobility 尚未被排程, 如开局即进 sealed night hold) 显示 'NONE' 而非 '?',

@@ -106,3 +106,15 @@ test('T-0229 (监工审): 只有 1 锭铁、无盾、无铁镐 → 造盾 (GET_A
     const order = JSON.parse(m[1].replace(/'/g, '"')).map(x => x[0]);
     assert.ok(order.indexOf('shield') < order.indexOf('iron_pickaxe'), `craftChain iron_tier preset shield first: ${order}`);
 });
+
+test('T-0229 (监工验收): 包里已有盾但副手空 → craftArmor 补装副手, progress 写出 slot45 实况; vitals 带 offhand 字段', async () => {
+    const inv = { shield: 1 };
+    const bot = fakeBot(inv);
+    const ctx = { log: () => {}, world: { getInventoryCounts: () => { const c = { ...inv }; if (bot.inventory.slots[45]) c[bot.inventory.slots[45].name] = 1; return c; } },
+        skills: { customSkill: async () => {}, equip: async (_b, n) => { if (n === 'shield' && inv.shield) { delete inv.shield; bot.inventory.slots[45] = { name: 'shield', count: 1 }; } } } };
+    await craftArmor(bot, ctx, { order: 'protection' });
+    assert.equal(bot.inventory.slots[45] && bot.inventory.slots[45].name, 'shield');
+    assert.match(fs.readFileSync(path.join(home, 'bots', '_supervisor', 'progress.txt'), 'utf8'), /slot45=shield/);
+    const ws = fs.readFileSync(new URL('../src/websocket/ws_server.js', import.meta.url), 'utf8');
+    assert.match(ws, /offhand: \(bot\.inventory/, 'vitals exposes the off-hand item');
+});

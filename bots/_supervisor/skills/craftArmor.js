@@ -19,6 +19,9 @@
 // Invoked via: {"skill":"craftArmor"}  ctx = { skills, world, mc, Vec3, log }
 // ★T-0151 防护优先序 (胸 > 腿 > 盔 > 靴), 与 framework/armor_gate.PROTECTION_ORDER 同序。
 // ★T-0229 盾第一 (监工拍板: 三次骷髅死, arrow_guard 只差一面盾): 盾 > 胸 > 腿 > (铁剑) > 盔 > 靴; 盾 1 锭 + 6 木板, 不吃铁镐预留额, 造好即上副手。
+import fs from 'fs';
+import path from 'path';
+const progLine = (s) => { try { fs.appendFileSync(path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt'), `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 export const PROTECTION_PIECES = (tier) => tier === 'diamond'
     ? [['diamond_chestplate', 8], ['diamond_leggings', 7], ['diamond_helmet', 5], ['diamond_boots', 4]]
     : [['shield', 1], ['iron_chestplate', 8], ['iron_leggings', 7], ['iron_helmet', 5], ['iron_boots', 4]];
@@ -132,7 +135,8 @@ export default async function craftArmor(bot, ctx, opts = {}) {
         const after = inv()[piece] || 0;
         if (piece === 'shield' && after > before) {   // 造好即上副手 — arrow_guard 认 slot 45, 别等第一支箭才去换
             await skills.equip(bot, 'shield').catch(() => {});
-            log(bot, `craftArmor: shield crafted → off-hand (slot45=${(bot.inventory.slots[45] && bot.inventory.slots[45].name) || 'none'})`);
+            const _m = `craftArmor: shield crafted → off-hand (slot45=${(bot.inventory.slots[45] && bot.inventory.slots[45].name) || 'none'})`;
+            log(bot, _m); progLine(_m);
         }
 
         // NO-PROGRESS cutoff: never infinite-retry the same failing craft (red line).
@@ -142,6 +146,15 @@ export default async function craftArmor(bot, ctx, opts = {}) {
             break;
         }
     }
+
+    // ★T-0229 (监工验收): 背包里有盾但副手不是盾 (旧版造的 / 被换下) → 补装副手, 并把 slot45 实况写进 progress
+    try {
+        const off = bot.inventory.slots[45];
+        if (!(off && off.name === 'shield') && bot.inventory.items().some(i => i.name === 'shield')) {
+            await skills.equip(bot, 'shield').catch(() => {});
+            progLine(`craftArmor: shield in pack → equip off-hand (slot45=${(bot.inventory.slots[45] && bot.inventory.slots[45].name) || 'none'})`);
+        }
+    } catch (e) {}
 
     // Equip whatever we now have (armorManager idiom from mineDiamonds:26; name-based
     // skills.equip fallback when the plugin is absent).
