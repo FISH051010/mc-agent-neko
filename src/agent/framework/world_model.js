@@ -1599,7 +1599,8 @@ export function proposeTasks(world, bot) {
             // ★T-0201 (监工加急, 01:06Z: hp 8 food 0, FOOD_FLOOR 因侦察被打断 3 连败冷却 5min → kernel 退到 replenishKit 空转,
             //   death #14): 饿到 food=0 时觅食是续命, 冷却钳到 ≤30s (同下界主 kind 的钳制手法: 重试仍有间隔, 不热转, 但不再干等 5 分钟)。
             //   只看 food (core routing 禁绝对 hp 门)。
-            if (Number(vitals && vitals.food) === 0 && cd[PROPOSAL_KIND.FOOD_FLOOR] && cd[PROPOSAL_KIND.FOOD_FLOOR] > now + STARVING_FOOD_FLOOR_COOLDOWN_MS)
+            // ★T-0263 (IDLE-DISPATCH 回放 10-10 13:18Z: hp4 food14 零可吃, FOOD_FLOOR 3 连败冷却 5min → 空站): '回不了血' 时觅食同样是续命, 同钳。
+            if ((Number(vitals && vitals.food) === 0 || cannotRegen(vitals && vitals.hp, vitals && vitals.food)) && cd[PROPOSAL_KIND.FOOD_FLOOR] && cd[PROPOSAL_KIND.FOOD_FLOOR] > now + STARVING_FOOD_FLOOR_COOLDOWN_MS)
                 cd[PROPOSAL_KIND.FOOD_FLOOR] = now + STARVING_FOOD_FLOOR_COOLDOWN_MS;
             // ★T-0259 (监工, 04:16:32-04:21Z: 零镐 REPLENISH_KIT 3 连败冷却 5min, 其余提案零镐全被门挡 → 白天 4 分多钟零派发原地发呆):
             //   零镐时补镐/开局链是一阶续命, 冷却同 T-0201 手法钳到 ≤PICKLESS_KIT_COOLDOWN_MS (仍有间隔不热转, 但不干等 5 分钟)。
@@ -1641,8 +1642,34 @@ export function proposeTasks(world, bot) {
     // ★T-0243 (T-0242): 4 格内有原始敌对 (不看可达) → 不派任何下挖技能 (与 mineDown 让位同一谓词 hostile_reach.hostileRawNear)
     if (bot && hostileRawNear(bot, DESCENT_HOSTILE_R) > 0)
         _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));
+    // ★T-0263 白天兜底 (监工通用规则; IDLE-DISPATCH 回放 10-09→10-11 15 段白天零派发: 主任务 3 连败冷却后其余提案也冷却/被门挡,
+    //   只剩 skill 为空的 FREE_PLAY → 原地空站 3-10min): 白天、无可动威胁、不在养伤、除 FREE_PLAY 外一个可派的都没有 →
+    //   推一个有界的兜底活 (按需: 缺木 → 砍木; 封坑料不足 → 攒土石; 其余 → 资源侦察)。开放式 kind (isGoalDone default=true),
+    //   真任务冷却一结束就重新选它, 不粘承诺; 兜底本身失败 3 次也走正常冷却, 不热转。
+    try {
+        const _cdu = bot && bot._kindCooldownUntil && bot._kindCooldownUntil[PROPOSAL_KIND.IDLE_FALLBACK];
+        if (overworld && time.phase === 'day' && !(threat.actionable > 0) && bot && !bot._healLatch
+            && !_final.some(p => p.kind !== PROPOSAL_KIND.FREE_PLAY) && !(_cdu && Date.now() < _cdu)) {
+            let fb = dayFallbackTask(w, bot);
+            // 兜底在过滤之后才加: 下挖类须自己过下挖门 (T-0237 descentBlocked / T-0243 近距原始敌对), 不满足就退为侦察
+            if (fb && DESCENT_SKILL_RE.test(fb.skill) && (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }) || hostileRawNear(bot, DESCENT_HOSTILE_R) > 0))
+                fb = { skill: 'scoutResources', args: [{ need: 'both' }], rationale: 'day fallback: descent gated — scout instead' };
+            if (fb) _final.push({ kind: PROPOSAL_KIND.IDLE_FALLBACK, priority: 2, ...fb });
+        }
+    } catch (e) {}
     _final.sort((a, b) => b.priority - a.priority);
     return _final;
+}
+
+/** ★T-0263 白天兜底活的选择 (纯函数): 缺木 → chopWood; 封坑料不足 → 有镐 mineDown 浅挖 / 零镐 gatherDirt; 其余 → scoutResources。 */
+export function dayFallbackTask(w, bot) {
+    if (woodUnits(bot) < 16) return { skill: 'chopWood', args: [8], rationale: `day fallback: all proposals cooled/gated — chop wood (planksEq ${woodUnits(bot)}<16)` };
+    if (sealFillerCount(invCounts(bot)) < SEAL_FILLER_TARGET) {
+        return totalPicks(bot) >= 1
+            ? { skill: 'mineDown', args: [{ targetY: stoneBootstrapTargetY(w) }], rationale: `day fallback: all proposals cooled/gated — dig a little stone (filler ${sealFillerCount(invCounts(bot))}<${SEAL_FILLER_TARGET})` }
+            : { skill: 'gatherDirt', args: [{ count: SEAL_FILLER_TARGET }], rationale: `day fallback: all proposals cooled/gated — hand-dig dirt (filler ${sealFillerCount(invCounts(bot))}<${SEAL_FILLER_TARGET})` };
+    }
+    return { skill: 'scoutResources', args: [{ need: 'both' }], rationale: 'day fallback: all proposals cooled/gated — scout for resources instead of standing still' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -13,12 +13,12 @@ delete process.env.MC_FOOD_INSTINCTS;
 const { proposeTasks, STARVING_FOOD_FLOOR_COOLDOWN_MS } = await import('../src/agent/framework/world_model.js');
 const { EMPTY_WORLD } = await import('../src/agent/framework/contracts.js');
 
-function run(food) {
+function run(food, hp = 8) {
     const w = JSON.parse(JSON.stringify(EMPTY_WORLD));
     w.time = { ...w.time, phase: 'day', isDay: true };
-    w.vitals = { ...w.vitals, hp: 8, food };
+    w.vitals = { ...w.vitals, hp, food };
     const now = Date.now();
-    const bot = { inventory: { items: () => [], slots: [] }, game: { dimension: 'overworld' }, entity: { position: { x: 0, y: 70, z: 0 } }, health: 8, food,
+    const bot = { inventory: { items: () => [], slots: [] }, game: { dimension: 'overworld' }, entity: { position: { x: 0, y: 70, z: 0 } }, health: hp, food,
         _kindCooldownUntil: { FOOD_FLOOR: now + 300000, GO_UNDERGROUND: now + 300000 } };
     proposeTasks(w, bot);
     return { left: bot._kindCooldownUntil.FOOD_FLOOR - now, other: bot._kindCooldownUntil.GO_UNDERGROUND - now };
@@ -30,6 +30,7 @@ test('T-0201: food=0 → FOOD_FLOOR 冷却钳到 ≤30s; 别的 kind 不受影�
     assert.ok(r.other > 250000, 'GO_UNDERGROUND cooldown untouched');
 });
 
-test('T-0201: food>0 → FOOD_FLOOR 冷却照旧 5min', () => {
-    assert.ok(run(4).left > 250000);
+test('T-0201: food>0 且能回血 → FOOD_FLOOR 冷却照旧 5min (T-0263: 回不了血时同钳 30s)', () => {
+    assert.ok(run(4, 20).left > 250000);
+    assert.ok(run(4, 8).left <= 30050, 'T-0263: hp8 food4 cannot regen → clamped');
 });
