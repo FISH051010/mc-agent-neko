@@ -56,6 +56,26 @@ test('T-0268: while the rescue runs the gravity gates are exempt and other digs 
     assert.equal(suffocationRescueActive(bot), false);
 });
 
+test('T-0268: a long rescue (slow digs, tall column) keeps other diggers out the WHOLE time, not just the first 2s', async () => {
+    // worker-tests mutation 10-11: dropping the in-loop refresh of _suffocationRescueUntil kept the tests above green (their
+    // rescue ends < 2s), yet the flag then lapses 2s in while the dig-out runs up to 8s → the gravity gates and mobility digs
+    // come back and fight over the body — exactly the two-digger cancel of death #55. Fake clock: each dig takes 1.5s.
+    const feet = new Vec3(0, 60, 0);
+    const w = gravelWorld(feet, 4);
+    const realNow = Date.now;
+    let t = realNow();
+    const seen = [];
+    const bot = { health: 4, entity: { position: new Vec3(0.5, 60, 0.5) }, blockAt: w.blockAt, stopDigging() {}, tool: { equipForBlock: async () => {} },
+        dig: async (b) => { t += 1500; seen.push(suffocationRescueActive(bot, t)); w.digAt(b.position); } };
+    Date.now = () => t;
+    let r;
+    try { r = await digOutOfSuffocation(bot, { settleMs: 0 }); } finally { Date.now = realNow; }
+    assert.equal(r.cleared, true);
+    assert.equal(seen.length, 5, 'five gravel blocks through the head cell over ~7.5s');
+    assert.deepEqual(seen, [true, true, true, true, true], 'rescue flag held at every dig');
+    assert.equal(suffocationRescueActive(bot, t), false, 'cleared after');
+});
+
 test('T-0268: not suffocating (air at the head) → nothing to do', async () => {
     const feet = new Vec3(0, 60, 0);
     const blockAt = () => ({ name: 'air', boundingBox: 'empty' });
