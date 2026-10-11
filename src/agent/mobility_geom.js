@@ -314,3 +314,17 @@ export function planWaterStep(blockAt, feet, prefer = null) {
     }
     return best;
 }
+
+/**
+ * ★T-0285 (death #56 07:07:06Z): the creeper backoff judged "stuck" per 160ms step (moved < 0.12b). Hop-pressing into a
+ * wall jitters >0.12b a step, so the counter kept resetting while the net displacement over 2.5s was <0.5b — the wedge
+ * defense (punch-back / interpose / seal) never fired and the creeper walked in. Judge NET progress over a window
+ * instead (T-0091 family: oscillation fools a per-step test). trail: oldest→newest {x,z}, one sample per loop step.
+ */
+export const RUN_STUCK_SAMPLES = 8;    // 8 × 160ms ≈ 1.3s — a sprinting bot covers ~7b, a walking one ~5b
+export const RUN_STUCK_MIN_NET = 1.0;
+export function runNetStuck(trail, { samples = RUN_STUCK_SAMPLES, minNet = RUN_STUCK_MIN_NET } = {}) {
+    if (!Array.isArray(trail) || trail.length < samples) return false;
+    const a = trail[trail.length - samples], b = trail[trail.length - 1];
+    return Math.hypot(b.x - a.x, b.z - a.z) < minNet;
+}

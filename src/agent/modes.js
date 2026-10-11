@@ -33,13 +33,14 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction, shieldDuelInsteadOfFlee, pickDryDigSpot } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction, shieldDuelInsteadOfFlee, pickDryDigSpot , runNetStuck } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { hostileActionable } from './framework/hostile_reach.js';
 import { purposefulDigActive, noteSkillDig, withBurstDeadline, gravityHazard, settleGravityColumn, mobilityDigTimeoutMs, lowHpMovementProfile, isRescueDig, rescueMayPreempt, taskDigBlockedByRescue, unownedDangerAction, UNOWNED_DANGER_MS, unownedDangerThreshold, effectivelyOwned, lowHpHoldRecovers, bunkerTooLate, BUNKER_TOO_LATE_B, dangerBlocksHold, brawlHandoffReady, marchYieldAllowed, pinKickIntervalMs, pinKickEscalates } from './framework/mobility_signals.js';
 import { surfaceGateAuto } from './framework/surface_gate.js';
 import { enclosedAt } from './framework/surface_judge.js';
+import { installFallProbe } from './framework/fall_probe.js';
 import { DESCENT_MIN_HP } from './framework/food_floor.js';
 import { decisionOwnsNightMining, pickFirstNotCooled, shelterOwnsBody } from './framework/night_owner.js';
 import { recordSightings } from './framework/animal_sightings.js';
@@ -2499,6 +2500,7 @@ const modes_list = [
                     let lastCreeperPunchAt = 0;   // >=550ms spacing → full-charge knockback, clears 500ms hurt-invuln
                     let creeperPunches = 0;       // hard per-encounter cap — no infinite same-action retry
                     let gatedPunches = 0;         // ★T-0200 ②: no-lane knock-backs before falling back to bunker
+                    const runTrail = [];          // ★T-0285: net-progress window (per-step <0.12b missed hop-jitter against a wall)
                     for (let i = 0; i < 4000; i++) {
                         if (bot.interrupt_code || bot.health <= 0) break;
                         if (bot.oxygenLevel !== undefined && bot.oxygenLevel <= 6) break; // drowning → swim reflex
@@ -2706,7 +2708,9 @@ const modes_list = [
                         await new Promise(r => setTimeout(r, 160));
                         const nowPos = bot.entity.position.clone();
                         const moved = Math.hypot(nowPos.x - lastRunPos.x, nowPos.z - lastRunPos.z);
-                        if (moved < 0.12 && (c || swarm)) stuckRun++;
+                        runTrail.push({ x: nowPos.x, z: nowPos.z }); if (runTrail.length > 16) runTrail.shift();
+                        if ((c || swarm) && runNetStuck(runTrail)) stuckRun = Math.max(stuckRun + 1, 8);   // ★T-0285: jittering in place = wedged now
+                        else if (moved < 0.12 && (c || swarm)) stuckRun++;
                         else stuckRun = 0;
                         lastRunPos = nowPos;
                         if (i % 10 === 9) { try { say(agent, 'Kiting creeper+swarm till dawn…'); } catch (e) {} } // agent.err heartbeat (watchdog alive-signal)
@@ -7841,6 +7845,13 @@ export function initModes(agent) {
     agent.bot.modes = new ModeController();
     // ★T-0260: name the caller of every bot.stopDigging() from the first dig on (was installed only when mineDown ran).
     try { installDigAbortProbe(agent.bot); } catch (e) {}
+    // ★T-0288: name the body owner / skill / keys / goal at the take-off of every ≥5-block fall (death #56 24-block drop, mover unknown).
+    try {
+        installFallProbe(agent.bot, {
+            holder: holderName,
+            log: (s) => { try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} },
+        });
+    } catch (e) {}
     // ★T-0231: one owner drives the body — while a reflex mode holds it, skill-chain setGoal/keys are refused.
     try {
         installReflexBodyGate(agent.bot, { onBlock: (kind, detail) => {
