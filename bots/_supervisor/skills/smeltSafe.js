@@ -191,7 +191,11 @@ export default async function smeltSafe(bot, ctx, item, num = 1) {
     // credits partial smelts (total < num) that smeltItem itself mislabels as false.
     const before = { ...(world.getInventoryCounts(bot) || {}) };
     const furnaceAt = (() => { const f = findFurnace(); return f && f.position ? { x: Math.floor(f.position.x), y: Math.floor(f.position.y), z: Math.floor(f.position.z) } : null; })();
-    const ok = await skills.smeltItem(bot, item, num);
+    // ★T-0253 (03:49-03:50Z 实录: 只剩 1 粗铁, 承诺旧参数 smeltSafe(raw_iron,5) → smeltItem 要求持有≥num, 'not enough' 一块不熔 ×3 冷却):
+    //   按实际持有截断 (至少熔手上有的)。
+    const _have = (before[item] || 0);
+    if (_have < num) { log(bot, `smeltSafe: have ${_have} ${item} < requested ${num} — smelting ${_have}`); num = _have; }
+    const ok = num > 0 ? await skills.smeltItem(bot, item, num) : false;
     let L = smeltLedger(item, before, world.getInventoryCounts(bot) || {});
     // ★T-0164 (监工②): 没被打断就在炉边收尾 — 有滞留先清炉 (锭+残料回包), 自己放的随身炉挖回背包。
     //   被打断不收尾 (不跟保命反射抢身体), 只落盘滞留记录, RECLAIM_FURNACE 差事/下次 smeltSafe 回炉收。
