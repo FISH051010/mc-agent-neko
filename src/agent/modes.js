@@ -6179,7 +6179,7 @@ const modes_list = [
                 // 别跟有意的静止打架: 正在挖块/游泳/被困(POCKET/ENTOMBED 有各自反射)
                 if (bot.targetDigBlock) { this.wedgeStart = 0; this.lastPos = null; releaseJump(); return; }
                 const mob = (bot._mobility && bot._mobility.state) || '';
-                if (mob === 'SWIM' || mob === 'POCKET' || mob === 'ENTOMBED') { this.wedgeStart = 0; this.lastPos = null; releaseJump(); return; }
+                if (/^SWIM/.test(mob) || mob === 'POCKET' || mob === 'ENTOMBED') { this.wedgeStart = 0; this.lastPos = null; releaseJump(); return; }   // ★T-0276 SWIM_STUCK too: water belongs to the swim reflex (live 06:26-06:28 back-off dragged the bot off the bank)
                 const p = bot.entity.position;
                 if (this.lastPos) {
                     const d = Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.z);

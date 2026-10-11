@@ -3358,6 +3358,8 @@
 
 - **★C444-S dig-abort 探针启动即装: 搬进 src/agent/framework/dig_abort_probe.js, modes.initModes 安装 (T-0260)**（2026-10-11，worker-stuck，T-0260）: 10-11 05:58-06:01Z chopWood 对 spruce_log@30,73,-10 的 9 次 'Digging aborted' 没留 [dig-abort] 行 — 探针只在 mineDown 入口安装, 05:53 重启后 mineDown 还没跑过。不让 chopWood 静态导入 mineDown (缓存旧版缺导出 → chopWood 整个加载失败 → 一阶瘫痪)。修: 探针实现原样搬进新模块 dig_abort_probe.js (installDigAbortProbe/DIG_ABORT_PROBE_V, 同版本号不重复挂), modes.initModes 启动即装, mineDown 改为导入并转出 (原入口调用保留)。test/dig_abort_probe.test.mjs 追加钉子 ×1。src → 随下次重启。全套 887/887。
 
+- **★C445-S edge_unstick 对所有 SWIM* 状态让位 (含 SWIM_STUCK), 不再把 swim 反射拖离岸 (T-0276, 监工实时)**（2026-10-11，worker-stuck，T-0276）: live 10-11 06:26:38→06:28:40Z 黄昏 @-3,62,-62 — mob=SWIM_STUCK 贴着 1 格高草岸 (截帧), [swim] 70+ 轮只在 2×3 格内打转; 同时 edge_unstick 每 3-4s 'wedged ~2450ms (jump-fail, replan #4…#24 +back-off relocate)'。edge_unstick 原对 SWIM/POCKET/ENTOMBED 让位, 漏了 SWIM_STUCK → 把 swim 反射按跳当楔死, T-0239 的后退+侧移 700ms 一次次把 bot 拖离岸边。修: 让位条件改 /^SWIM/ (SWIM、SWIM_STUCK…), 水里交给 swim 反射。test/edge_unstick_swim_stuck.test.mjs (T-0276 ×1)。src → 需重启。全套 898/898。
+
 ---
 
 ---
