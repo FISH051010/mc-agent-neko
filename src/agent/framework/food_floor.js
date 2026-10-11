@@ -99,16 +99,21 @@ export function animalInRange(animal, botPos, botY) {
 //   挖到黄昏 food 才掉到 6, 而 FOOD_FLOOR 只在白天 → 饿着过夜, 明早更低): 两个新触发, 都以会话形式补到 18 —
 //   ①入夜前补餐: tod 9000-12000 (黄昏前约 2min) 且 food<14; ②床待做且 food<10: 先补餐再找羊 (不让两个都不做)。
 export const PRE_DUSK_TOD_LO = 9000, PRE_DUSK_TOD_HI = 12000, PRE_DUSK_FOOD = 14, BED_PENDING_FOOD = 10;
-export function latchTrigger({ food, hp, tod, bedPending }) {
+// ★T-0245 顺路补粮 (监工 03:04-03:06Z: food 6 才出发找吃的时包里零食物, 上浮+侦察 ~4min 吃到 0, 饥饿 70s 把 hp 18 打到 1 —
+//   FOOD_FLOOR=6 对'包里零可吃'太晚): 包里零可吃且 food≤STOCK_FOOD 且附近已看见动物 (animalInRange, 不侦察漫游) → 开会话顺路猎,
+//   目标吃到 18 并攒 ≥STOCK_COOKED 份熟食 (释放判据同既有锁存)。看不见动物不触发 — 不为存粮侦察。
+export const STOCK_FOOD = 12;
+export function latchTrigger({ food, hp, tod, bedPending, counts, animalNear }) {
     if (food <= FOOD_FLOOR) return 'starving';
     if (cannotRegen(hp, food)) return 'regen';
     if (Number.isFinite(tod) && tod >= PRE_DUSK_TOD_LO && tod < PRE_DUSK_TOD_HI && food < PRE_DUSK_FOOD) return 'dusk';
     if (bedPending && food < BED_PENDING_FOOD) return 'bed';
+    if (food <= STOCK_FOOD && animalNear && counts && countMatching(counts, EDIBLE_RE) === 0) return 'stock';
     return null;
 }
 export function updateFoodFloorLatch(latch, { food, counts, animalNear, hp, tod, bedPending, now = Date.now() }) {
     const L = latch || { active: false, kills: 0, since: 0 };
-    if (!L.active) { const reason = latchTrigger({ food, hp, tod, bedPending }); return reason ? { active: true, kills: 0, since: now, reason } : L; }
+    if (!L.active) { const reason = latchTrigger({ food, hp, tod, bedPending, counts, animalNear }); return reason ? { active: true, kills: 0, since: now, reason } : L; }
     const cooked = countMatching(counts, COOKED_RE);
     const fed = food >= FOOD_RELEASE;
     if (L.kills >= SESSION_KILL_CAP || (fed && (cooked >= STOCK_COOKED || !animalNear)))
