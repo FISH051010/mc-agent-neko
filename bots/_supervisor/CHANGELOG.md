@@ -3307,6 +3307,8 @@
 
 - **★C437-S 地表判据统一第二期: achieve / prepNether / missionNether 遗留判据改调 surface_judge (T-0258)**（2026-10-11，worker-stuck，T-0258）: 第一期 (C435) 后剩下的 A 类"在不在地表"手写判据: achieve.openSurfaceNow (y≥55 + 头顶 8 格任何实心=顶, 树叶也算) 与 3 处 undergroundPocket (y<62 || enclosed || POCKET); prepNether.openSurfaceNow (同上)、tableRecoveryUndergroundWorksite (8 格扫描 + y<62/enclosed/POCKET)、keepKit onSurface (y≥55)、WOOD-FIRST underground (y<55)、TABLE gate 的 critical 放宽 (y≥55 && !enclosed — 正是为树冠打的补丁); missionNether.tableRecoveryUndergroundWorksite (同 prepNether)。全部改为 onSurfaceNow / shouldClimbToSurface / (!onSurfaceNow || POCKET), critical 放宽并入 (onSurfaceNow 已不把树冠当顶)。surface_judge_sole_source 追加第二期钉子 (×1)。热加载。全套 832/832。C 类 (夜间暴露: enclosed 即安全会把树冠当庇护) 语义不同, 另开单。
 
+- **★C438-S mineDown 不再把"反射借走身体"当楔死 (T-0267)**（2026-10-11，worker-stuck，T-0267）: live 10-11 05:18:42-58Z @75,66,166 — '[body-gate] skill mineDown setControlState(forward) refused — mode:item_collecting holds the body (T-0231)' (item_collecting 在捡 mineDown 自己顺手采矿的掉落) → 这一步零进展 → noProg → 楔死恢复链当成幽灵方块: 'ghost-buster: resync cleared=0 fwdOpen=true' ×2, 两次恢复额度白烧; 05:07:55-05:08:03 self_preservation 持身同形 → 'wedge x4 at same spot 52,157' moveAway 8b + 诚实失败。修: 每步走路前后快照 reflexGateRefusals (T-0241 计数), 新导出纯函数 stepOutcome({descended,movedHoriz,gateBlocked,reflexWaits}) → 'progress'|'reflex'|'wedge'; 'reflex' 时打 'step held by a reflex (<持身者>) — not a wedge, waiting …(T-0267)', 等 reflexHolds 释放 ≤4s 后重走本步, 不计 noProg; 每派发 ≤REFLEX_STEP_WAITS_MAX=8 次, 超过照常按楔死处理。test/minedown_wedge_vs_reflex.test.mjs (T-0267 ×3)。热加载。全套 840/840。
+
 ---
 
 ---

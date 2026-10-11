@@ -16,6 +16,7 @@ import { hostileActionable, hostileRawNear, DESCENT_HOSTILE_R } from '../../../s
 import fs from 'fs';
 import path from 'path';
 import { ensureCarriedTable } from '../../../src/agent/framework/ensure_table.js';   // ★T-0264 shared pocket-table primitive
+import { reflexGateRefusals, reflexHolds } from '../../../src/agent/framework/reflex_body_gate.js';   // ★T-0267 borrowed body ≠ wedge
 // ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
 //   每个拒跑/abort 原因都对监工不可见。现在同时落 progress.txt — 拒跑闸 / DONE 结果 / abort 原因一行一条。
 const PROG_MD = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -342,6 +343,17 @@ export function planVoidBridge(bn, cx, cy, cz, sx, sz) {
 
 // ★T-0148 诊断 (监工): 'Digging aborted' = 别人在我们挖到一半时开了新 dig 或调了 stopDigging。把那一刻谁持有身体/
 //   挖掘槽/在挖什么记进 DONE, 下次一眼看出是孤儿 chopWood、反射 mode 还是 pathfinder。只诊断, 不改 strike 计数。
+// ★T-0267 (live 10-11 05:18:42-58Z @75,66,166: mineDown forward refused by the T-0231 gate while item_collecting held the body
+//   (picking up mineDown's own ore-sweep drops) → no progress → noProg → 'ghost-buster: resync cleared=0 fwdOpen=true' ×2 burned on
+//   nothing; 05:07:55-05:08:03 same shape under self_preservation → 'wedge x4 at same spot' honest fail). A step whose walk was
+//   refused by the body gate is a reflex hold, not a wedge: wait for the reflex to let go and take the step again. Bounded.
+export const REFLEX_STEP_WAITS_MAX = 8;
+export function stepOutcome({ descended, movedHoriz, gateBlocked, reflexWaits = 0 }) {
+    if (descended || movedHoriz) return 'progress';
+    if (gateBlocked && reflexWaits < REFLEX_STEP_WAITS_MAX) return 'reflex';
+    return 'wedge';
+}
+
 export function digInterrupter(bot) {
     try {
         const o = bot._bodyOwner;
@@ -538,6 +550,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     let dug = 0, ore = 0, abort = null, noProg = 0;
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
     let voidBridges = 0;   // ★T-0139 reopened: cave steps bridged / dropped this dispatch (≤48)
+    let reflexWaits = 0;   // ★T-0267 steps held by a reflex this dispatch (≤REFLEX_STEP_WAITS_MAX)
     let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0, deferredByShooter = false;   // ★T-0225 deferredByShooter   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1); ★T-0203 cavity re-heading (≤3)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
     const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
@@ -1189,6 +1202,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
         }
 
         // Walk forward; the bot falls 1 block into the cleared step. Low-level (no pathfinder).
+        const _gateBeforeWalk = reflexGateRefusals(bot);   // ★T-0267
         try {
             await bot.lookAt(new Vec3(fx + 0.5, cy - 0.5, fz + 0.5), true);
             bot.setControlState('forward', true);
@@ -1216,7 +1230,15 @@ export default async function mineDown(bot, ctx, opts = {}) {
         // OR moves >0.5 horizontally. Neither = wedged this step. Abort after 2 wedged steps so a
         // genuinely-stuck mineDown returns an honest "no descent" fast (→ higher layer can relocate)
         // instead of grinding 120 no-op digs in place.
-        if (!stepDescended && !stepMovedHoriz) noProg++; else noProg = 0;
+        const _so = stepOutcome({ descended: stepDescended, movedHoriz: stepMovedHoriz, gateBlocked: reflexGateRefusals(bot) > _gateBeforeWalk, reflexWaits });
+        if (_so === 'reflex') {
+            reflexWaits++;
+            if (reflexWaits <= 2 || reflexWaits % 4 === 0) log_(`step held by a reflex (${(bot._bodyOwner && bot._bodyOwner.name) || '?'}) — not a wedge, waiting for it to let go (${reflexWaits}/${REFLEX_STEP_WAITS_MAX}, T-0267)`);
+            const _tw = Date.now();
+            while (reflexHolds(bot) && Date.now() - _tw < 4000 && !bot.interrupt_code && bot.health > 0) await new Promise(r => setTimeout(r, 200));
+            continue;
+        }
+        if (_so === 'wedge') noProg++; else noProg = 0;
         if (noProg >= 2) {
             // ★P2-8: 楔死不再立刻放弃 — 先走幽灵格恢复链 (re-dig/blacklist/sidestep 换向), 只有
             // 恢复链也无路 (同点 x3 / 侧移预算尽 / 两向全堵) 才诚实 fail 进冷却.
