@@ -1,4 +1,4 @@
-// T-0272 (监工加急 2026-10-11 06:02:21→06:04:20Z): FOOD_FLOOR 侦察 food 9 起, 两轮 "moved 322b/308b in 90.0s" 一路疾跑
+// T-0273 (监工加急 2026-10-11 06:02:21→06:04:20Z): FOOD_FLOOR 侦察 food 9 起, 两轮 "moved 322b/308b in 90.0s" 一路疾跑
 // (0.1 消耗/格 ≈ 32 消耗值 = 9 点饥饿全烧光) → food 0 掉血到 hp 3, 侦察越找越饿。1.21 走路零消耗。
 // 修 = 饥饿禁疾跑总闸: food ≤ 10 且无可动敌对 → setControlState('sprint', true) 改 false (pathfinder 也走这里), movements.allowSprinting=false。
 import test from 'node:test';
@@ -11,7 +11,7 @@ function fakeBot(food, actionable = 0) {
     return { food, _world: { threat: { actionable } }, ctrl, pathfinder: pf, setControlState(c, s) { ctrl[c] = s; } };
 }
 
-test('T-0272: food 9 的侦察 → movements.allowSprinting=false, pathfinder 要疾跑也只走', () => {
+test('T-0273: food 9 的侦察 → movements.allowSprinting=false, pathfinder 要疾跑也只走', () => {
     const bot = fakeBot(9);
     assert.equal(installHungerSprintGate(bot), true);
     bot.pathfinder.setMovements({ allowSprinting: true });
@@ -22,7 +22,7 @@ test('T-0272: food 9 的侦察 → movements.allowSprinting=false, pathfinder �
     assert.equal(bot.ctrl.forward, true, 'walking untouched');
 });
 
-test('T-0272: 吃饱 (food>10) 照常疾跑; 饿着但有可动敌对 (躲避) 允许疾跑; 吃饱后恢复 movements', () => {
+test('T-0273: 吃饱 (food>10) 照常疾跑; 饿着但有可动敌对 (躲避) 允许疾跑; 吃饱后恢复 movements', () => {
     assert.equal(SPRINT_FOOD_MAX, 10);
     const full = fakeBot(18); installHungerSprintGate(full);
     full.pathfinder.setMovements({ allowSprinting: true });
@@ -38,4 +38,13 @@ test('T-0272: 吃饱 (food>10) 照常疾跑; 饿着但有可动敌对 (躲避) �
     const own = fakeBot(20); installHungerSprintGate(own);
     own.pathfinder.setMovements({ allowSprinting: false }); own.food = 20; own.pathfinder.setGoal({});
     assert.equal(own.pathfinder.movements.allowSprinting, false, "a skill's own no-sprint is never flipped on");
+});
+
+test('T-0273: 边界 — food 正好 10 已禁疾跑, 11 才放; modes.js 真的装了总闸', async () => {
+    // worker-tests 变异 10-11: `f > SPRINT_FOOD_MAX` 改成 `>=` (food 10 照跑) 与删掉 modes.js 的安装调用, 上两条均照绿
+    assert.equal(sprintAllowed(fakeBot(SPRINT_FOOD_MAX)), false, 'food 10 → walk');
+    assert.equal(sprintAllowed(fakeBot(SPRINT_FOOD_MAX + 1)), true, 'food 11 → may sprint');
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(src, /try \{ skills\.installHungerSprintGate\(bot\); \} catch \(e\) \{\}/);
 });

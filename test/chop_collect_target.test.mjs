@@ -32,3 +32,17 @@ test('T-0272: zero pick on the surface walks to a placed table within 12b and sk
     assert.match(src, /world\.getNearestBlock\(bot, 'crafting_table', 12\)/);
     assert.match(src, /&& !\(picks\(\) === 0 && tableNear\(\)\)\) \{/);
 });
+
+test('T-0272: trunk column = same x AND same z — a tree in the same x row (or z row) is still excluded; search covers the target distance', () => {
+    // worker-tests 变异 10-11: 列判据只比 x (`!(p.x === target.x)`) 与 findBlocks 半径改成 1 (什么都排不掉 → collectBlock 又去追更近的
+    // 悬空树干), 上面几条均照绿。沿 x/z 一行排开的树很常见。
+    const target = { x: 39, y: 68, z: -3 };
+    const near = [{ x: 39, y: 72, z: -8 }, { x: 35, y: 70, z: -3 }, { x: 39, y: 69, z: -3 }];
+    assert.deepEqual(collectExcludeForTarget(near, target), [{ x: 39, y: 72, z: -8 }, { x: 35, y: 70, z: -3 }]);
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/chopWood.js', import.meta.url), 'utf8');
+    const blk = /const _cbExclude = \(\(\) => \{([\s\S]*?)\}\)\(\);/.exec(src);
+    assert.ok(blk, '_cbExclude block');
+    const m = /bot\.findBlocks\(\{ matching: id, maxDistance: (.*?), count/.exec(blk[1]);
+    assert.ok(m, 'exclude search via findBlocks');
+    assert.match(m[1], /Math\.ceil\(dN\)/, `exclude radius must reach the chosen tree (every nearer log), got ${m[1]}`);
+});
