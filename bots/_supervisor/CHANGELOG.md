@@ -12,6 +12,12 @@
 
 ---
 
+## C410. ★botwatch IDLE-DISPATCH 检测器: 白天 kernelDriver ≥3min 零派发即开单（botwatch.mjs + botwatch-trackers.mjs, botwatch 重启生效, worker-tests, ⏳待 botwatch 重启）
+- **触发**: 10-11 04:16:41→04:21:33 白天 4m52s 零派发(零镐 REPLENISH_KIT 在冷却, 其余提案全被门挡), 根因由 T-0259 修掉; 监工要一个通用检测器兜住同类。
+- **判据**: 白天(world_model time.phase=day, 与决策层同口径) + kernelDriver 驱动 + 自最近一次活动起 ≥3min。活动=`[kernel] dispatch →` / 技能进展日志(反射、仲裁、提案、mobility 等后台日志不算, 未知标签算) / vitals 位移>1 格。豁免: HOLD/HEAL、self_preservation FAMINE body freeze、kernel 被 cancel 期间。dedupKey `idle-dispatch-<日期小时>`, 2h 最多 1 张。
+- **回放校准**(10-09→10-11 progress+vitals, 15s 节拍): 04:16 窗口命中(04:19:49 首报); 另 13 段逐段核实均为同类真空档(冷却后无可派 / 承诺落 FREE_PLAY / mineDown 流体秒败循环 / ENTOMBED 口袋站一整个白天 / hp1 smeltSafe 后 8.5min 空站…), 身体在动或技能在出日志时段零命中。FAMINE body freeze 两段经核实为有意静止, 已豁免。
+- **钉子**: test/idle_dispatch.test.mjs(7 条, 含真实 04:16 片段); 各判据变异均红。
+
 ## C409. ★入夜庇护原地挖不下去 → 先挪到附近干地再挖 (挖出的土石即封顶料), kite 退为最后手段（modes.js/mobility_geom.js 需重启,T-0261 death #54,worker-death,⏳待重启）
 
 **证据**: death #54 04:27:54 刚入夜, 04:26:31 刚从水里游出, 包里零填充。04:27:26.0 `bunkerDown enter @0,62,-81` → 0.6s 后 `cap failed → pillar-up fallback` (原地 digDown 一格都没下去 — 邻水守卫拒) → 04:27:29 `seal failed → run from swarm` → kite 25b 到 -16,64,-105 (又是水边, 溺尸) → 04:27:53 `no-filler roof-niche dig+walk` hp3 → 溺尸 0.9b 打死。

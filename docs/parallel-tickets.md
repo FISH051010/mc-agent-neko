@@ -1,4 +1,5 @@
-# 并行问题处理：ticket 系统（单一 MC session，多 agent 协作）
+#| ba69ecd (worker-tests) | bots/_supervisor/botwatch.mjs + botwatch-trackers.mjs | botwatch 进程 | ⚠**新检测器 C410**：IDLE-DISPATCH（白天 ≥3min 零派发开单） |
+ 并行问题处理：ticket 系统（单一 MC session，多 agent 协作）
 
 一场游戏（一个 bot、一个世界）只能有**一个驾驶员**，但"观测→诊断→改码"这条尾巴可以并行。
 本系统把问题变成**持久、可认领、跨 session 同步**的工单，让我（主 session）spawn 的 subagent、
