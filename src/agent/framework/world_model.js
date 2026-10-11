@@ -61,6 +61,8 @@ export function healFeasible(world, bot) {
 export const BED_ERRAND_PRIORITY = 66;   // ★T-0202 床优先: FOOD_FLOOR 70 之后、GET_ARMOR 58 之前
 export const BED_ERRAND_MIN_FOOD = 10;
 export const BED_NO_SHEEP_BACKOFF_MS = 8 * 60 * 1000;   // ★T-0208 一次"附近没羊"后 8min 不再侦察 (约 1/3 白天; 换个地方再找)   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
+export const PICKLESS_KIT_COOLDOWN_MS = 45000;   // ★T-0259 零镐时补镐/开局链的派发冷却上限
+export const PICKLESS_KIT_KINDS = ['REPLENISH_KIT', 'TOOL_UPKEEP', 'BOOTSTRAP_KIT', 'SURFACE_RESCUE'];
 export const STARVING_FOOD_FLOOR_COOLDOWN_MS = 30000;   // ★T-0201 food=0 时 FOOD_FLOOR 派发冷却上限 (续命类不干等 5min)
 
 // ★2026-08-07 路径统一: 这里原来 7 处都是 `resolve(dirname(fileURLToPath(import.meta.url)),
@@ -1576,6 +1578,10 @@ export function proposeTasks(world, bot) {
             //   只看 food (core routing 禁绝对 hp 门)。
             if (Number(vitals && vitals.food) === 0 && cd[PROPOSAL_KIND.FOOD_FLOOR] && cd[PROPOSAL_KIND.FOOD_FLOOR] > now + STARVING_FOOD_FLOOR_COOLDOWN_MS)
                 cd[PROPOSAL_KIND.FOOD_FLOOR] = now + STARVING_FOOD_FLOOR_COOLDOWN_MS;
+            // ★T-0259 (监工, 04:16:32-04:21Z: 零镐 REPLENISH_KIT 3 连败冷却 5min, 其余提案零镐全被门挡 → 白天 4 分多钟零派发原地发呆):
+            //   零镐时补镐/开局链是一阶续命, 冷却同 T-0201 手法钳到 ≤PICKLESS_KIT_COOLDOWN_MS (仍有间隔不热转, 但不干等 5 分钟)。
+            if (totalPicks(bot) === 0) for (const k of PICKLESS_KIT_KINDS)
+                if (cd[k] && cd[k] > now + PICKLESS_KIT_COOLDOWN_MS) cd[k] = now + PICKLESS_KIT_COOLDOWN_MS;
             for (let i = out.length - 1; i >= 0; i--) {
                 const u = cd[out[i].kind];
                 if (u && now < u) out.splice(i, 1);
