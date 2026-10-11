@@ -29,7 +29,7 @@ import { pickAutoEatFood } from './healing_reflex.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
 import { hostileActionableNear, hostileRawNear, DESCENT_HOSTILE_R } from './hostile_reach.js';
-import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways, hasShield, protectionHaveNames, SHIELD_PLANKS } from './armor_gate.js';
+import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways, hasShield, protectionHaveNames, SHIELD_PLANKS, chestTierArmor } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
@@ -318,10 +318,16 @@ function effectivePicksMatching(bot, re) {
 // tier 囤镐计划: 石阶段=沿用总镐>=3 (fodder, plan=null); 铁阶段=囤 4 铁镐(触发 有效铁镐≤1);
 // 钻阶段=囤 3 钻镐(触发 有效钻镐<3)。re 指该 tier 镐; target 释放线; triggerFloor 触发线(<它就补)。
 // 停造(木/石)由执行端 replenishKit ④ 依 tier 处理 — 这里只管"够不够/该补多少"的提案侧口径。
-function pickStockPlan(world) {
+// ★T-0249 (监工核对: 铁阶段囤 4 铁镐 = 12 锭, 无胸甲时与防护序 盾>胸>腿 / 先甲后钻 抢铁): 胸甲档 + 盾 到手前铁镐只囤 2 把
+//   (1 把在手 + 1 把备, 6 锭), 剩下的铁先给 GET_ARMOR; 胸甲档 + 盾齐了再囤满 4。判据与先甲后钻同源 (chestTierArmor + hasShield)。
+export const IRON_PICK_TARGET_ARMORED = 4, IRON_PICK_TARGET_ARMOR_FIRST = 2;
+export function ironPickTarget(bot) {
+    try { return (chestTierArmor(equippedArmorNames(bot)) && hasShield(bot)) ? IRON_PICK_TARGET_ARMORED : IRON_PICK_TARGET_ARMOR_FIRST; } catch (e) { return IRON_PICK_TARGET_ARMORED; }
+}
+function pickStockPlan(world, bot) {
     const pt = (world.kit && world.kit.pickTier) || '';
     if (/diamond|netherite/.test(pt)) return { tier: 'diamond', re: /^(diamond|netherite)_pickaxe$/, target: 3, triggerFloor: 3, craft: 'diamond_pickaxe' };
-    if (/iron/.test(pt)) return { tier: 'iron', re: /^iron_pickaxe$/, target: 4, triggerFloor: 2, craft: 'iron_pickaxe' };
+    if (/iron/.test(pt)) return { tier: 'iron', re: /^iron_pickaxe$/, target: bot ? ironPickTarget(bot) : IRON_PICK_TARGET_ARMORED, triggerFloor: 2, craft: 'iron_pickaxe' };
     return null;   // stone/none: legacy total-picks>=3 fodder floor governs (byte-identical to pre-change)
 }
 // ★review 2026-07-06: 手头材料能否再造一把本 tier 镐 — 提案触发(_planMat)与 isGoalDone 释放(tierMatShort)
@@ -794,7 +800,7 @@ export function proposeTasks(world, bot) {
     //   还要囤够本 tier 镐 (铁 4 / 钻 3, 触发线见 pickStockPlan)。tier 短缺也触发本 kind, 由 replenishKit ④
     //   就地用手头 ingot/diamond 造对应镐 (缺料由采矿链补)。priority: picks==0 仍 67(脱困急态, 压过 farm@65),
     //   否则 62 (囤备镐属日间 chore, 让位 farm@65/补木@64 — 用户令 白天 farm>镐>装备)。
-    const _plan = pickStockPlan(w);
+    const _plan = pickStockPlan(w, bot);
     // 只在 replenishKit ④ 能真正造出该 tier 镐时才让 tier 短缺触发本 kind (免"提了却造不动"→3-strike 冷却churn)。
     //   ★review 修: 铁镐口径含燃料 (raw_iron 无煤无锭 → 造不出, pickPlanHasMat 与 executor/释放门同真相)。
     const _planMat = pickPlanHasMat(bot, _plan);
@@ -807,6 +813,7 @@ export function proposeTasks(world, bot) {
         progressLogThrottled(bot, 'replenishKit', 60000,
             `[proposeTasks] ★REPLENISH_KIT-propose: picks=${pk}/${replenishTargets(w).picksMin}${_tierTag} planksEq=${pe}/${replenishTargets(w).planksRelease} pri=${_pri} y=${Math.round(bot.entity.position.y)}${_nightAssembly ? ' [夜间口袋组装]' : ''} — 补给基线破底, 派 replenishKit(修复型: 不看深度, 技能自己上浮)`);
         push({ kind: PROPOSAL_KIND.REPLENISH_KIT, priority: _pri, skill: 'replenishKit',
+               args: _plan && _plan.tier === 'iron' ? [{ ironPickTarget: _plan.target }] : [],   // ★T-0249 技能端同一目标
                rationale: `supply baseline broken (picks ${pk}/${replenishTargets(w).picksMin}${_tierTag}, planksEq ${pe}/${replenishTargets(w).planksRelease})${_nightAssembly ? ' — night pocket-assembly (craft-only, chop steps self-skip)' : ' — surface + restock wood/spare pick before every consumer yields'}`,
                hints: { picks: pk, planksEq: pe } });
     }
@@ -1679,7 +1686,7 @@ export function isGoalDone(kind, world, bot) {
         case PROPOSAL_KIND.REPLENISH_KIT: {
             // ★2026-07-06 tier 参数化释放: fodder 底线(总镐>=3) + 木料 buffer + tier 镐达标(铁>=4/钻>=3)。
             //   tier 达标用 target(释放线, 与触发线 triggerFloor 迟滞不对称: 铁 ≤1 触发但 >=4 才放手)。
-            const plan = pickStockPlan(w);
+            const plan = pickStockPlan(w, bot);
             // ★review 修: tier 达标 OR 手头材料已不够再造一把本 tier 镐 → 释放 (与触发 _planMat 同真相的负命题)。
             //   否则 executor 造到材料耗尽仍不足 target, isGoalDone 永假 → commitGoal '(holding commitment)'
             //   反复重派 → 5min 冷却 churn, 抢走采矿的身体。释放后身体回采矿(去补锭/钻), 缺口自然补齐。

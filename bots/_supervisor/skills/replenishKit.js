@@ -136,7 +136,9 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     const ironPicksN = () => { try { return bot.inventory.items().filter(i => i.name === 'iron_pickaxe').reduce((s, i) => s + i.count, 0); } catch (e) { return 0; } };   // raw, 仅日志
     const diaPicksN = () => { try { return bot.inventory.items().filter(i => /^(diamond|netherite)_pickaxe$/.test(i.name)).reduce((s, i) => s + i.count, 0); } catch (e) { return 0; } };   // raw, 仅日志
     // 该 tier 囤镐目标是否达标(释放线, 有效镐口径): 钻>=3 / 铁>=4 / 石(fodder)总数>=3。
-    const tierPickGoalMet = () => { const bt = bestPickTier(); if (bt >= 4) return effDiaPicksN() >= 3; if (bt >= 3) return effIronPicksN() >= 4; return picks() >= 3; };
+    // ★T-0249: 铁镐囤量由决策层定 (胸甲档+盾前 2 把, 之后 4 把; 与 world_model.ironPickTarget 同源), 不传时沿用 4
+    const IRON_PICK_TARGET = Number.isFinite(opts && opts.ironPickTarget) ? opts.ironPickTarget : 4;
+    const tierPickGoalMet = () => { const bt = bestPickTier(); if (bt >= 4) return effDiaPicksN() >= 3; if (bt >= 3) return effIronPicksN() >= IRON_PICK_TARGET; return picks() >= 3; };
     const tableNear = () => { try { return !!world.getNearestBlock(bot, 'crafting_table', 4); } catch (e) { return false; } };
 
     // 地表判定: 头顶 10 格无实体方块 (树叶/藤不算封顶, 抄 prepNether coveredAboveNow 的排除法) 且 y>=55
@@ -248,7 +250,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     }
     // ★T-0247: the tier pick is what's short and it can be crafted here, wood isn't below its trigger → no climb.
     const _craftHere = !tierPickGoalMet() && picks() >= 3 && planksEq() >= REPLENISH_WOOD_FLOOR
-        && tierPickCraftableHere(inv(), { bt: bestPickTier(), effIron: effIronPicksN(), effDia: effDiaPicksN() });
+        && tierPickCraftableHere(inv(), { bt: bestPickTier(), effIron: effIronPicksN(), effDia: effDiaPicksN(), ironTarget: IRON_PICK_TARGET });   // ★T-0249
     if (!onSurface() && _craftHere) prog(`replenishKit: ① SKIP surfaceUp — tier pick craftable here (ingot=${cnt('iron_ingot')} raw=${cnt('raw_iron')} diamond=${cnt('diamond')} table=${cnt('crafting_table')} stick=${cnt('stick')} planksEq=${planksEq()}), surface is for wood (T-0247)`);
     if (!onSurface() && _upClear && !_craftHere) {
         if (stop() || overBudget()) return settle('stopped-before-surface');
@@ -389,7 +391,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     //    (与 ⑧ 烤肉同 smeltSafe 惯用法; 需煤/炭)。钻镐用钻石(终态资源, 由 mineDiamonds 滚雪球供给,
     //    此处不冶炼)。──
     const _sm = ironSmeltNeeded(inv());   // ★T-0247 same measure as world_model pickPlanHasMat (ingot+raw ≥3 & fuel)
-    if (!stop() && !overBudget() && bestPickTier() === 3 && effIronPicksN() < 4 && _sm) {
+    if (!stop() && !overBudget() && bestPickTier() === 3 && effIronPicksN() < IRON_PICK_TARGET && _sm) {   // ★T-0249 囤量由决策层定
         const rb = cnt('iron_ingot');
         try { await skills.customSkill(bot, 'smeltSafe', 'raw_iron', Math.min(cnt('raw_iron'), Math.max(_sm.n, 6))); } catch (e) { prog(`replenishKit: ④-pre 冶铁 err ${e.message}`); }
         prog(`replenishKit: ④-pre 冶铁补锭 ${rb}→${cnt('iron_ingot')} (为囤铁镐)`);
@@ -402,7 +404,7 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     while (!stop() && !overBudget() && guard++ < 10) {
         const bt = bestPickTier();
         const needFodder = picks() < 3;                                              // 数量底线(够本下矿, raw 总镐 — 与 isGoalDone totalPicks 同口径)
-        const needIron = bt === 3 && effIronPicksN() < 4 && cnt('iron_ingot') >= 3;   // ★review: 有效铁镐<4(与提案端同口径)且有锭
+        const needIron = bt === 3 && effIronPicksN() < IRON_PICK_TARGET && cnt('iron_ingot') >= 3;   // ★review: 有效铁镐<4(与提案端同口径)且有锭
         const needDia = bt >= 4 && effDiaPicksN() < 3 && cnt('diamond') >= 3;         // ★review: 有效钻镐<3 且有钻
         if (!needFodder && !needIron && !needDia) {
             // ★T-0247: was a silent break — say when the tier stock is short but the material isn't here
