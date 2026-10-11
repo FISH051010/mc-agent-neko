@@ -40,3 +40,18 @@ test('T-0279: 大湖中心 8 格内全是水 → 跳过 (null); 区块未加载 
     const far = { x: 500, z: 500 };
     assert.equal(dryWaypoint(lakeBot(0, 0, 20, { loadedR: 100 }), far), far);
 });
+
+test('T-0279: 真用上了且够远 — 侦察循环调用并跳过全水航点; 岸在 6 格外也找得到; 岩浆湖同样挪开', () => {
+    // worker-tests 变异 10-11: 不接线 / 删全水跳过 / 半径 8→3 / LIQUID_RE 去 lava, 上两条均照绿
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/quickMeal.js', import.meta.url), 'utf8');
+    assert.match(src, /const dry = dryWaypoint\(bot, wp\);\s*if \(!dry\) \{[^\n]*continue; \}\s*if \(dry !== wp\) wp = dry;/, 'scout loop moves or skips the waypoint');
+    const mid = dryWaypoint(lakeBot(0, 0, 5), { x: 0, z: 0 });
+    assert.ok(mid && Math.max(Math.abs(mid.x), Math.abs(mid.z)) === 6, `shore 6b out is within the 8b search: ${JSON.stringify(mid)}`);
+    const lavaBot = { entity: { position: new Vec3(20, 63, 0) }, blockAt(p) {
+        if (p.y >= 63) return { name: 'air', boundingBox: 'empty' };
+        if (p.y === 62) return (Math.abs(p.x) <= 2 && Math.abs(p.z) <= 2) ? { name: 'lava', boundingBox: 'empty' } : { name: 'stone', boundingBox: 'block' };
+        return { name: 'stone', boundingBox: 'block' };
+    } };
+    const off = dryWaypoint(lavaBot, { x: 0, z: 0 });
+    assert.ok(off && Math.max(Math.abs(off.x), Math.abs(off.z)) === 3, `never route onto a lava lake: ${JSON.stringify(off)}`);
+});
