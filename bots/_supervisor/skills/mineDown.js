@@ -460,7 +460,9 @@ export default async function mineDown(bot, ctx, opts = {}) {
                 const avoid2 = bot._mineDownFluidAvoid.filter(a => Date.now() - a.at < 600000 && Math.hypot(a.x - p2.x, a.z - p2.z) < 8);
                 // ★T-0184 续: after a tunnel, the tunnel's own direction (its staircase was checked dry) comes first
                 const _cands2 = (_tun ? [[_tun.sx, _tun.sz]] : []).concat([[1, 0], [0, 1], [-1, 0], [0, -1]]);
-                const clean2 = _cands2.find(([cx, cz]) => !avoid2.some(a => a.sx === cx && a.sz === cz));
+                // ★T-0184 回归修 (10-11 00:54-55: 6b dry-shaft tunnel lands inside the old spot's 8b memory → no clean heading → fail ×5):
+                //   a verified dry staircase IS the clean heading.
+                const clean2 = (_tun && _tun.dryShaft) ? [_tun.sx, _tun.sz] : _cands2.find(([cx, cz]) => !avoid2.some(a => a.sx === cx && a.sz === cz));
                 if (movedB >= (_fbOk ? 4 : 6) && footingOk && clean2) {
                     sx = clean2[0]; sz = clean2[1];
                     rb.count++; rb.at = Date.now();
@@ -976,7 +978,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
                     else {
                         loopRelocates++;
                         // ★T-0184 续: keep going the tunnel's way (the dry staircase was checked along it), not back toward the aquifer
-                        const _r2 = rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, _tun.sx, _tun.sz);
+                        const _r2 = _tun.dryShaft ? { sx: _tun.sx, sz: _tun.sz } : rotateAwayFromAborted(bot._mineDownFluidAvoid, bot.entity.position, _tun.sx, _tun.sz);
                         sx = _r2.sx; sz = _r2.sz; noProg = 0;
                         log_(`fluid: all 4 headings wet here — tunnelled ${_tun.path.length}b ${_tun.sx},${_tun.sz} to dry rock${_tun.dryShaft ? ' (dry shaft)' : ''}, heading ${sx},${sz}`);
                         continue;

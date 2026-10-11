@@ -3190,6 +3190,8 @@
 
 - **★C421-S mineDown 遇有视线的射手先挡视线, 挡不住就让位(T-0225, death #22 mineDown 部分, 监工指派)**（2026-10-10，worker-stuck，T-0225）: death #22 10-10 04:51:25 黄昏 y14 — 04:50:38-42 'hostile-steer: skeleton @9.0b/@8.0b — 拐向背离怪' 只调转楼梯方向不停挖, 到层 branch-mining, 骷髅跟下 04:51:13 4.6b 中箭。修: shooterToCover(bot,10) = 10 格内有视线的最近远程怪 (T-0222 hostileActionable); mineDown 每步若命中 → skills.coverFromShooter 就地补块挡视线, 挡住续挖; 挡不住 → abort + r.deferred=true (kernel 不计 strike), 身体交 self_defense/self_preservation。测试 test/minedown_shooter_cover.test.mjs (有视线骷髅/墙后/远处/近战 + 接线), 更新 T-0203 钉子。
 
+- **★C422-S 干竖井隧道到达后直接取隧道方向(T-0184 回归修)**（2026-10-11，worker-stuck，T-0184）: C420 引入的回归 — 10-11 00:54:36-00:55:58 START 'relocate tunnel 1,0 ×6 (dry shaft) — arrived' 紧跟 'relocate failed (moved≈6b footingOk=true cleanHeading=false)' ×5 → DUSK_MINE_NIGHT 冷却。干竖井隧道最短 6b, 落点仍在旧点 8b 朝向记忆内, "首个未记忆基点"必空。修: _tun.dryShaft 时 START 的 clean2 与循环内 _r2 直接取隧道方向 (楼梯斜线已验干, 比旧点记忆更权威); 非干竖井路径照旧。测试 test/minedown_dry_shaft.test.mjs 新增钉。
+
 ---
 
 ---

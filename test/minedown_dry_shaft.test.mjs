@@ -51,6 +51,15 @@ test('T-0184: aquifer relocation prefers the dry-shaft tunnel before the plain 9
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
     assert.match(src, /const _tun = planDryTunnel\(bn, cx, cy, cz, targetY\) \|\| planRelocateTunnel\(bn, cx, cy, cz\);/);
     // live 04:45:37: tunnelled +x to dry rock, then kept heading -1,0 back toward the aquifer → 2 fluid turns
-    assert.match(src, /const _r2 = rotateAwayFromAborted\(bot\._mineDownFluidAvoid, bot\.entity\.position, _tun\.sx, _tun\.sz\);/);
+    assert.match(src, /rotateAwayFromAborted\(bot\._mineDownFluidAvoid, bot\.entity\.position, _tun\.sx, _tun\.sz\);/);
     assert.match(src, /const _tun = planDryTunnel\(bn, Math\.floor\(before\.x\), Math\.round\(before\.y\), Math\.floor\(before\.z\), targetY\)[^\n]*\r?\n\s*\|\| planRelocateTunnel\(/);
+});
+
+// regression 10-11 00:54:36-00:55:58: 'relocate tunnel 1,0 ×6 (dry shaft) — arrived' then 'relocate failed (moved=6.0b …
+// cleanHeading=false)' ×5 → DUSK_MINE_NIGHT cooled. A 6b dry-shaft tunnel ends inside the 8b heading memory of the old
+// spot, so "first cardinal not remembered" was empty. The dry-staircase check is the authority there: take the tunnel's way.
+test('T-0184: after a dry-shaft tunnel the heading is the tunnel direction, regardless of old-spot memory', () => {
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
+    assert.match(src, /const clean2 = \(_tun && _tun\.dryShaft\) \? \[_tun\.sx, _tun\.sz\] : _cands2\.find\(/);
+    assert.match(src, /const _r2 = _tun\.dryShaft \? \{ sx: _tun\.sx, sz: _tun\.sz \} : rotateAwayFromAborted\(bot\._mineDownFluidAvoid, bot\.entity\.position, _tun\.sx, _tun\.sz\);/);
 });
