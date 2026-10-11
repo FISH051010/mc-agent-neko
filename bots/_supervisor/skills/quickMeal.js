@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { HUNTABLE_RE, FOOD_FLOOR, cannotRegen } from '../../../src/agent/framework/food_floor.js';
+import { HUNTABLE_RE, FOOD_FLOOR, cannotRegen, rottenFleshTargetOk, STARVING_FOOD } from '../../../src/agent/framework/food_floor.js';
 import { shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 import { hostileActionableNear, isHostileEntity } from '../../../src/agent/framework/hostile_reach.js';
 const { goals, Movements } = mfp;
@@ -168,6 +168,19 @@ async function hostileDecision(bot) {
     return { action: 'away', h: h2 || h1 };
 }
 
+// ★T-0278 腐肉兜底目标: 判据见 food_floor.rottenFleshTargetOk (food≤3、不在养伤锁存、石剑以上、单只僵尸类、16 格内无其它敌对)。返回实体或 null。
+export function zombieFoodTarget(bot) {
+    try {
+        const me = bot.entity.position;
+        const hostiles = Object.values(bot.entities || {}).filter(e => e && e !== bot.entity && e.position && isHostileEntity(e))
+            .map(e => ({ e, id: e.id, name: e.name, dist: e.position.distanceTo(me) })).filter(h => h.dist <= 16).sort((a, b) => a.dist - b.dist);
+        if (!hostiles.length) return null;
+        const counts = {}; for (const it of bot.inventory.items()) counts[it.name] = (counts[it.name] || 0) + it.count;
+        const t = hostiles[0];
+        return rottenFleshTargetOk({ food: bot.food, healLatch: !!bot._healLatch, counts, target: t, hostiles }) ? t.e : null;
+    } catch (e) { return null; }
+}
+
 // ★T-0199 诊断 (监工: 00:58:26Z "scout: 70 legs, 0 unreachable, 69 stopped, moved 17b in 90.2s", hostiles=0 — 有东西持续打断 pathfinder):
 //   侦察期间临时包住 bot.pathfinder.stop / setGoal, 按"第一个非 quickMeal / 非 pathfinder 库 / 非 node 内部"的调用帧归因计数,
 //   记首次的 _bodyOwner / supervised; 侦察结束还原并写一行汇总 (限频: 只汇总, 不逐条刷)。纯诊断, 不改行为。
@@ -216,6 +229,11 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
         if (bot.interrupt_code) { haltPath(bot); prog('scout interrupted (commitment flipped) — exit'); return null; }   // ★T-0206
         let wp = wps[wi];
         const hd = await hostileDecision(bot);
+        // ★T-0278 腐肉兜底: 饿到见底 + 不在养伤 + 有石剑以上 + 单只僵尸 (16 格内无其它敌对) → 不躲不等, 把它当食物源
+        if (hd.action === 'yield' || hd.action === 'away') {
+            const zf = zombieFoodTarget(bot);
+            if (zf) { prog(`scout: starving (food=${bot.food}), lone ${zf.name} ${zf.position.distanceTo(bot.entity.position).toFixed(1)}b + sword — hunt it for rotten flesh instead of fleeing (T-0278)`); return zf; }
+        }
         if (hd.action === 'yield') {
             prog(`scout paused: ${hd.h.name} ${hd.h.dist.toFixed(1)}b (≤6 or closing) — yield to self_preservation, wait ≤15s`);
             if (!(await waitHostileClear(bot, Math.min(15000, Math.max(0, scoutMs - (Date.now() - t0)))))) { prog('scout deferred: hostile still near'); return 'hostile'; }
@@ -361,6 +379,8 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         }
         prog(`hunt ${target.name} @${target.position.distanceTo(bot.entity.position).toFixed(1)}b (food=${bot.food})`);
         const r0 = rawHeld();
+        const zombieHunt = !HUNTABLE_RE.test(target.name || '');   // ★T-0278 侦察交回来的是僵尸 (腐肉兜底)
+        const rf0 = inv().rotten_flesh || 0;
         // ★18:04:35 实录: attackEntity 预检"远于 4 格且无清晰路径就放弃" → 41.7 格的羊 0 秒收手、零肉。
         //   先安全寻路贴近 (≤2 格, 限时 20s; 动物会走动, 用实时 position), 再出手。
         if (target.position.distanceTo(bot.entity.position) > 3.5) {
@@ -406,7 +426,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
                 if (target.isValid !== false && left() > 5000) await approach();
             }
             const hd = await hostileDecision(bot);   // 同侦察口径: ≤6 格或逼近才收手; 6-16 格不逼近 → 继续猎 (目标就在眼前)
-            if (hd.action === 'yield' && !(await waitHostileClear(bot, Math.min(15000, Math.max(0, left()))))) {
+            if (hd.action === 'yield' && !(zombieHunt && hd.h && hd.h.name === target.name) && !(await waitHostileClear(bot, Math.min(15000, Math.max(0, left()))))) {   // ★T-0278 猎的就是这只僵尸, 不让
                 prog(`approach deferred: ${hd.h.name} ${hd.h.dist.toFixed(1)}b (hp-critical)`); stopBody(); return { deferred: true, reason: 'hostile-near' };
             }
             prog(`approached ${target.name} → ${target.position.distanceTo(bot.entity.position).toFixed(1)}b`);
@@ -419,7 +439,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         setSafeMovements(bot);
         stopBody();
         if (skills.pickupNearbyItems) await raceI(bot, skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
-        gotMeat = rawHeld() > r0;
+        gotMeat = rawHeld() > r0 || (zombieHunt && (inv().rotten_flesh || 0) > rf0);
         if (!gotMeat) prog(`hunt yielded no meat (target escaped / out of reach)`);
         // ★监工拍板: 会话猎杀计数 (world_model 锁存 SESSION_KILL_CAP=6 只后释放, 防打光一片再漫游)
         else if (bot._foodFloorLatch && bot._foodFloorLatch.active) bot._foodFloorLatch.kills = (bot._foodFloorLatch.kills || 0) + 1;
@@ -455,7 +475,8 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         const c = inv();
         // ★T-0230: food≤STARVING_FOOD 且只剩生鸡 (烤不了) → 吃生鸡 (food 见底时饥饿效果是纯收益); 否则照旧不吃生鸡
         const pick = COOKED.find(n => c[n] > 0) || ['beef', 'porkchop', 'mutton', 'rabbit'].find(n => c[n] > 0)
-            || ((bot.food <= FOOD_FLOOR || cannotRegen(bot.health, bot.food)) && c.chicken > 0 ? 'chicken' : null);   // ★T-0237 与 auto_eat 同档
+            || ((bot.food <= FOOD_FLOOR || cannotRegen(bot.health, bot.food)) && c.chicken > 0 ? 'chicken' : null)   // ★T-0237 与 auto_eat 同档
+            || (bot.food <= STARVING_FOOD && c.rotten_flesh > 0 ? 'rotten_flesh' : null);   // ★T-0278 见底才吃腐肉 (饥饿效果也比饿死强)
         if (!pick) break;
         try { await raceI(bot, skills.consume(bot, pick), Math.min(left(), 5000)); ate++; } catch (e) { break; }
     }

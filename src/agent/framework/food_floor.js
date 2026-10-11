@@ -174,3 +174,15 @@ export function foodFloorDone({ food, counts, latch }) {
     if (latch) return !latch.active || (latch.kills || 0) >= SESSION_KILL_CAP;
     return food > FOOD_FLOOR || countMatching(counts, EDIBLE_RE) > 0;
 }
+
+// ★T-0278 腐肉兜底 (worker-death 提议, worker-tier 定硬条件; 06:02-06:05Z 实录: food 0 两轮侦察零动物, 每轮 4 次 "scout away from zombie"
+//   — 主动躲开唯一能吃的东西)。人类饿到见底会杀僵尸吃腐肉 (80% 饥饿效果, 但 +4 饥饿, 比饿死强)。
+//   硬条件: food≤STARVING_FOOD、不在养伤锁存 (hp 够接战, 复用 HEAL 锁存不另设血量门)、有石剑以上、目标是单只僵尸类、16 格内无其它敌对。
+export const ZOMBIE_FOOD_RE = /^(zombie|husk|zombie_villager)$/;
+const GOOD_SWORD_RE = /^(stone|iron|diamond|netherite)_sword$/;
+export function rottenFleshTargetOk({ food, healLatch, counts, target, hostiles }) {
+    if (!(food <= STARVING_FOOD) || healLatch) return false;
+    if (!target || !ZOMBIE_FOOD_RE.test(target.name || '')) return false;
+    if (!Object.keys(counts || {}).some(k => GOOD_SWORD_RE.test(k) && counts[k] > 0)) return false;
+    return !(hostiles || []).some(h => h && h !== target && h.id !== target.id && (h.dist ?? 0) <= 16);
+}
