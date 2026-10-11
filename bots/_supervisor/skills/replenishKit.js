@@ -354,7 +354,17 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     //    (同色羊毛3+板3), 然后才轮到消耗品(镐/棍)。craftRecipeLocal 零产出回退 craftRecipe。
     //    ★排序注: 台在折棍【之前】 — 实录 10:08 最小木量(8板)时折棍先吃 2 板, 台(4板)被
     //    截胡到 2 板断供。台是万物解锁器, 排全队最前。──
-    if (!stop() && !overBudget() && cnt('crafting_table') < 1 && planksHeld() >= 4 && !holdWoodForFirstPick({ picks: picks(), planksEq: planksEq() })) {   // ★T-0271
+    // ★T-0272 (监工 06:00 截帧: 地上散落 3 张以前放下的工作台): 零镐在地表、12 格内有放好的台 → 走过去用它造首镐 (④ 的
+    //   craftRecipeLocal 认 4 格内的台), 不急着花 4 板造口袋台; 有镐后 holdWoodForFirstPick 解除, 随身台照常补。
+    if (!stop() && !overBudget() && picks() === 0 && cnt('crafting_table') < 1 && !tableNear() && onSurface()) {
+        let _pt = null; try { _pt = world.getNearestBlock(bot, 'crafting_table', 12); } catch (e) {}
+        if (_pt && _pt.position) {
+            prog(`replenishKit: ③.4 zero pick — walking to placed crafting_table @${_pt.position.x},${_pt.position.y},${_pt.position.z} (T-0272)`);
+            try { await Promise.race([skills.goToPosition(bot, _pt.position.x, _pt.position.y, _pt.position.z, 2), new Promise((_, rej) => setTimeout(() => rej(new Error('placed-table-timeout')), 15000))]); }
+            catch (e) { try { bot.pathfinder && bot.pathfinder.setGoal(null); } catch (_) {} try { bot.clearControlStates(); } catch (_) {} }
+        }
+    }
+    if (!stop() && !overBudget() && cnt('crafting_table') < 1 && planksHeld() >= 4 && !holdWoodForFirstPick({ picks: picks(), planksEq: planksEq() }) && !(picks() === 0 && tableNear())) {   // ★T-0271/T-0272
         const tb = cnt('crafting_table');
         let r35 = null;
         try { r35 = await skills.craftRecipeLocal(bot, 'crafting_table', 1); } catch (e) { prog(`replenishKit: ③.5 table err ${e.message}`); }

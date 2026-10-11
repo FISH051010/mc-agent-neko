@@ -120,6 +120,14 @@ export function xrayTrunkSkip(dist, canSee) {
 //   counts a leaf canopy as a roof and _highOpenSurface needs y≥70. Surface = high-open verdict, or sky open over the head
 //   (T-0189 skyOpenAt), or at/above the climb target 63 and not enclosed (T-0251 line), or the old y≥58+probe.
 //   → T-0258: all four chopWood surface tests now call surface_judge (shouldClimbToSurface / onSurfaceNow).
+// ★T-0272 (10-11 05:57:48→06:01:37Z @30,67,-9): the chosen grounded tree went to skills.collectBlock BY TYPE, which re-picked
+//   the nearest log on its own — the dangling trunk spruce_log@30,73,-10 over the bot (76 partial paths, 9 aborted digs). Hand it
+//   the chosen tree: exclude every same-type log outside the chosen trunk column. → [{x,y,z}] or null when nothing to exclude.
+export function collectExcludeForTarget(positions, target) {
+    if (!target || !Array.isArray(positions)) return null;
+    const ex = positions.filter(p => p && !(p.x === target.x && p.z === target.z)).map(p => ({ x: p.x, y: p.y, z: p.z }));
+    return ex.length ? ex : null;
+}
 export const HIGH_TREE_DEFER_MAX = 2;
 export const GROUNDED_PREFER_R = 48;
 const _GROUND_NOT = /(leaves|_log|_wood|_stem)$/;
@@ -2187,6 +2195,16 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             //   停滞早停: 不动(位移<0.3)且不进账(total 不涨)累计 ≥6s = 抖动特征(正常挖掘 total 上涨
             //   或行走位移会重置计数) → 提早中止, 让下面生走/relocate/blacklist 接手, 抖动窗口 45s→6s。
             const _cbBefore = total();
+            // ★T-0272: collect THE chosen tree, not whatever log of that type is nearest (findBlocks bounded to its distance)
+            const _cbExclude = (() => {
+                try {
+                    const id = bot.registry && bot.registry.blocksByName[nearest.t] && bot.registry.blocksByName[nearest.t].id;
+                    if (id == null || !nearest.b || !nearest.b.position) return null;
+                    const dN = bot.entity.position.distanceTo(nearest.b.position);
+                    const near = bot.findBlocks({ matching: id, maxDistance: Math.min(16, Math.ceil(dN) + 1), count: 64 }) || [];
+                    return collectExcludeForTarget(near, nearest.b.position);
+                } catch (e) { return null; }
+            })();
             let _cbLastPos = bot.entity.position.clone();
             let _cbStallMs = 0;
             const _cbStall = new Promise((_, rej) => {
@@ -2200,7 +2218,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
                 }, 1000);
             });
             await Promise.race([
-                skills.collectBlock(bot, nearest.t, 1, null, true),
+                skills.collectBlock(bot, nearest.t, 1, _cbExclude, true),
                 new Promise((_, rej) => setTimeout(() => rej(new Error('chop-timeout')), 45000)),
                 _cbStall,
             ]);

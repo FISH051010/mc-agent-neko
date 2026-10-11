@@ -15,6 +15,6 @@ test('T-0271: zero picks and wood below the first-pick floor → hold the wood (
 
 test('T-0271: replenishKit ③.5 table and bed are gated by it', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/replenishKit.js', import.meta.url), 'utf8');
-    assert.match(src, /cnt\('crafting_table'\) < 1 && planksHeld\(\) >= 4 && !holdWoodForFirstPick\(\{ picks: picks\(\), planksEq: planksEq\(\) \}\)\) \{/);
+    assert.match(src, /cnt\('crafting_table'\) < 1 && planksHeld\(\) >= 4 && !holdWoodForFirstPick\(\{ picks: picks\(\), planksEq: planksEq\(\) \}\)( && !\(picks\(\) === 0 && tableNear\(\)\))?\) \{/);
     assert.match(src, /!bot\.inventory\.items\(\)\.some\(i => \/_bed\$\/\.test\(i\.name \|\| ''\)\) && !holdWoodForFirstPick\(\{ picks: picks\(\), planksEq: planksEq\(\) \}\)\) \{/);
 });
