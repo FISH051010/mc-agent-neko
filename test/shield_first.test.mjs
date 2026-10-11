@@ -82,16 +82,27 @@ test('T-0229: craftArmor 1 粗铁 → 冶炼、补 6 木板、造盾、立即上
     assert.equal(bot.inventory.slots[45] && bot.inventory.slots[45].name, 'shield', 'shield in off-hand (arrow_guard reads slot 45)');
 });
 
-test('T-0229 补 (01:46:28Z 实录: craftChain iron_tier 镐+剑吃光 5 锭没盾): GET_IRON_TOOLS 没盾时清单 镐→盾→剑 且前置木板; 有盾不再造盾', async () => {
+test('T-0229 补 (01:46:28Z 实录: craftChain iron_tier 镐+剑吃光 5 锭没盾): GET_IRON_TOOLS 没盾时清单 盾→镐→剑 (同防护序) 且前置木板; 有盾不再造盾', async () => {
     const { ironTierRecipe } = await import('../src/agent/framework/world_model.js');
     const r = ironTierRecipe(fakeBot({ iron_ingot: 5, spruce_log: 14, spruce_planks: 2, stone_pickaxe: 2 }));
     const names = r.map(x => x[0]);
     assert.equal(names[0], 'spruce_planks', JSON.stringify(r));
-    assert.ok(names.indexOf('shield') > names.indexOf('iron_pickaxe') && names.indexOf('shield') < names.indexOf('iron_sword'), JSON.stringify(names));
+    assert.ok(names.indexOf('shield') < names.indexOf('iron_pickaxe') && names.indexOf('iron_pickaxe') < names.indexOf('iron_sword'), `shield → pick → sword (same as armor_gate): ${JSON.stringify(names)}`);
     const r2 = ironTierRecipe(fakeBot({ iron_ingot: 5, spruce_log: 14 }, { offhand: 'shield' }));
     assert.ok(!r2.some(x => x[0] === 'shield'), JSON.stringify(r2));
     const { proposeTasks } = await import('../src/agent/framework/world_model.js');
     const w = day();
     const p = proposeTasks(w, fakeBot({ iron_ingot: 5, spruce_log: 14, stone_pickaxe: 2, crafting_table: 1 })).find(x => x.kind === 'GET_IRON_TOOLS' && x.skill === 'craftChain');
     assert.ok(p && Array.isArray(p.args[0]) && p.args[0].some(x => x[0] === 'shield'), JSON.stringify(p && p.args));
+});
+
+test('T-0229 (监工审): 只有 1 锭铁、无盾、无铁镐 → 造盾 (GET_ARMOR→craftArmor 盾第一; iron_tier 预设也盾先, 两边同序)', async () => {
+    const inv = { iron_ingot: 1, stone_pickaxe: 2, spruce_log: 4, crafting_table: 1 };
+    const p = proposeTasks(day(), fakeBot(inv)).find(x => x.kind === 'GET_ARMOR');
+    assert.ok(p && p.skill === 'craftArmor', 'shield errand proposed with a single ingot');
+    assert.deepEqual(nextProtectionPiece([], 0, { shieldBudget: 1 }), ['shield', 1]);
+    const src = fs.readFileSync(new URL('../bots/_supervisor/skills/craftChain.js', import.meta.url), 'utf8');
+    const m = /iron_tier: (\[.*?\]\]),/.exec(src);
+    const order = JSON.parse(m[1].replace(/'/g, '"')).map(x => x[0]);
+    assert.ok(order.indexOf('shield') < order.indexOf('iron_pickaxe'), `craftChain iron_tier preset shield first: ${order}`);
 });
