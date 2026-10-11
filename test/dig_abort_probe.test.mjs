@@ -50,9 +50,8 @@ test('T-0260 v2: every abort is logged with block / caller / holder / skill; an 
     bot.on('diggingAborted', old);
     bot._digAbortProbe = true; bot._digAbortListener = old;     // a v1-era install
     const lines = [];
-    bot._digAbortSink = (s) => lines.push(s);
     bot._bodyOwner = { kind: 'mode', name: 'mode:mobility' }; bot._currentSkill = 'mineDown';
-    installDigAbortProbe(bot);
+    installDigAbortProbe(bot, { sink: (s) => lines.push(s) });
     assert.equal(bot._digAbortProbe, DIG_ABORT_PROBE_V);
     assert.equal(bot.listenerCount('diggingAborted'), 1, 'old listener removed');
     function mobilityGuardedDig() { bot.stopDigging(); }

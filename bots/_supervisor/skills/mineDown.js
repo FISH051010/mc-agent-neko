@@ -371,9 +371,9 @@ export function digInterrupter(bot) {
 // v2 (10-11 05:30:41/44Z mobility "dig retry … Digging aborted" left no caller trace — only mineDown read _lastDigAbort back):
 //   every abort writes one throttled "[dig-abort] <block> by=<caller frames> holder=<body owner> skill=<skill>" line itself.
 //   Versioned: a newer hot-reloaded probe replaces the listener it stored (v1 was anonymous — it only records, left in place;
-//   never removeAllListeners: mineflayer-pathfinder listens to diggingAborted too).
+//   never removeAllListeners: mineflayer-pathfinder listens to diggingAborted too). opts.sink replaces the progress write (tests).
 export const DIG_ABORT_PROBE_V = 2;
-export function installDigAbortProbe(bot) {
+export function installDigAbortProbe(bot, { sink } = {}) {
     try {
         if (!bot || typeof bot.on !== 'function' || bot._digAbortProbe === DIG_ABORT_PROBE_V) return;
         if (bot._digAbortListener && typeof bot.removeListener === 'function') { try { bot.removeListener('diggingAborted', bot._digAbortListener); } catch (e) {} }
@@ -388,7 +388,7 @@ export function installDigAbortProbe(bot) {
                 if (Date.now() - (bot._digAbortLogAt || 0) < 2000) return;
                 bot._digAbortLogAt = Date.now();
                 const line = `[dig-abort] ${blk} by=${bot._lastDigAbort.by || '?'} holder=${(bot._bodyOwner && bot._bodyOwner.name) || '-'} skill=${bot._currentSkill || '-'} (T-0260)`;
-                if (typeof bot._digAbortSink === 'function') bot._digAbortSink(line);
+                if (typeof sink === 'function') sink(line);
                 else fs.appendFileSync(path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt'), `[${new Date().toISOString()}] ${line}\n`);
             } catch (e) {}
         };
