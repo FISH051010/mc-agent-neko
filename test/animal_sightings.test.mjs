@@ -105,3 +105,14 @@ test('T-0273 ③: 目击按权重选 — 群体 (猪/牛/羊 ≥2) 优先, >2h �
     const fresh = { c: { kind: 'sighting', type: 'chicken', x: 10, y: 64, z: 0, ts: now, count: 1 }, d: { kind: 'sighting', type: 'chicken', x: 30, y: 64, z: 0, ts: now, count: 1 } };
     assert.equal(near(fresh, /^chicken$/, { x: 0, y: 64, z: 0 }, { now }).x, 10, 'same kind & age → nearest');
 });
+
+test('T-0273 ③: 权重边界 — 2 头就是群; 鸡群不等于家畜群; 将满 24h 的家畜群仍保底 (群体不会自己消失)', async () => {
+    // worker-tests 变异 10-11: 群判据 '>=2'→'>2'、鸡群按家畜群算、去掉 0.25 衰减下限, 上一条均照绿
+    const { nearestSighting: near, sightingWeight } = await import('../src/agent/framework/animal_sightings.js');
+    const now = Date.now(), H = 3600 * 1000, at = { x: 0, y: 64, z: 0 };
+    assert.ok(sightingWeight({ type: 'cow', count: 2 }, 0) > 2 * sightingWeight({ type: 'cow', count: 1 }, 0), 'a pair of cows is a herd');
+    const pairs = { p: { kind: 'sighting', type: 'pig', x: 30, y: 64, z: 0, ts: now, count: 2 }, c: { kind: 'sighting', type: 'chicken', x: 25, y: 64, z: 0, ts: now, count: 2 } };
+    assert.equal(near(pairs, /^(pig|chicken)$/, at, { now }).type, 'pig', 'pig pair a bit farther beats a chicken pair');
+    const old = { h: { kind: 'sighting', type: 'pig', x: 10, y: 64, z: 0, ts: now - 23 * H, count: 3 }, s: { kind: 'sighting', type: 'cow', x: 30, y: 64, z: 0, ts: now, count: 1 } };
+    assert.equal(near(old, /^(pig|cow)$/, at, { now }).type, 'pig', '23h-old herd close by still beats a fresh lone cow 3x farther');
+});
