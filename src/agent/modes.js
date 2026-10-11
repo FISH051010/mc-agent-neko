@@ -3920,13 +3920,12 @@ const modes_list = [
                             } catch (e) {} finally { try { bot.setControlState('forward', false); } catch (e) {} }
                             return;
                         }
-                        try { await bot.tool.equipForBlock(headB); } catch (e) {}
-                        try {
-                            await Promise.race([
-                                bot.dig(headB, true),
-                                new Promise((_, rej) => setTimeout(() => rej(new Error('suffoc-dig-timeout')), 3000)),
-                            ]);
-                        } catch (e) { try { bot.stopDigging(); } catch (_) {} }
+                        // ★T-0268 (death #55 05:30:35-43Z: one head dig per 1.5s while the gravel column refilled it, mobility digging
+                        //   other cells at the same time, T-0131 refusing at hp≤4 → dead in 8s): dig the head cell again and again until
+                        //   it is air; other digs yield and gravity gates are exempt while it runs (skills.suffocationRescueActive).
+                        let _sr = null;
+                        try { _sr = await skills.digOutOfSuffocation(bot, { maxMs: skills.SUFFOCATION_RESCUE_MS }); } catch (e) {}
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [reflex_watchdog] ★SUFFOCATION dig-out: ${_sr && _sr.cleared ? 'head clear' : 'NOT clear'} after ${_sr ? _sr.digs : '?'} digs hp=${Math.round(bot.health)} (T-0268)\n`); } catch (e) {}
                         return;
                     }
                 } catch (e) {}
@@ -4813,6 +4812,11 @@ const modes_list = [
             };
             const guardedDig = async (block, why = '') => {
                 if (!block) return false;
+                // ★T-0268: a suffocation dig-out owns the digging — anything but the head cell waits (two diggers cancel each other)
+                const _isHeadCell = (b) => { try { const f = bot.entity.position.floored(); return !!(b && b.position && b.position.x === f.x && b.position.y === f.y + 1 && b.position.z === f.z); } catch (e) { return false; } };
+                if (skills.suffocationRescueActive(bot) && !_isHeadCell(block)) {
+                    return false;
+                }
                 // ★T-0174: drowning promotes ANY mobility dig to a rescue dig (owner 'mobility:DROWN-<why>').
                 let _drown = false;
                 try {
@@ -5832,7 +5836,7 @@ const modes_list = [
                 if (block && block.position) {
                     let _ogr = false;
                     try { _ogr = skills.overheadGravityRisk((p) => bot.blockAt(p), bot.entity.position, block.position); } catch (e) {}
-                    if (_ogr) {
+                    if (_ogr && !skills.suffocationRescueActive(bot)) {   // ★T-0268 suffocation dig-out exempt
                         if (Date.now() - (bot._ogrLogAt || 0) > 5000) {
                             bot._ogrLogAt = Date.now();
                             try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [dig-gate] ★overhead gravity column — refused dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} above own feet y=${Math.floor(bot.entity.position.y)} skill=${bot._currentSkill || '-'} (T-0172)\n`); } catch (e) {}

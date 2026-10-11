@@ -6636,6 +6636,50 @@ export function suffocationEscapeDir(blockAt, feet) {
     }
     return best ? best.d : null;
 }
+/**
+ * ★T-0268 (监工加急, death #55 10-11 05:30:43Z y-8 @113,-8,169, 丢 24 铁/1 钻/2 铁镐): gravel fell on the head at 05:30:35.
+ * reflex_watchdog dug the head ONCE per 1.5s (the column refilled it), mobility (ENTOMBED) dug other cells at the same time
+ * (two diggers cancelling each other: 'Digging aborted'), and at hp≤4 T-0131 refused every gravel dig. 16 hp → dead in 8s.
+ * Suffocating has exactly one exit: dig the head cell, again and again, until it is air. While that runs nothing else digs
+ * and no gravity gate applies (there is no safer bearing — the damage is 1 per 0.5s).
+ */
+export const SUFFOCATION_RESCUE_MS = 8000;
+/** Head cell (feet+1) is a solid, non-fluid block = suffocating. */
+export function headSuffocating(blockAt, feet) {
+    try {
+        const h = blockAt(feet.offset ? feet.offset(0, 1, 0) : new Vec3(feet.x, feet.y + 1, feet.z));
+        return !!(h && h.boundingBox === 'block' && !/water|lava/.test(h.name || ''));
+    } catch (e) { return false; }
+}
+/** True while a suffocation dig-out is running (gravity gates exempt, other digs yield). */
+export function suffocationRescueActive(bot, now = Date.now()) {
+    return !!(bot && (bot._suffocationRescueUntil || 0) > now);
+}
+/** Dig the head cell repeatedly until it is air (falling gravel refills it), bounded. Returns {cleared, digs}. */
+export async function digOutOfSuffocation(bot, { maxMs = SUFFOCATION_RESCUE_MS, settleMs = 120 } = {}) {
+    const t0 = Date.now();
+    let digs = 0;
+    const feet = () => bot.entity.position.floored ? bot.entity.position.floored() : new Vec3(Math.floor(bot.entity.position.x), Math.floor(bot.entity.position.y), Math.floor(bot.entity.position.z));
+    try {
+        if (!headSuffocating((p) => bot.blockAt(p), feet())) return { cleared: true, digs };
+        bot._suffocationRescueUntil = Date.now() + 2000;
+        try { if (bot.targetDigBlock && typeof bot.stopDigging === 'function') bot.stopDigging(); } catch (e) {}   // the competing dig goes first
+        while (Date.now() - t0 < maxMs && (bot.health == null || bot.health > 0)) {
+            const f = feet();
+            if (!headSuffocating((p) => bot.blockAt(p), f)) return { cleared: true, digs };
+            bot._suffocationRescueUntil = Date.now() + 2000;
+            const hb = bot.blockAt(f.offset ? f.offset(0, 1, 0) : new Vec3(f.x, f.y + 1, f.z));
+            try { if (bot.tool && typeof bot.tool.equipForBlock === 'function') await bot.tool.equipForBlock(hb); } catch (e) {}
+            try { await Promise.race([bot.dig(hb, true), new Promise((_, rej) => setTimeout(() => rej(new Error('suffoc-dig-timeout')), 3000))]); digs++; }
+            catch (e) { try { bot.stopDigging(); } catch (_) {} }
+            if (settleMs > 0) await new Promise(r => setTimeout(r, settleMs));   // the next block of the column drops in
+        }
+        return { cleared: !headSuffocating((p) => bot.blockAt(p), feet()), digs };
+    } finally {
+        bot._suffocationRescueUntil = 0;
+    }
+}
+
 
 /**
  * ★T-0168 (death #8 10-09 21:17:59, 僵尸 d=1.7, hp14→0, 7s 内零反射): shouldFlee 的"健康无武器开局豁免"
