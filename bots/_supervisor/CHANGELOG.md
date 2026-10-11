@@ -12,13 +12,20 @@
 
 ---
 
+## C405. ★被近战怪群围: 无甲 ≥3 只不开打/打着就退; 先垫柱 3 格; 卡在坑里垫不了挡不了就就地还手; 地表 1 宽阶梯也能堵路（modes.js/combat_gates.js/skills.js 需重启; shieldFight.js 热加载,T-0242 death #51,worker-death,⏳待重启）
+
+**证据**: death #51 02:38:59 白天 tod2879 满血, 无甲, 铁剑+盾, mineDown 刚挖第一段阶梯 (325,67,-39, coveredAbove=1)。02:38:50.8 self_defense 见 1 只僵尸开打, 其余陆续围上 (6 只, 3 只 ≤1.4b), defendSelf 循环不复核 → 53.6 hp17 … 57.1 hp5 (0.3s −9)。56.8 self_preservation 'Hit (6 mob) — sprinting away' 接手但在 1 宽阶梯坑里一步没动 (act=sp ctrl 全空 54.8–57.9 → UNOWNED DANGER 是"名义持身、实际不动")。58.09 T-0233 interpose 'point-blank placed=0' — 僵尸 0.9b < losCoverCells 1.5b 下限 (与材料无关); 垫柱 0 — 头顶有遮挡跳不起来。手握铁剑却站桩到死。另: 52.9 kernel 派 mineDown 当场 'hostile within 4' 中止 (dig=0, 无害; self_defense 两次 execute 间隙身体无主)。
+**改动**: ① combat_gates.meleeSwarmOutmatched({meleeNear, armored}) (无甲 ≥3 / 有甲 ≥4, 6b 内同层非射手非苦力怕) + countMeleeNear/wearingArmor。self_defense 成立时不开打 (`outmatched … leaving it to self_preservation`), 开打则 defendSelf / shieldFight 带 abortIf 每轮复核, 成立即 pvp.stop 退出。② sprintFlee: 被围且头顶 +2..+4 净空、有封顶料 → 原地 placeBlockUnderFeet ×3 垫柱, ≥2 格即止跑 (每次逃跑试一次)。③ T-0233 卡住看门狗: 垫块/垫柱都不成且怪 ≤3b、有剑/斧 → 就地还手 (有盾 shieldFight 否则 defendSelf), 不站桩。④ 隧道堵路 (T-0223) 去掉 y<50/enclosed 门 — tunnelWallOffWanted 自查两侧实心, 地表阶梯同样适用。
+**可证伪预测**: 无甲被 ≥3 近战怪接近时出现 `outmatched … not engaging (T-0242)` / `pillar up N/3 (T-0242)` / `fought back (cornered, armed)`; 不再出现手持武器被围站桩至死。
+**回滚**: revert, 重启。回归 combat_gates 'T-0242' ×2。
+
 ## C404. ★T-0235 death_log 归因沿用上一次死亡: 只信新鲜的 _deathLayers 快照（agent.js + 新 death_attribution.js 需重启,worker-tests,⏳待重启）
 - **证据**: worker-death 用 act_trace 核对: #4 实际 mineDown、#6 reclaimFurnace、#7 mineDown, death_log 记的都是上一条的值; 线上最近 12 条里 6/11 对相邻记录 skill+action 完全相同。
 - **机理**: mineflayer `death` 由 update_health(hp<=0) 触发; 原版服务端先广播死亡聊天消息、下一 tick 才同步血量 → 聊天触发的 death_log 写入早于 `death` 处理器刷新 `bot._deathLayers`, 读到上一次死亡的快照(从不清空、无时间戳)。
 - **改动**: 快照加 `at` 时间戳; 写入经 `pickDeathLayers` 只认**晚于最近一次 spawn** 的快照(监工补: 固定 15s 窗在连死时会误认——T-0236 重生被拉回死亡点 10s 内又到 hp4), spawn 时同时清空快照; 否则读实时层(此刻技能还在跑, 实时层就是死亡瞬间)。
 - **预测**: 重启后 death_log 的 skill 与 act_trace 死亡时刻一致, 不再出现整串相邻记录相同。**钉子**: test/death_attribution.test.mjs(修复前 3/4 红)。提交 3cb5405。
 
-## C403. 重生探针抓包: 死亡起到重生后 3s 的出站移动包与入站 position 包（respawn_probe.js 需重启,T-0236,worker-death,只观测,⏳待重启）
+## C403. 重生探针抓包: 死亡起到重生后 3s 的出站移动包与入站 position 包（respawn_probe.js 需重启,T-0236,worker-death,只观测,✅已上线 02:02:08Z da20b06）
 
 **证据**: respawn_probe 5 条 unexpected; 21:59:21 seq: spawn(-4.5,68,-1.5) → 1467ms forcedMove (同点) → 1468ms forcedMove 到死亡点 (-0.3,60,-10.6)。所有重生都有 ~1450ms 的 forcedMove = mineflayer 4.37.1 physics.js:424 上游逻辑 "死后 2s 内第一个服务器 position 包, 延迟 1.5s 才回 position_look 并 emit forcedMove", delayedPos 取收包当刻坐标。候选机理 (待抓包证实): ①监工: 重生后 teleport_confirm 前出站了带死前坐标的移动包; ②死后 2s 内先到的 position 包若是"死者位置"(死亡点), 1.5s 后延迟回应就把死亡点坐标 position_look 发回服务器; 1468ms 那个紧随的 forcedMove (本地回环 1ms) 像是服务器对该包的回应。
 **改动**: makeRespawnProbe: onDeath 起包一层 bot._client.write, 记 /position|look|teleport|flying|move_player|accept_teleport/ 出站包 (name/坐标/teleportId), 并监听入站 'position' (x/y/z/flags/teleportId) 与 'respawn'; 重生后 3s (硬上限死后 20s) 还原 write 与监听。写入 respawn_probe.jsonl 的 packets 字段, ★UNEXPECTED 行附前 16 个关键包。行为零改动。

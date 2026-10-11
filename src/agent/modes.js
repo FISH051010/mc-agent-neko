@@ -5,7 +5,7 @@ import { readJsonCached } from '../utils/json_io.js';
 import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
-import { bunkerCooldownReopen, combatHasPriority, armoredSoloBrawl, rangedUnreachableTrap, futileMobBlacklist, isFutileMob, unblacklistAttackers, recordFightOutcome, FUTILE_FIGHT_STRIKES, FUTILE_MOB_TTL_MS, FUTILE_CLOSE_EPS } from './combat_gates.js';
+import { bunkerCooldownReopen, combatHasPriority, armoredSoloBrawl, rangedUnreachableTrap, futileMobBlacklist, isFutileMob, unblacklistAttackers, recordFightOutcome, FUTILE_FIGHT_STRIKES, FUTILE_MOB_TTL_MS, FUTILE_CLOSE_EPS, meleeSwarmOutmatched, countMeleeNear, wearingArmor } from './combat_gates.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
 import fs from 'fs';
@@ -815,6 +815,7 @@ const modes_list = [
             // 绝不在循环内 reset interrupt_code (否则顶掉 executor 的 stop → "refused stop 10s" 被看门狗杀进程)。
             try { bot.interrupt_code = false; } catch (e) {}
             this._fleeMovePos = null; this._fleeMoveAt = Date.now();             // ★T-0233 displacement watchdog baseline (per flee)
+            this._fleePillarTried = false;                                       // ★T-0242 one swarm-pillar attempt per flee
             for (let step = 0; step < 4000; step++) {
                 if (bot.interrupt_code || bot.health <= 0) break;                 // 真停止/死亡 → 立即返回
                 if (bot.oxygenLevel !== undefined && bot.oxygenLevel <= 6) break; // 真淹水 → 让位游泳脱困反射
@@ -822,6 +823,23 @@ const modes_list = [
                 const cr = this.nearestCreeper(bot, 12);
                 if (hs.length === 0 && !cr) break;                               // 威胁清除 → 收手 (常规循环恢复→重新寻路奔目标)
                 const me = bot.entity.position;
+                // ★T-0242 (death #51): 被近战怪群围 (meleeSwarmOutmatched) 时跑不过也打不过 — 头顶 3 格净空且有方块 → 原地垫柱 3 格
+                //   (僵尸够不着), 垫到 ≥2 格即止跑。每次逃跑只试一次; 头顶有遮挡 (树荫/阶梯坑) 时跳过, 交给下面的卡住看门狗。
+                try {
+                    if (!this._fleePillarTried && meleeSwarmOutmatched({ meleeNear: countMeleeNear(bot, 6), armored: wearingArmor(bot) })) {
+                        this._fleePillarTried = true;
+                        const _f = me.floored();
+                        const _clear = [2, 3, 4].every(dy => { const b = bot.blockAt(_f.offset(0, dy, 0)); return !b || b.boundingBox !== 'block'; });
+                        const _fb = skills.resolveCapBlock(bot);
+                        if (_clear && _fb && !(bot.blockAt(_f) && /water|lava/.test(bot.blockAt(_f).name || ''))) {
+                            try { bot.clearControlStates(); } catch (e) {}
+                            let _up = 0;
+                            for (let k = 0; k < 3; k++) { try { if (await skills.placeBlockUnderFeet(bot, _fb, { retries: 1, settleMs: 160 })) _up++; } catch (e) {} }
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] outmatched by ${countMeleeNear(bot, 6)} melee hp=${Math.round(bot.health)} → pillar up ${_up}/3 with ${_fb} (T-0242)\n`); } catch (e) {}
+                            if (_up >= 2) break;
+                        }
+                    }
+                } catch (e) {}
                 // ★T-0233 (#4/#5 挂起期): 逃跑零位移 = 背对怪站着挨打。卡住 ≥0.9s 且 4b 内有怪 → 两者之间垫块; 垫不住且近战怪
                 //   ≤2.5b → 往上垫柱 2 格 (僵尸够不着)。
                 try {
@@ -839,9 +857,20 @@ const modes_list = [
                             const _fb = skills.resolveCapBlock(bot);
                             for (let k = 0; k < 2 && _fb; k++) { try { if (await skills.placeBlockUnderFeet(bot, _fb, { retries: 1, settleMs: 160 })) _pillar++; } catch (e) {} }
                         }
-                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] flee stuck ${((Date.now() - this._fleeMoveAt) / 1000).toFixed(1)}s with ${_nm.name} ${_nd.toFixed(1)}b hp=${Math.round(bot.health)} → interpose ${_r ? `${_r.why} placed=${_r.placed}` : 'error'}${_pillar ? ` + pillar ${_pillar}` : ''} (T-0233)\n`); } catch (e) {}
+                        // ★T-0233 补 (death 02:38:59 10-11): 1 宽阶梯坑 + 头顶有遮挡 → 跳不起来垫不了柱, 僵尸 0.9b 中间也垫不下 → 原地站着挨打,
+                        //   手里有铁剑+盾。逃不掉也挡不住时, 有武器就就地还手 (窄地形一次只来一两只), 绝不站桩。
+                        let _fought = false;
+                        if (!(_r && _r.covered) && _pillar < 2 && _nd <= 3 && !/creeper/i.test(_nm.name || '')) {
+                            const _armed = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name || '') && !/pickaxe/.test(i.name || ''));
+                            if (_armed) {
+                                _fought = true;
+                                const _sh = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
+                                try { if (_sh) await skills.customSkill(bot, 'shieldFight', 4); else await skills.defendSelf(bot, 4); } catch (e) { try { await skills.defendSelf(bot, 4); } catch (e2) {} }
+                            }
+                        }
+                        try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] flee stuck ${((Date.now() - this._fleeMoveAt) / 1000).toFixed(1)}s with ${_nm.name} ${_nd.toFixed(1)}b hp=${Math.round(bot.health)} → interpose ${_r ? `${_r.why} placed=${_r.placed}` : 'error'}${_pillar ? ` + pillar ${_pillar}` : ''}${_fought ? ' + fought back (cornered, armed)' : ''} (T-0233)\n`); } catch (e) {}
                         this._fleeMovePos = bot.entity.position.clone(); this._fleeMoveAt = Date.now();
-                        if ((_r && _r.covered) || _pillar >= 2) break;
+                        if ((_r && _r.covered) || _pillar >= 2 || _fought) break;
                     }
                 } catch (e) {}
                 // ★T-0226 death #22 (04:51:13–25, 骷髅 4 箭 12→0): C382 的挡箭只挂在 self_defense 让位分支, 而身体一直在 sprintFlee 手里 →
@@ -866,7 +895,9 @@ const modes_list = [
                 // ★T-0223 death #20 (04:22:34): underground, a melee mob chasing us down a 1-wide tunnel (often our own dead-end
                 //   mine) → turn and wall it off (2 blocks between us), the human move; running to the tunnel's end = cornered.
                 try {
-                    if ((me.y < 50 || (bot._mobility && bot._mobility.enclosed)) && Date.now() - (this._wallOffAt || 0) > 1500) {
+                    // corridor geometry is checked by tunnelWallOffWanted itself — a surface 1-wide stair (mineDown's first steps,
+                    // death 02:38:59 y66) is the same trap as a deep tunnel, so no y<50/enclosed gate.
+                    if (Date.now() - (this._wallOffAt || 0) > 1500) {
                         let _mm = null, _md = Infinity;
                         for (const e of hs) {
                             if (!e || !e.position || /creeper|skeleton|stray|pillager|witch/i.test(e.name || '')) continue;
@@ -3553,14 +3584,23 @@ const modes_list = [
                 } catch (e) {}
                 return;
             }
-            if (enemy && hasWeapon && !swarmed) {
+            // ★T-0242 (death #51): unarmored vs ≥3 melee (≥4 armored) within 6b = can't win — don't start, and abort mid-fight
+            //   the moment it becomes true (self_preservation takes over: pillar / break away / wall off).
+            const _outmatched = () => meleeSwarmOutmatched({ meleeNear: countMeleeNear(bot, 6), armored: wearingArmor(bot) });
+            if (enemy && hasWeapon && !swarmed && _outmatched()) {
+                if (Date.now() - (this._outmatchedLogAt || 0) > 8000) {
+                    this._outmatchedLogAt = Date.now();
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_defense] outmatched: ${countMeleeNear(bot, 6)} melee ≤6b, armored=${wearingArmor(bot)} — not engaging, leaving it to self_preservation (T-0242)\n`); } catch (e) {}
+                }
+            }
+            else if (enemy && hasWeapon && !swarmed) {
                 say(agent, `Fighting ${enemy.name}!`);
                 // ★C360: fight-cycle 快照 — cycle 结束时 recordFightOutcome 对照它判"这轮有无进展"。
                 const cycle = { id: enemy.id, name: enemy.name, t0: Date.now(), dist0: enemy.position.distanceTo(bot.entity.position) };
                 execute(this, agent, async () => {
                     try {
-                        if (hasShield) { try { await skills.customSkill(bot, 'shieldFight', range); } catch (e) { await skills.defendSelf(bot, range); } }
-                        else await skills.defendSelf(bot, range);
+                        if (hasShield) { try { await skills.customSkill(bot, 'shieldFight', range, 14000, { abortIf: _outmatched }); } catch (e) { await skills.defendSelf(bot, range, { abortIf: _outmatched }); } }
+                        else await skills.defendSelf(bot, range, { abortIf: _outmatched });
                     } finally {
                         recordFightOutcome(bot, cycle);
                     }

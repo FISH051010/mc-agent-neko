@@ -8,7 +8,7 @@
 //   • zombie/spider/other -> approach and melee, shield up between swings.
 //   • enderman -> disengage (don't provoke; looking at it aggroes — just move off).
 // Invoked via: {"skill":"shieldFight",[range]}  ctx = { skills, world, mc, Vec3, log }
-export default async function shieldFight(bot, ctx, range = 14, maxMs = 14000) {
+export default async function shieldFight(bot, ctx, range = 14, maxMs = 14000, opts = {}) {
     const { skills, world, mc, log } = ctx;
     const has = (n) => world.getInventoryCounts(bot)[n] || 0;
 
@@ -73,6 +73,8 @@ export default async function shieldFight(bot, ctx, range = 14, maxMs = 14000) {
     let rangedSince = 0, rangedId = null, rangedHp0 = null, prevD = Infinity, stalls = 0;
     while ((e = enemy()) && Date.now() - startT < maxMs) {
         if (bot.interrupt_code) break;
+        // ★T-0242: caller's abort predicate (outmatched mid-fight → hand the body to self_preservation)
+        try { if (opts && typeof opts.abortIf === 'function' && opts.abortIf()) break; } catch (er) {}
         const kind = kindOf(e);
         const d = bot.entity.position.distanceTo(e.position);
         if (kind !== 'enderman') await ensureWeapon();   // 每拍重申 — 见上方验尸注释

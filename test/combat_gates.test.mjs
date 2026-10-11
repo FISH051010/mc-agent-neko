@@ -116,3 +116,34 @@ test('T-0067: at night, not in a real box, a melee mob closing within 9b re-open
     assert.equal(reopen([], { creeper8: true }), true);
     assert.equal(reopen([mob('zombie', 12)]), false, 'loitering far melee mob does not keep preempting');
 });
+
+test('T-0242 death #51: 无甲对 ≥3 只近战怪 (6b 内同层) 打不过 — 不开打, 打着打着成立就退出; 有甲门槛 4', async () => {
+    const { meleeSwarmOutmatched, countMeleeNear, wearingArmor } = await import('../src/agent/combat_gates.js');
+    const swarm = makeBot({ items: ['iron_sword', 'shield'], mobs: [mob('zombie', 1), mob('zombie', 1.2), mob('zombie', 1.4), mob('zombie', 8.6)] });
+    assert.equal(countMeleeNear(swarm, 6), 3, 'the 8.6b one is not counted');
+    assert.equal(wearingArmor(swarm), false);
+    assert.equal(meleeSwarmOutmatched({ meleeNear: 3, armored: false }), true, 'death #51');
+    assert.equal(meleeSwarmOutmatched({ meleeNear: 3, armored: true }), false);
+    assert.equal(meleeSwarmOutmatched({ meleeNear: 2, armored: false }), false);
+    const mixed = makeBot({ mobs: [mob('zombie', 1), mob('skeleton', 2), mob('creeper', 2), mob('zombie', 3, 0, 5)] });
+    assert.equal(countMeleeNear(mixed, 6), 1, 'ranged/creeper/other-level excluded');
+    const fs = await import('node:fs');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.match(m, /if \(enemy && hasWeapon && !swarmed && _outmatched\(\)\) \{/, 'no engagement when outmatched');
+    assert.match(m, /skills\.defendSelf\(bot, range, \{ abortIf: _outmatched \}\)/);
+    assert.match(m, /customSkill\(bot, 'shieldFight', range, 14000, \{ abortIf: _outmatched \}\)/);
+    const sk = fs.readFileSync(new URL('../src/agent/library/skills.js', import.meta.url), 'utf8');
+    assert.match(sk, /opts\.abortIf === 'function' && opts\.abortIf\(\)\) \{ bot\.pvp\.stop\(\);/);
+    const sf = fs.readFileSync(new URL('../bots/_supervisor/skills/shieldFight.js', import.meta.url), 'utf8');
+    assert.match(sf, /opts\.abortIf === 'function' && opts\.abortIf\(\)\) break;/);
+});
+
+test('T-0242 death #51: 被围先垫柱 3 格 (头顶净空+有方块); 卡在坑里垫不了也挡不了 → 有武器就就地还手, 不站桩', async () => {
+    const fs = await import('node:fs');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const s0 = m.indexOf('sprintFlee: async function');
+    const loop = m.slice(s0, m.indexOf('// 有目标且已接近', s0));
+    assert.match(loop, /this\._fleePillarTried = false;/);
+    assert.match(loop, /meleeSwarmOutmatched\([\s\S]{0,400}\[2, 3, 4\]\.every\([\s\S]{0,700}placeBlockUnderFeet\(/);
+    assert.match(loop, /_fought = true;[\s\S]{0,300}(shieldFight|defendSelf)/, 'cornered + armed → fight back');
+});

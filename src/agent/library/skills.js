@@ -1142,7 +1142,7 @@ export async function attackEntity(bot, entity, kill=true) {
     }
 }
 
-export async function defendSelf(bot, range=9) {
+export async function defendSelf(bot, range=9, opts={}) {
     /**
      * Defend yourself from all nearby hostile mobs until there are no more.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
@@ -1184,6 +1184,8 @@ export async function defendSelf(bot, range=9) {
             bot.pvp.stop();
             return false;
         }
+        // ★T-0242: the situation can turn mid-fight (more mobs arrive) — the caller's abort predicate is re-checked every swing.
+        try { if (opts && typeof opts.abortIf === 'function' && opts.abortIf()) { bot.pvp.stop(); log(bot, 'defendSelf: aborted — outmatched mid-fight.'); return false; } } catch (e) {}
     }
     bot.pvp.stop();
     if (attacked)

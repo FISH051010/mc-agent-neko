@@ -69,6 +69,29 @@ export function armoredSoloBrawl(bot) {
     } catch (e) { return false; }
 }
 
+// ★T-0242 (death #51 10-11 02:38:59, 满血白天无甲, 铁剑+盾): self_defense 02:38:50 只见 1 只僵尸就开打, 其余陆续围上 (共 6 只,
+//   3 只 ≤1.4b), defendSelf 的循环不再复核 → 0.3s 掉 9 血。无甲对 ≥3 只近战怪打不过 —— 不开打; 已在打的循环里随时复核, 成立就退出,
+//   交给 self_preservation (垫柱/拉开/堵路)。纯判据: meleeNear = 6b 内同层 (|dy|≤2) 非射手非苦力怕的怪数; armored = 穿着任意甲。
+export function meleeSwarmOutmatched({ meleeNear, armored }) {
+    return meleeNear >= (armored ? 4 : 3);
+}
+export function countMeleeNear(bot, radius = 6) {
+    try {
+        const p = bot.entity.position;
+        let n = 0;
+        for (const e of Object.values(bot.entities || {})) {
+            if (!(e && e !== bot.entity && e.position && mc.isHostile(e))) continue;
+            if (/creeper|skeleton|stray|pillager|witch|ghast|blaze/i.test(e.name || '')) continue;
+            if (Math.abs(e.position.y - p.y) > 2) continue;
+            if (e.position.distanceTo(p) <= radius) n++;
+        }
+        return n;
+    } catch (e) { return 0; }
+}
+export function wearingArmor(bot) {
+    try { return (bot.inventory.slots || []).slice(5, 9).some(s => s && /_helmet$|_chestplate$|_leggings$|_boots$/.test(s.name || '')); } catch (e) { return false; }
+}
+
 // ★C353 (T-0063, worker-combat 06-27): RANGED-UNREACHABLE-TRAP — disengage 杀不死的"够不到的远程怪"。
 // 真根(监工实锤): bot 困封闭口袋(mobility=POCKET/ENTOMBED, enclosed=true, exits=[])时, 墙外一只
 // 远程骷髅在 self_defense range 内 → self_defense 每 tick execute shieldFight → ranged 分支
