@@ -3273,6 +3273,8 @@
 
 - **★C431-S chopWood 落地树优先 + 高树最多延后 2 次就换树 (T-0256, 监工加急, 一阶停滞)**（2026-10-11，worker-stuck，T-0256）: death #53 后重生在高云杉林 (spawn 3,-6), 04:03-04:07Z 白天约 4 分钟只砍到 1 根原木。'nearest' 是 bot (y66) 正头顶 +6y 的 spruce_log@19,72,-10 — 那棵树下半截早被砍掉, 剩的树干悬空; _trunkBase 只沿原木往下找到 +6y 的最低一根, riskyTree 高树要 dy≥8, 于是它每轮都是目标: 'near-high-tree … surface/climb (try 1..4)' → 'defer blacklist … (high tree +6y; climb first)' (stale≤6 一直延后) → 'pinned-stair-climb blocked … no-step' 换向循环; 16 候选扫描大半是这一棵树的原木。修: ① 候选 16→48 并按树干列去重; ② 新导出 trunkGrounded (最低一根原木下方是实心地面, 非树叶/原木) 与 pickGroundedFirst — 落地树最近者优先, 只有 48 格内没有落地树时才选悬空树干 (iter 行标 '(dangling,T-0256)'); ③ 高树延后拉黑按单棵树计数 (bot._chopHighDefer), 同一棵 ≤HIGH_TREE_DEFER_MAX=2 次后直接拉黑换下一棵 ('climb first, n/2')。test/chop_reachable_first.test.mjs (T-0256 ×4)。热加载。全套 785/785。
 
+- **★C432-S chopWoodWithin 超时后等孤儿砍树循环真正退出再交还身体 (T-0256 续, 幽灵栈)**（2026-10-11，worker-stuck，T-0256）: live 04:05:35Z 'replenish-chop-timeout (superseded orphan chop loop)' 后 replenishKit 立刻重派, 而 gen1 孤儿 chopWood 正在 pinned-stair 长操作里, 04:05:42 才在 iter11 看到 _superseded ('chopWood YIELD (superseded gen1→4)') — 两个砍树循环同时驱动身体 7s。gen 1→4 是 supersede/cancel/新进入各 +1, 不是 3 个幽灵栈。修: chopWoodWithin 超时 → cancelChopWood 后有界 (drainMs 默认 8s) 等孤儿 promise 落定, 再 setGoal(null)+clearControlStates, 然后才把超时抛给调用方。test/chopwood_within.test.mjs 追加 T-0256 ×2 (排空 / 有界)。src → 需重启。全套 787/787。
+
 ---
 
 ---

@@ -7249,14 +7249,24 @@ export function cancelChopWood(bot) {
  *  chopWood iter8/9 kept digging spruce_log; mineDown's digs got 'Digging aborted' ×3 → GO_UNDERGROUND cooldown).
  *  On timeout this cancels the child, then rejects with Error(label) so callers' existing catch paths still run.
  *  `run` is injectable for tests; production always runs the real chopWood skill. */
-export async function chopWoodWithin(bot, ms, label, args = [], run = (...a) => customSkill(bot, 'chopWood', ...a)) {
+export async function chopWoodWithin(bot, ms, label, args = [], run = (...a) => customSkill(bot, 'chopWood', ...a), { drainMs = 8000 } = {}) {
     const tag = label || 'chopWood-timeout';
     let timer = null;
     const deadline = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(tag)), ms); });
+    const runP = run(...args);
     try {
-        return await Promise.race([run(...args), deadline]);
+        return await Promise.race([runP, deadline]);
     } catch (e) {
-        if (e && e.message === tag) cancelChopWood(bot);
+        if (e && e.message === tag) {
+            cancelChopWood(bot);
+            // ★T-0256 (live 04:05:35→42Z: orphan gen1 chop loop ran 7s past the timeout, mid pinned-stair, alongside the
+            //   re-dispatched chop): wait (bounded) for the orphan to return before handing the body back to the caller.
+            let dt = null;
+            await Promise.race([Promise.resolve(runP).catch(() => {}), new Promise(r => { dt = setTimeout(r, drainMs); })]);
+            clearTimeout(dt);
+            try { bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null); } catch (_) {}
+            try { bot.clearControlStates(); } catch (_) {}
+        }
         throw e;
     } finally { clearTimeout(timer); }
 }

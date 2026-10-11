@@ -35,3 +35,22 @@ test('T-0148: no skill races chopWood against a bare timeout any more (all go th
     }
     assert.deepEqual(offenders, []);
 });
+
+// T-0256 (live 10-11 04:05:35→04:05:42Z): replenishKit's chop timed out and re-dispatched at once, but the orphan chop loop
+// (gen1, mid pinned-stair) only saw _superseded() 7s later ('chopWood YIELD (superseded gen1→4) at iter11') — two chop
+// loops drove the body together for 7s. After cancelling, wait (bounded) for the orphan to actually return.
+test('T-0256: a timed-out chopWood is drained — the caller hears the timeout only after the orphan returned', async () => {
+    const bot = fakeBot();
+    let done = false;
+    const t0 = Date.now();
+    await assert.rejects(chopWoodWithin(bot, 20, 'replenish-chop-timeout', [12], () => new Promise(r => setTimeout(() => { done = true; r(0); }, 150)), { drainMs: 2000 }), /replenish-chop-timeout/);
+    assert.equal(done, true, 'orphan finished before the caller moved on');
+    assert.ok(Date.now() - t0 >= 140);
+});
+
+test('T-0256: the drain is bounded (a wedged orphan does not hold the caller forever)', async () => {
+    const bot = fakeBot();
+    const t0 = Date.now();
+    await assert.rejects(chopWoodWithin(bot, 20, 'x-timeout', [1], () => new Promise(() => {}), { drainMs: 60 }), /x-timeout/);
+    assert.ok(Date.now() - t0 < 1000);
+});
