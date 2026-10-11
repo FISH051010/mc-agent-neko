@@ -46,3 +46,34 @@ test('respawn probe: agent.js 接线 — death/spawn 调探针; keepInventory �
     assert.match(a, /respawnProbe\.onDeath\(\)/);
     assert.match(a, /if \(respawnProbe\.nearDeathPoint\(\)\) return;\s*const post = countItems\(bot\);/);
 });
+
+test('T-0236: 死亡起到重生后 3s 抓出站移动包 + 入站 position 包 (含 flags/teleportId), 窗口结束还原 client.write', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rprobe-pk-'));
+    const bot = new EventEmitter();
+    const cl = new EventEmitter();
+    const sent = [];
+    const origWrite = function (name, params) { sent.push(name); };
+    cl.write = origWrite;
+    bot._client = cl;
+    bot.entity = { position: { ...DEATH } };
+    bot.spawnPoint = { ...SPAWN };
+    const probe = makeRespawnProbe(bot, { fs, supPath: (n) => path.join(dir, n), windowMs: 80, sampleMs: 10 });
+    probe.onDeath();
+    cl.emit('position', { x: -34, y: 34, z: -77, flags: {}, teleportId: 7 });     // server pos for the dead player (hypothesis)
+    cl.write('position_look', { x: -34.5, y: 34.5, z: -77.5 });                     // outbound with death coords
+    cl.write('teleport_confirm', { teleportId: 7 });
+    cl.write('chat', { message: 'hi' });                                             // not captured
+    bot.entity.position = { ...SPAWN };
+    probe.onSpawn();
+    await new Promise(r => setTimeout(r, 140));
+    const pk = probe._packets();
+    assert.ok(pk.some(p => p.dir === 'in' && p.name === 'position' && p.id === 7 && p.x === -34));
+    assert.ok(pk.some(p => p.dir === 'out' && p.name === 'position_look' && p.x === -34.5));
+    assert.ok(pk.some(p => p.dir === 'out' && p.name === 'teleport_confirm' && p.id === 7));
+    assert.ok(!pk.some(p => p.name === 'chat'));
+    assert.deepEqual(sent, ['position_look', 'teleport_confirm', 'chat'], 'packets still go out');
+    assert.equal(cl.write, origWrite, 'client.write restored after the window');
+    assert.equal(cl.listenerCount('position'), 0);
+    const rec = JSON.parse(fs.readFileSync(path.join(dir, 'respawn_probe.jsonl'), 'utf8').trim());
+    assert.ok(Array.isArray(rec.packets) && rec.packets.length >= 3);
+});

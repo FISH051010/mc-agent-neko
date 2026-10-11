@@ -12,6 +12,13 @@
 
 ---
 
+## C403. 重生探针抓包: 死亡起到重生后 3s 的出站移动包与入站 position 包（respawn_probe.js 需重启,T-0236,worker-death,只观测,⏳待重启）
+
+**证据**: respawn_probe 5 条 unexpected; 21:59:21 seq: spawn(-4.5,68,-1.5) → 1467ms forcedMove (同点) → 1468ms forcedMove 到死亡点 (-0.3,60,-10.6)。所有重生都有 ~1450ms 的 forcedMove = mineflayer 4.37.1 physics.js:424 上游逻辑 "死后 2s 内第一个服务器 position 包, 延迟 1.5s 才回 position_look 并 emit forcedMove", delayedPos 取收包当刻坐标。候选机理 (待抓包证实): ①监工: 重生后 teleport_confirm 前出站了带死前坐标的移动包; ②死后 2s 内先到的 position 包若是"死者位置"(死亡点), 1.5s 后延迟回应就把死亡点坐标 position_look 发回服务器; 1468ms 那个紧随的 forcedMove (本地回环 1ms) 像是服务器对该包的回应。
+**改动**: makeRespawnProbe: onDeath 起包一层 bot._client.write, 记 /position|look|teleport|flying|move_player|accept_teleport/ 出站包 (name/坐标/teleportId), 并监听入站 'position' (x/y/z/flags/teleportId) 与 'respawn'; 重生后 3s (硬上限死后 20s) 还原 write 与监听。写入 respawn_probe.jsonl 的 packets 字段, ★UNEXPECTED 行附前 16 个关键包。行为零改动。
+**可证伪预测**: 下次 unexpected 时 packets 能区分: 出站 position_look 是否带死亡点坐标、在 teleport_confirm 前/后; 入站 position 的 flags 是绝对还是相对。
+**回滚**: revert, 重启。回归 respawn_probe 'T-0236'。
+
 ## C402. 逃跑位移看门狗: 零位移 ≥0.9s 且怪 ≤4b → 两者之间垫块, 垫不住且近战怪贴身 → 垫柱 2 格（modes.js/mobility_geom.js 需重启,T-0233 挂起期 C 组,worker-death,⏳待重启）
 
 **证据**: #5 21:59:18 坑里 (y64 掉进 y60), 僵尸 1.4m: 21:59:14 'Hit (1 mob, hp 12) — sprinting away, not stopping!', 15–17s ctrl forward,sprint 坐标 -0.3,60,-10.7 不动 = 对墙冲刺, 15→0。#4 21:51:53 1 宽隧道骷髅: 'Can't seal here — running from the swarm' 坐标 3s 不变。逃跑没有位移检测 = 背对怪站着挨打。

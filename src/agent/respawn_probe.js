@@ -22,7 +22,39 @@ const r1 = (v) => v ? { x: Math.round(v.x * 10) / 10, y: Math.round(v.y * 10) / 
  */
 export function makeRespawnProbe(bot, { fs, supPath, windowMs = 3000, sampleMs = 100 } = {}) {
     let deathPos = null, diedAt = 0;
+    // ★T-0236 (监工): 5 条 unexpected 的 seq 是 spawn → forcedMove(同点) → 1ms 后 forcedMove 到死亡点 = 服务器传过去的。假设: 重生后、
+    //   收到服务器 position 并回 teleport_confirm 之前, 物理循环 (或旧 bot 实例) 先发出带死前坐标的移动包, 集成服务器接受后回显。
+    //   死亡起到重生后 3s, 记下所有出站移动类包 (name/坐标/teleportId) 与入站 position 包原始字段 (含 flags = 绝对/相对)。只观测。
+    let packets = [], capT0 = 0, capStop = null;
+    const startPacketCapture = () => {
+        const cl = bot && bot._client;
+        if (!cl || cl._respawnProbeCapture) return;
+        packets = []; capT0 = Date.now();
+        const origWrite = cl.write;
+        const OUT_RE = /position|look|teleport|flying|move_player|accept_teleport/i;
+        cl.write = function (name, params) {
+            try {
+                if (OUT_RE.test(String(name)) && packets.length < 200) {
+                    packets.push({ t: Date.now() - capT0, dir: 'out', name, ...(params && Number.isFinite(params.x) ? { x: Math.round(params.x * 10) / 10, y: Math.round(params.y * 10) / 10, z: Math.round(params.z * 10) / 10 } : {}), ...(params && params.teleportId != null ? { id: params.teleportId } : {}) });
+                }
+            } catch (e) {}
+            return origWrite.apply(this, arguments);
+        };
+        const onIn = (p) => { try { if (packets.length < 200) packets.push({ t: Date.now() - capT0, dir: 'in', name: 'position', x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, flags: p.flags, id: p.teleportId }); } catch (e) {} };
+        const onRespawnPkt = () => { try { packets.push({ t: Date.now() - capT0, dir: 'in', name: 'respawn' }); } catch (e) {} };
+        try { cl.on('position', onIn); cl.on('respawn', onRespawnPkt); } catch (e) {}
+        cl._respawnProbeCapture = true;
+        const stop = () => {
+            try { cl.write = origWrite; } catch (e) {}
+            try { cl.removeListener('position', onIn); cl.removeListener('respawn', onRespawnPkt); } catch (e) {}
+            cl._respawnProbeCapture = false;
+            clearTimeout(capStop);
+        };
+        capStop = setTimeout(stop, 20000);   // never left wrapped: hard cap 20s after death
+        startPacketCapture.stop = stop;
+    };
     return {
+        _packets: () => packets,
         /** 现在是否站在死亡点附近 (无床) — 此时背包"没少"可能是捡回了掉落物, 不能当 keepInventory 证据。 */
         nearDeathPoint() {
             try {
@@ -33,6 +65,7 @@ export function makeRespawnProbe(bot, { fs, supPath, windowMs = 3000, sampleMs =
         },
         onDeath() {
             try { deathPos = r1(bot.entity && bot.entity.position); diedAt = Date.now(); } catch (e) {}
+            startPacketCapture();
         },
         onSpawn() {
             if (!diedAt || Date.now() - diedAt > 120000) return;   // only respawns (not the first login)
@@ -46,6 +79,7 @@ export function makeRespawnProbe(bot, { fs, supPath, windowMs = 3000, sampleMs =
             setTimeout(() => {
                 clearInterval(iv);
                 try { bot.removeListener('forcedMove', onForced); } catch (e) {}
+                try { if (startPacketCapture.stop) startPacketCapture.stop(); } catch (e) {}
                 try {
                     let bedExists = false;
                     try { bedExists = fs.existsSync(supPath('bed.json')); } catch (e) {}
@@ -55,11 +89,11 @@ export function makeRespawnProbe(bot, { fs, supPath, windowMs = 3000, sampleMs =
                     // collapse the 100ms tick samples: keep forcedMove packets + every position change
                     const compact = seq.filter((s, i) => s.src !== 'tick' || i === 0
                         || s.x !== seq[i - 1].x || s.y !== seq[i - 1].y || s.z !== seq[i - 1].z);
-                    const rec = { ts: new Date().toISOString(), deathPos, finalPos, worldSpawn, bedExists, ...c, diedAgoMs: t0 - diedAt, seq: compact };
+                    const rec = { ts: new Date().toISOString(), deathPos, finalPos, worldSpawn, bedExists, ...c, diedAgoMs: t0 - diedAt, seq: compact, packets: packets.slice(0, 120) };
                     fs.appendFileSync(supPath('respawn_probe.jsonl'), JSON.stringify(rec) + '\n');
                     if (c.unexpected) {
                         fs.appendFileSync(supPath('progress.txt'),
-                            `[${rec.ts}] [respawn-probe] ★UNEXPECTED respawn at death point: final ${JSON.stringify(finalPos)} is ${c.distDeath.toFixed(1)}b from death ${JSON.stringify(deathPos)}, world spawn ${JSON.stringify(worldSpawn)} (${c.distSpawn === null ? '?' : c.distSpawn.toFixed(1)}b), no bed.json — seq ${JSON.stringify(compact.slice(0, 12))}\n`);
+                            `[${rec.ts}] [respawn-probe] ★UNEXPECTED respawn at death point: final ${JSON.stringify(finalPos)} is ${c.distDeath.toFixed(1)}b from death ${JSON.stringify(deathPos)}, world spawn ${JSON.stringify(worldSpawn)} (${c.distSpawn === null ? '?' : c.distSpawn.toFixed(1)}b), no bed.json — seq ${JSON.stringify(compact.slice(0, 12))} packets ${JSON.stringify(packets.filter(p => p.dir === 'in' || p.x !== undefined || p.id !== undefined).slice(0, 16))}\n`);
                     }
                 } catch (e) {}
             }, windowMs);
