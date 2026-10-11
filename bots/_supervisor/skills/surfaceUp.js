@@ -13,6 +13,7 @@ import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
 import { acquireModeFreeze } from '../../../src/agent/framework/mode_freeze.js';
 import { onSurfaceNow, SURFACE_Y } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
+import { ensureCarriedTable } from '../../../src/agent/framework/ensure_table.js';   // ★T-0264
 const { goals, Movements } = mfp;
 // Real-time debug log (appendFileSync, unbuffered) — skill log() goes to block-buffered
 // stdout which the supervisor can't read for minutes, leaving surfaceUp un-debuggable.
@@ -174,25 +175,8 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
                 return !!(t && t.position && bot.entity.position.distanceTo(t.position) <= 4.5);
             } catch (e) { return false; }
         };
-        const ensureTable = async () => {
-            let c = inventoryCounts();
-            if ((c.crafting_table || 0) > 0 || nearTable()) return true;
-            const plankName = WOOD_TYPES.map(w => `${w}_planks`).find(n => (c[n] || 0) >= 4);
-            if (!plankName) {
-                const logName = WOOD_TYPES.map(w => `${w}_log`).find(n => (c[n] || 0) > 0);
-                if (logName) {
-                    const pn = logName.replace(/_log$/, '_planks');
-                    dbg(`emergency pick: crafting ${pn} for local table`);
-                    await craftTimed(pn, 1);
-                    c = inventoryCounts();
-                }
-            }
-            const tablePlanks = WOOD_TYPES.map(w => `${w}_planks`).find(n => (c[n] || 0) >= 4);
-            if (!tablePlanks) return false;
-            dbg(`emergency pick: crafting local crafting_table from ${tablePlanks}`);
-            await craftTimed('crafting_table', 1);
-            return (inventoryCounts().crafting_table || 0) > 0 || nearTable();
-        };
+        // ★T-0264: the shared pocket-table primitive (mineDown fodder-recraft uses the same one)
+        const ensureTable = () => ensureCarriedTable({ counts: inventoryCounts, craftLocal: craftTimed, nearTable, log: (s) => dbg(`emergency pick: ${s}`) });
         try {
             await ensureTable().catch(e => dbg(`emergency pick table prep failed: ${e && e.message ? e.message : String(e)}`));
             const c = inventoryCounts();

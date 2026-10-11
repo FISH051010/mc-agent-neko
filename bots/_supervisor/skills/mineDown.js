@@ -15,6 +15,7 @@ import { kernelYieldRequested } from './surfaceUp.js';
 import { hostileActionable, hostileRawNear, DESCENT_HOSTILE_R } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0225 shooter-in-view check (T-0222 predicate)   // ★T-0190 kernel commitment-flip stamp (T-0181)
 import fs from 'fs';
 import path from 'path';
+import { ensureCarriedTable } from '../../../src/agent/framework/ensure_table.js';   // ★T-0264 shared pocket-table primitive
 // ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
 //   每个拒跑/abort 原因都对监工不可见。现在同时落 progress.txt — 拒跑闸 / DONE 结果 / abort 原因一行一条。
 const PROG_MD = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
@@ -583,6 +584,14 @@ export default async function mineDown(bot, ctx, opts = {}) {
     try {
         const _hasStone = bot.inventory.items().some(i => i.name === 'stone_pickaxe');
         if (!_hasStone && invCount(/^cobblestone$/) >= 3 && invCount(/^stick$/) >= 2) {
+            // ★T-0264 (live 04:46:34/43Z y18, one wooden pick left, no table in the pack → 'fail' ×2): craftRecipeLocal only
+            //   places a CARRIED table — make one from planks (planks from a log first) before the 3x3 recipe.
+            await ensureCarriedTable({
+                counts: () => { const c = {}; try { for (const it of bot.inventory.items()) c[it.name] = (c[it.name] || 0) + it.count; } catch (e) {} return c; },
+                craftLocal: (name, n) => skills.craftRecipeLocal(bot, name, n),
+                nearTable: () => { try { return !!(ctx.world && ctx.world.getNearestBlock(bot, 'crafting_table', 4)); } catch (e) { return false; } },
+                log: log_,
+            }).catch(() => false);
             await skills.craftRecipeLocal(bot, 'stone_pickaxe', 1).catch(() => {});
             log_(`fodder-recraft: stone_pickaxe → ${bot.inventory.items().some(i => i.name === 'stone_pickaxe') ? 'OK' : 'fail'} (保铁镐不碰石)`);
         }
