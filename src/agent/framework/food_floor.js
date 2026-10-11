@@ -107,7 +107,10 @@ export const FORAGE_FOOD = 10;   // ★T-0252 零可吃时有界侦察的出发�
 export function latchTrigger({ food, hp, tod, bedPending, counts, animalNear }) {
     if (food <= FOOD_FLOOR) return 'starving';
     if (cannotRegen(hp, food)) return 'regen';
-    if (Number.isFinite(tod) && tod >= PRE_DUSK_TOD_LO && tod < PRE_DUSK_TOD_HI && food < PRE_DUSK_FOOD) return 'dusk';
+    // ★T-0255 (监工拍板 (a), 10-11 03:59:46Z 死亡: 带着 food 2 零食物进夜, Normal 饥饿把 hp 18 磨到 2, 天亮出门被僵尸补刀): 零可吃时
+    //   黄昏前最后一个窗口要吃到 FOOD_RELEASE(18) 才进夜 (有吃的维持 PRE_DUSK_FOOD)。复用 T-0210 dusk 锁存 + 定向侦察。
+    const duskFood = (counts && countMatching(counts, EDIBLE_RE) === 0) ? FOOD_RELEASE : PRE_DUSK_FOOD;
+    if (Number.isFinite(tod) && tod >= PRE_DUSK_TOD_LO && tod < PRE_DUSK_TOD_HI && food < duskFood) return 'dusk';
     if (bedPending && food < BED_PENDING_FOOD) return 'bed';
     // ★T-0252 (监工拍板 C 收敛版): 包里零可吃且 food≤FORAGE_FOOD → 白天允许一次有界侦察 (复用 FOOD_FLOOR 96b/90s, 机制/边界不变,
     //   只把出发线从 6 提前到 10 — 上浮+侦察约耗 4 格饱食, food 6 出发包里零食物会饿到 0)。看得见动物时仍按 'stock' 顺路猎。
