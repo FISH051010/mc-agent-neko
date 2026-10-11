@@ -16,8 +16,13 @@
 const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const OPEN = new Set(['air', 'cave_air', 'void_air']);
 
+// ★T-0227: ABORT/放弃原因一并写进 progress.txt (原 log(bot) 不进 progress — 60min 内 3 次 3 连败冷却, 看板上查不到为什么)
+import fs from 'fs';
+import path from 'path';
+const progLine = (s) => { try { fs.appendFileSync(path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt'), `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 export default async function gatherObsidian(bot, ctx, opts = {}) {
-    const { skills, world, Vec3, log } = ctx;
+    const { skills, world, Vec3 } = ctx;
+    const log = (b, s) => { try { ctx.log(b, s); } catch (e) {} if (/ABORT|abort|give up|no water|no lava/.test(s)) progLine(s); };
     const target = (opts && opts.obsidianTarget) || 14;
     const maxMs = (opts && opts.maxMs) || 480000;
     const t0 = Date.now();
@@ -47,6 +52,17 @@ export default async function gatherObsidian(bot, ctx, opts = {}) {
     if (ironShort > 0) {
         log(bot, `gatherObsidian ABORT — kit iron short by ${ironShort} (iron_ingot=${has('iron_ingot')} raw_iron=${has('raw_iron')} bucket=${has('bucket')} flint_and_steel=${has('flint_and_steel')}) — restock iron first.`);
         return false;
+    }
+
+    // ★T-0227 (提案侧 ironForArmor 把粗铁按 1:1 算铁, 本技能合成桶/打火石却只认 iron_ingot 且从不熔炼 → 只有粗铁时 1.5s
+    //   'kit prereq missing' ×3 冷却): 锭不够而有粗铁 → 先熔够 (smeltSafe, 与提案侧'锭 + min(粗铁, 燃料可熔量)'同口径)。
+    {
+        const ingotNeed = (has('flint_and_steel') >= 1 ? 0 : 1) + ((has('water_bucket') >= 1 || has('bucket') >= 1) ? 0 : 3);
+        const short = ingotNeed - has('iron_ingot');
+        if (short > 0 && has('raw_iron') > 0) {
+            log(bot, `gatherObsidian: smelting ${Math.min(short, has('raw_iron'))} raw_iron for the kit (ingots ${has('iron_ingot')}/${ingotNeed})`);
+            await skills.customSkill(bot, 'smeltSafe', 'raw_iron', Math.min(short, has('raw_iron'))).catch(() => {});
+        }
     }
 
     // ── STEP A: flint_and_steel (skip entirely if we already carry one). ──

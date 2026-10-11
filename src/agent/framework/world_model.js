@@ -1130,7 +1130,8 @@ export function proposeTasks(world, bot) {
         //   @46.5 的 ironDemandTotal(含 portal 铁成本)接管补铁 → 铁到位后本门自然放行。
         if (overworld && tierReady && eneeds.hasDiamondPick && eneeds.blazeShort > 0 && !eneeds.obsOk && foodSafeForUnderground) {
             const portalIronNeed = portalKitIronCost(bot);
-            const portalIronOk = ironForArmor(bot) >= portalIronNeed;
+            // ★T-0227: 粗铁要熔才算 — 锭 + min(粗铁, 燃料可熔量) (与 gatherObsidian 入口熔炼同口径)
+            const portalIronOk = invCount(bot, /^iron_ingot$/) + Math.min(invCount(bot, /^raw_iron$/), smeltableUnits(invCounts(bot))) >= portalIronNeed;
             const portalFlintOk = invCount(bot, /^flint_and_steel$/) >= 1 || flintSourceSignal(bot);
             if (portalIronOk && portalFlintOk) {
                 push({ kind: PROPOSAL_KIND.GET_PORTAL_KIT, priority: 52, skill: 'gatherObsidian',
