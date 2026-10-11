@@ -1,6 +1,7 @@
 import * as skills from './library/skills.js';
 import { undergroundKitGate, digOneCapViable, smeltableUnits } from './framework/kit_gate.js';
 import { equippedArmorNames, nextProtectionPiece, armorNightWarranted } from './framework/armor_gate.js';
+import { FILL_RE } from './framework/filler.js';
 import { readJsonCached } from '../utils/json_io.js';
 import { woodBarrenTick, migrationRecommend } from './framework/migration_triggers.js';
 import * as world from './library/world.js';
@@ -42,16 +43,7 @@ import { recordSightings } from './framework/animal_sightings.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
-// ONE shared "placeable filler block we carry" matcher for every wall/seal/interpose
-// consumer in this file (creeperInterpose + self_preservation's fillerOf). Context-specific
-// policy is applied after matching: seal/pillar paths exclude planks, while the one-block
-// creeper interpose may still spend one. These used to
-// be two function-local copies that had ALREADY drifted (calcite/blackstone/basalt in one,
-// unanchored gravel/red_sand in the other) — the exact drift class ★C280 documents as a
-// past death loop (red_sand added to one FILL_RE but not the others → bot dug 163 red_sand
-// yet fillerOf()=undefined → couldn't seal → died 3×). This constant is the UNION of both
-// former copies; add new block families HERE only, never in a local copy.
-const FILL_RE = /cobblestone|cobbled|deepslate|^dirt$|andesite|diorite|granite|^stone$|tuff|gravel|^sand$|red_sand|sandstone|netherrack|_planks$|_log$|_wood$|^planks$|hyphae|^mud$|^clay$|terracotta|dirt_path|coarse_dirt|rooted_dirt|mossy|calcite|blackstone|basalt/;
+// ★T-0262: FILL_RE moved to framework/filler.js (shared with the decision layer's pre-dusk stocking) — add block families THERE only (C280).
 
 // ★perf 2026-07-09: TTL-cached JSON reader for the small supervisor state files that were re-read
 // from disk on the hot observe/decide ticks — advisory.json was read+parsed TWICE per single

@@ -24,14 +24,15 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen, FOOD_RELEASE, healLatchNext, HEAL_RISKY_KINDS, FORAGE_FOOD } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen, FOOD_RELEASE, healLatchNext, HEAL_RISKY_KINDS, FORAGE_FOOD, PRE_DUSK_TOD_LO, PRE_DUSK_TOD_HI } from './food_floor.js';
 import { pickAutoEatFood } from './healing_reflex.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
+import { sealFillerCount, SEAL_FILLER_MIN, SEAL_FILLER_TARGET } from './filler.js';
 import { hostileActionableNear, hostileRawNear, DESCENT_HOSTILE_R } from './hostile_reach.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways, hasShield, protectionHaveNames, SHIELD_PLANKS, chestTierArmor } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
-const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
+const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP', 'PRE_DUSK_FILLER']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 export const NIGHT_ARMOR_PRIORITY = 94.2;
@@ -48,7 +49,10 @@ export function ironTierRecipe(bot) {
     return out;
 }
 // ★T-0252 夜里也能做的活 (封闭坑里熔铁/合成/造甲/下挖) — 白天饥饿时让位给觅食, 留到夜里做。
-export const NIGHT_DOABLE_KINDS = new Set(['GET_ARMOR', 'GET_IRON_TOOLS', 'TOOL_UPKEEP', 'RECLAIM_FURNACE', 'GET_IRON_ARMOR_SET', 'GO_UNDERGROUND', 'GET_DIAMOND']);
+export const NIGHT_DOABLE_KINDS = new Set(['GET_ARMOR', 'GET_IRON_TOOLS', 'TOOL_UPKEEP', 'RECLAIM_FURNACE', 'GET_IRON_ARMOR_SET', 'GO_UNDERGROUND', 'GET_DIAMOND', 'PRE_DUSK_FILLER']);   // ★T-0262 备料也让饥饿先吃
+export const PRE_DUSK_FILLER_PRIORITY = 69;   // ★T-0262 黄昏前备料: dusk 补餐 FOOD_FLOOR@70 之后, 熔铁造甲之前
+/** ★T-0262 就地下挖取土石的目标层 (NIGHT_STONE_BOOTSTRAP 与黄昏前备料共用): 当前 y-6, 不低于 17。 */
+export function stoneBootstrapTargetY(w) { return Math.max(17, Math.floor((w && w.pos && Number.isFinite(w.pos.y)) ? w.pos.y : 64) - 6); }
 export const HEAL_PRIORITY = 80;   // ★T-0237 养伤: FOOD_FLOOR 70 之上 (二者互斥: 有吃的才 HEAL), 夜链 91-94 / HOLD 95 之下
 /** ★T-0237 能就地养伤: food 已 ≥18, 或包里有 auto_eat 会挑的食物 (同 pickAutoEatFood 口径: 饿时放开生肉/腐肉/生鸡)。 */
 export function healFeasible(world, bot) {
@@ -678,6 +682,7 @@ const TASK = Object.freeze({
     NIGHT_SMELT_IRON: 'NIGHT_SMELT_IRON',
     // ★T-0175 (监工, 第十四夜实录): 只有木镐的封坑夜整夜空转 — 夜里就地往下挖几格取圆石, 现做台造石镐+石剑, 再按石镐预算夜挖。
     NIGHT_STONE_BOOTSTRAP: 'NIGHT_STONE_BOOTSTRAP',
+    PRE_DUSK_FILLER: 'PRE_DUSK_FILLER',   // ★T-0262 黄昏前备封坑填充
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -851,6 +856,17 @@ export function proposeTasks(world, bot) {
     if (overworld && bot && bot._healLatch && healFeasible(w, bot)) {
         push({ kind: PROPOSAL_KIND.HEAL, priority: HEAL_PRIORITY, skill: 'healHold',
                rationale: `hp ${vitals.hp} — eat to ${FOOD_RELEASE}+ and hold still until regenerated (no outings/migrate/mining while low)` });
+    }
+
+    // ★T-0262 黄昏前备料 (监工, 04:27:54Z 死亡: 重建后包里零填充方块, 入夜 bunkerDown cap/seal 全失败 → 拉怪跑 → 被溺尸打死):
+    //   黄昏前窗口 (tod PRE_DUSK 9000-12000) 封坑填充 (FILL_RE 去木料) < SEAL_FILLER_MIN 且有镐 → 就地下挖 ≤6 格取土石 (下挖即庇护,
+    //   与 NIGHT_STONE_BOOTSTRAP 同一下挖目标, 但不限木镐/不限夜里)。@69: 同窗口先吃 (dusk 补餐 FOOD_FLOOR@70) 再备料, 排在熔铁造甲之前。
+    if (overworld && time.phase === 'day' && Number.isFinite(time.tod) && time.tod >= PRE_DUSK_TOD_LO && time.tod < PRE_DUSK_TOD_HI
+        && (kit.picks || 0) >= 1 && !(threat.actionable > 0) && sealFillerCount(invCounts(bot)) < SEAL_FILLER_MIN) {
+        const _ty = stoneBootstrapTargetY(w);
+        push({ kind: TASK.PRE_DUSK_FILLER, priority: PRE_DUSK_FILLER_PRIORITY, skill: 'mineDown', args: [{ targetY: _ty }],
+               rationale: `pre-dusk: only ${sealFillerCount(invCounts(bot))} seal-filler blocks (<${SEAL_FILLER_MIN}) — dig down ≤6 in place for dirt/cobble before night (descending = shelter)`,
+               hints: { targetY: _ty } });
     }
 
     // 2) Food: stock to a BUFFER, not just survival (user #5: stockpile meat).
@@ -1358,7 +1374,7 @@ export function proposeTasks(world, bot) {
                            rationale: `night stone bootstrap: ${_c.cobblestone || 0} cobble in hand — craft ${_plan.wants.map(x => x[0]).join('+')} now, then mine the night on stone picks`,
                            hints: { night: true, wants: _plan.wants.map(x => x[0]) } });
                 } else {
-                    const _ty = Math.max(17, Math.floor((w.pos && Number.isFinite(w.pos.y)) ? w.pos.y : 64) - 6);
+                    const _ty = stoneBootstrapTargetY(w);   // ★T-0262 与黄昏前备料同一下挖目标
                     push({ kind: TASK.NIGHT_STONE_BOOTSTRAP, priority: 93.5, skill: 'mineDown', args: [{ targetY: _ty }],
                            rationale: `night stone bootstrap: wood picks only, ${_c.cobblestone || 0} cobble — dig down ≤6 in place for cobble (descending = shelter)`,
                            hints: { night: true, targetY: _ty } });
@@ -1735,6 +1751,8 @@ export function isGoalDone(kind, world, bot) {
         case TASK.NIGHT_SEAL:
             return w.time.phase === 'day';
         // ★T-0175: 石镐到手 (下一拍夜计划按石镐预算重评 → MINE_THROUGH_NIGHT) 或天亮
+        case TASK.PRE_DUSK_FILLER:   // ★T-0262 攒够备料目标 或 黄昏前窗口结束 (入夜交给夜链)
+            return sealFillerCount(invCounts(bot)) >= SEAL_FILLER_TARGET || !(w.time && w.time.phase === 'day' && Number.isFinite(w.time.tod) && w.time.tod >= PRE_DUSK_TOD_LO && w.time.tod < PRE_DUSK_TOD_HI);
         case TASK.NIGHT_STONE_BOOTSTRAP:
             return w.time.phase === 'day' || /stone|iron|diamond|netherite/.test((w.kit && w.kit.pickTier) || '');
         // ── Opening tasks. SCOUT is done once both wood + village are known landmarks. ──
