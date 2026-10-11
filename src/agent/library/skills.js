@@ -8,6 +8,7 @@ import { unclimbVines } from './vine_unstick.js';
 import { lowHpMovementProfile } from '../framework/mobility_signals.js';
 import { runAsSkill } from '../framework/reflex_body_gate.js';
 import { acquireModeFreeze } from '../framework/mode_freeze.js';
+import { settleForDig } from '../framework/dig_settle.js';
 import { emergencyWoodAllowed } from '../framework/kit_gate.js';
 import { planWaterStep } from '../mobility_geom.js';
 import settings from "../../../settings.js";
@@ -1547,6 +1548,7 @@ export async function safeDig(bot, block, { maxMs = 15000, approach = true, equi
         // legit slow break (barehand stone 7.5s, any pick far less); only genuinely hard blocks
         // (obsidian ~9.4s w/ diamond pick, for the nether portal) keep the long backstop. We can't
         // use canSeeBlock to pre-skip — x-ray ore is buried (6 faces hidden) and would all be skipped.
+        await settleForDig(bot);   // ★T-0283: mineflayer times a dig started mid-drop ×5 — land first (bounded 1.2s)
         const _hard = /obsidian|ancient_debris|reinforced/.test(cur.name || '');
         const _baseDigMs = _hard ? maxMs : Math.min(maxMs, 8000);
         const _digMs = digTimeoutForCurrentEnvironment(bot, cur, _baseDigMs);
@@ -2726,6 +2728,7 @@ export async function breakBlockAt(bot, x, y, z) {
         
         // Add timeout to prevent infinite hanging
         const digTimeout = 60000; // 60 seconds max
+        await settleForDig(bot);   // ★T-0283: land first — a mid-drop dig is timed ×5
         const digPromise = gazeHold(bot, block, bot.dig(block, true));
         let _digTo = null;   // cleared in finally — a successful dig must not leave a 60s timer pending
         const timeoutPromise = new Promise((_, reject) => {

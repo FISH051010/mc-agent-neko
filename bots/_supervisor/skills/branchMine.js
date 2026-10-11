@@ -11,6 +11,7 @@ import fs from 'fs';
 import mfp from 'mineflayer-pathfinder';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
 import { rotateAwayFromAborted, rememberAbortedHeading } from './mineDown.js';
+import { settleForDig } from '../../../src/agent/framework/dig_settle.js';
 const { goals: BM_GOALS, Movements: BM_MOVES } = mfp;
 
 // ★2026-07-05 铜矿除名 (durability leak 实锤: 227 raw_copper ≈ 75 次破坏 ≈ 半根石镐耐久
@@ -412,6 +413,9 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
                 if (!(reqTier > 0 && heldTier >= reqTier)) return 'wrong-tool';
             }
             try { bot.clearControlStates(); } catch (e) {}
+            // ★T-0283: land first — a dig started mid-drop is timed ×5 by mineflayer (coal 2.25s → 11.25s > maxMs → timeout)
+            const _settle = await settleForDig(bot);
+            if (_settle.waited > 0) motion('dig.settle', { owner, label, target: blockObj(fresh), ...(_settle) });
             try { await bot.lookAt(fresh.position.offset(0.5, 0.5, 0.5), true); } catch (e) {}
             try {
                 await Promise.race([
@@ -423,7 +427,8 @@ export default async function branchMine(bot, ctx, length = 24, targetY = null) 
                 log(bot, `branchMine ${label}: dug ${fresh.name}@${fresh.position.x},${fresh.position.y},${fresh.position.z}`);
                 return 'ok';
             } catch (e) {
-                try { bot.stopDigging(); } catch (_) {}
+                // ★T-0280: only our own dig — never the one that replaced it
+                if (typeof skills.stopOwnDig === 'function') skills.stopOwnDig(bot, fresh); else { try { bot.stopDigging(); } catch (_) {} }
                 motion('dig.retry', {
                     owner,
                     label,
