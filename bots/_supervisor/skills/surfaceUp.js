@@ -1320,7 +1320,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
                 continue;
             }
         }
-        for (let h = 2; h <= 4; h++) {
+        for (let h = 2; h <= 4 && !deadlineHit(); h++) {   // ★T-0251 flip/deadline honoured per block, not per iteration
             const c = bot.blockAt(bot.entity.position.offset(0, h, 0));
             if (!c) { opened++; continue; }
             if (NO_DIG.has(c.name)) break;
@@ -1386,11 +1386,12 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
             }
             opened++;
         }
+        if (deadlineHit()) break;   // ★T-0251 (live 03:42:22→26Z: one iteration ran 4.6s past a kernel flip)
         if ((verticalBlocked || opened < 2) && await scaffoldStep()) continue;
         try { await skills.pillarUp(bot, Math.min(y0 + Math.max(2, opened), targetY)); } catch (e) {}
         if (yNow() <= y0) {
             let rose = false;
-            for (let m = 0; m < 3 && !rose; m++) rose = await manualPillar(y0);
+            for (let m = 0; m < 3 && !rose && !deadlineHit(); m++) rose = await manualPillar(y0);
             const progressed = yNow() > y0;
             if (!progressed) stuckFloor++;
             else stuckFloor = 0;

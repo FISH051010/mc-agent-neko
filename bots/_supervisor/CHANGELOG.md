@@ -3260,6 +3260,8 @@
 
 - **★C428-S replenishKit 只缺可就地合成的 tier 镐时不上浮, 就地冶炼合成; ④-pre 冶铁门与决策层同口径 (T-0247, 监工指派, worker-tier 核)**（2026-10-11，worker-stuck，T-0247）: live 02:59:52→03:03:26Z — REPLENISH_KIT 因铁阶段囤镐 (_tierShort, iron镐=1/4; 1 锭+3 粗铁+燃料够再造一把, world_model pickPlanHasMat=true) 被正确提出, 但 replenishKit 不论缺什么一律先 ① surfaceUp (木料只差宽迟滞的 64 目标), 上浮 0 增益 ×3 → 冷却; ④-pre 冶铁门要求粗铁单独 ≥3 (决策层是锭+粗铁 ≥3), ④ 静默 break。修: 新导出 ironSmeltNeeded (锭+粗铁 ≥3 且有煤/木炭, 只熔差额) 与 tierPickCraftableHere (本 tier 镐短缺且材料+台/板+棍/板齐, ironTarget 参数默认 4 供 worker-tier IRON_PICK_TARGET 传入); _craftHere = tier 未达标 && picks≥3 && planksEq ≥ REPLENISH_WOOD_FLOOR(=4, 镜像 world_model REPLENISH_PLANKS_TRIGGER) && 可就地合成 → ① 跳过上浮 ('① SKIP surfaceUp — tier pick craftable here … (T-0247)'), 直接 ③/④-pre/④; ④-pre 改用 ironSmeltNeeded; ④ 缺 tier 镐又无材料时打 '④ skip — tier pick short but no material here' 不再静默。test/replenish_craft_in_place.test.mjs (T-0247 ×6); T-0212 钉子随条件同步。热加载。全套 759/759。
 
+- **★C429-S replenishKit 地表判据与 T-0189 同源 + surfaceUp 兜底迭代逐块查截止 (T-0251, 监工指派)**（2026-10-11，worker-stuck，T-0251）: live 10-11 03:42:17Z — y72 地表云杉树干下 START onSurface=false (原木算封顶) → '① underground (y=72) → surfaceUp target 63' → 'y 72→72 (gain 0.0) onSurface=true' 白干一轮; 03:42:22 承诺翻 GET_ARMOR, surfaceUp fallback 一轮迭代 (挖顶+pillarUp+3×manualPillar) 不查截止, 到 26.6 才退 (kernel 24.7 force halt, T-0206)。修: replenishKit 新导出 shouldClimbForKit({y,sky,oldSurface}) — skyOpenAt===true (T-0189, food_floor/quickMeal 同一判据, 既有导出) 或 y≥SURFACE_UP_TARGET_Y=63 (surfaceUp 自身目标, 无处可爬) 或旧顶扫描 (树叶冠层光照<14 时仍认地表) → 不上浮; onSurface 改用它。surfaceUp fallback 头顶清挖循环 (h 2..4) 与手动垫柱循环逐步查 deadlineHit, 迭代中段命中即 break → 承诺翻转让位从 ~4.6s 收到一步。test/replenish_onsurface_sky.test.mjs (T-0251 ×4)。热加载。全套 772/772。
+
 ---
 
 ---
