@@ -11,6 +11,7 @@ import mfp from 'mineflayer-pathfinder';
 import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
+import { acquireModeFreeze } from '../../../src/agent/framework/mode_freeze.js';
 const { goals, Movements } = mfp;
 // Real-time debug log (appendFileSync, unbuffered) — skill log() goes to block-buffered
 // stdout which the supervisor can't read for minutes, leaving surfaceUp un-debuggable.
@@ -689,10 +690,13 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     if (_suNightNaked) dbg('★夜裸: 保留 self_defense/self_preservation 护体 (不冻结, 不清 interrupt)');
     const GUARD = ['mobility', 'self_preservation', 'self_defense', 'item_collecting', 'unstuck', 'hunting', 'cowardice', 'idle_staring', 'elbow_room', 'torch_placing', 'auto_eat']
         .filter(m => !(_suNightNaked && (m === 'self_defense' || m === 'self_preservation')));
-    const prevModes = {};
-    try { for (const m of GUARD) if (bot.modes && bot.modes.exists && bot.modes.exists(m)) { prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
+    // ★T-0234 (death 22:59:46, 反射全程沉默): 两个 surfaceUp 重叠 (22:57:01 的孤儿 + 22:59:19 新入) — 后入者把"已被冻结的 off"
+    //   记成原值, 先退出的恢复 on、后退出的又恢复成 off → self_defense/self_preservation 永久关着, 骷髅贴脸 0.2m 无人出手。
+    //   冻结改为引用计数 (acquireModeFreeze): 只有第一个冻结者记录原值, 计数归零才恢复; 超过 5 分钟的冻结视为孤儿强制恢复。
+    const _freeze = acquireModeFreeze(bot, GUARD);
+    const prevModes = _freeze.prev;   // shared view: the danger check below unfreezes through _freeze.unfreeze
     try { bot.clearControlStates(); } catch (e) {}
-    dbg(`modes frozen: ${Object.keys(prevModes).join(',')}`);
+    dbg(`modes frozen: ${_freeze.held.join(',')}`);
     // ★death #17: danger while the combat reflexes are frozen → unfreeze them NOW and unwind (every main loop checks deadlineHit).
     let _suDangerHit = false;
     _suDangerCheck = () => {
@@ -708,7 +712,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
         try { const hb = bot.blockAt(bot.entity.position.offset(0, 1.62, 0)); _hw = !!(hb && /water/.test(hb.name || '')); } catch (e) {}
         if (!surfaceUpDangerYield({ hurtAgoMs: Date.now() - (bot.lastDamageTime || 0), hostiles: hs, headInWater: _hw, oxygen: bot.oxygenLevel })) return false;
         _suDangerHit = true;
-        try { for (const m of ['self_defense', 'self_preservation']) if (m in prevModes) { bot.modes.setOn(m, prevModes[m]); delete prevModes[m]; } } catch (e) {}
+        try { for (const m of ['self_defense', 'self_preservation']) _freeze.unfreeze(m); } catch (e) {}
         try { bot.pathfinder && bot.pathfinder.stop && bot.pathfinder.stop(); } catch (e) {}
         try { bot.clearControlStates(); } catch (e) {}
         const near = hs.filter(h => h.d < 8).map(h => `${h.name}@${h.d.toFixed(1)}`).join(',');
@@ -719,7 +723,7 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     try {
       await climbToSurface();
     } finally {
-      try { for (const m in prevModes) bot.modes.setOn(m, prevModes[m]); } catch (e) {}
+      try { _freeze.release(); } catch (e) {}
     }
     dbg(`EXIT y=${yNow()} (target ${targetY})`);
     // ★孤儿协程截止的可观测退出: 到点主动交还身体, 不再清 interrupt_code / 不再与调用方下一步打架。

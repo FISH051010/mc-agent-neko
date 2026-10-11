@@ -12,6 +12,13 @@
 
 ---
 
+## C401. ★★反射冻结改引用计数共享原语: 重叠的冻结者不再把 self_defense/self_preservation 永久留成关（framework/mode_freeze.js + skills.js/bunker.js 需重启; surfaceUp.js/achieve.js 热加载,T-0234 挂起期 D 组,worker-death,⏳待重启）
+
+**证据**: #6 22:59:46 shot:Skeleton, 有石剑。22:59:31 被射 hp5.8 → 22:59:34.8–37.3 骷髅在同格 0.2–0.4m, act 全空 3s, 整个窗口零条 self_defense/self_preservation 日志 (连 DISENGAGE 都没有 = 反射没在跑)。surfaceUp.log: 22:57:01 ENTER+modes frozen (实例 A, 孤儿未退) → 22:59:19 ENTER+modes frozen (实例 B, 此时 A 已冻 → B 记下的原值是 off) → 22:59:22 EXIT (A, 恢复 on) → 22:59:23 EXIT (B, 恢复 off) ⇒ 反射被永久关掉直到死。同一"记原值→关→finally 恢复"写法共 6 处 (surfaceUp / bunker / skills×3 / achieve), 任意两处交错都会出事。
+**改动**: 新 framework/mode_freeze.acquireModeFreeze(bot, names): 按 mode 引用计数, 登记表 bot._modeFreeze (挂 bot 不挂模块: 热加载/多实例共享)。计数 0→1 记原值并关, 之后只加计数; release 计数归零才恢复原值; unfreeze(m) 立即恢复并清零 (遇险还给反射, 其他持有者 release 时跳过); 首冻超 5min 仍计数>0 视为孤儿, 下次 acquire 先恢复。6 处全部改用它 (surfaceUp 的遇险解冻走 _freeze.unfreeze)。
+**可证伪预测**: 不再出现"反射沉默" — 有怪在 self_defense 范围且有武器时 act 不再长时间全空; surfaceUp.log 的 modes frozen 不再导致之后反射缺席。
+**回滚**: revert, 重启。回归 test/mode_freeze.test.mjs (复刻 A进B进A出B出)。
+
 ## C400. ★溺水不互让: 只让给"真在接"的 ENTOMBED 挖出 + surfaceUp 泡在水里当场还给反射（swim_progress.js 需重启; surfaceUp.js 热加载,T-0232 挂起期 B 组,worker-death,⏳待重启）
 
 **证据**: #7 23:09:34 溺死: 23:08:30 SWIM 缺氧升 ENTOMBED (T-0174 classifySwim), 之后 64s branchMine 在水下一直挖 (dig=stone/lapis, vy=-0.01), 23:09:26 起溺水伤 16→0; 无任何 [swim]/挖出日志 —— T-0121 采矿心跳让 mobility 不把"技能在挖"当被困 (挖出不动), sealedWaterTrapYield 又因 state==='ENTOMBED' 让 self_preservation 让位 = 两边互让。#2 19:59:40 溺死: surfaceUp 向上挖穿进水体, 冻着 self_preservation 在水里爬 15s, swim 等 surfaceUp 返回才接手, O2 已 -1、hp1。

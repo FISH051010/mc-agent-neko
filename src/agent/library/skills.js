@@ -7,6 +7,7 @@ import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
 import { lowHpMovementProfile } from '../framework/mobility_signals.js';
 import { runAsSkill } from '../framework/reflex_body_gate.js';
+import { acquireModeFreeze } from '../framework/mode_freeze.js';
 import { planWaterStep } from '../mobility_geom.js';
 import settings from "../../../settings.js";
 import path from 'path';
@@ -469,13 +470,13 @@ export async function craftRecipe(bot, itemName, num=1) {
     const _guardModes = ['item_collecting', 'auto_eat', 'self_defense', 'self_preservation', 'hunting', 'torch_placing', 'unstuck', 'cowardice', 'idle_staring', 'elbow_room'];
     const _prevModes = {};
     try { bot.clearControlStates(); } catch (e) {}
-    try { for (const m of _guardModes) if (bot.modes && bot.modes.exists(m)) { _prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
+    const _mfzA = acquireModeFreeze(bot, _guardModes);   // ★T-0234 refcounted (shared registry)
     try {
         await bot.craft(recipe, Math.min(craftLimit.num, num), craftingTable);
         if(craftLimit.num<num) log(bot, `Not enough ${craftLimit.limitingResource} to craft ${num}, crafted ${craftLimit.num}. You now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
         else log(bot, `Successfully crafted ${itemName}, you now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
     }
-    finally { try { for (const m in _prevModes) bot.modes.setOn(m, _prevModes[m]); } catch (e) {} }
+    finally { try { _mfzA.release(); } catch (e) {} }
     // NOTE: we deliberately DO NOT reclaim (pick up) the table after every craft. Doing so
     // crippled the grind — each subsequent craft then had to re-make a table (chop planks ->
     // place -> craft -> pick up -> repeat), trapping the bot in a wood/table loop that never
@@ -591,7 +592,7 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
     const prevModes = {};
     try { bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null); } catch (e) {}
     try { bot.clearControlStates(); } catch (e) {}
-    try { for (const m of guardModes) if (bot.modes && bot.modes.exists(m)) { prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
+    const _mfzB = acquireModeFreeze(bot, guardModes);   // ★T-0234
     try {
         await bot.craft(recipe, Math.min(craftLimit.num, num), craftingTable);
         log(bot, `Successfully crafted ${itemName} locally, now have ${world.getInventoryCounts(bot)[itemName] || 0}.`);
@@ -623,7 +624,7 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
                 }
             }
         }
-        try { for (const m in prevModes) bot.modes.setOn(m, prevModes[m]); } catch (e) {}
+        try { _mfzB.release(); } catch (e) {}
         try { bot.clearControlStates(); } catch (e) {}
     }
 }
@@ -6996,7 +6997,7 @@ export async function pillarUp(bot, targetY = null, opts = {}) {
     // self_preservation), auto_eat and a fresh admin interrupt stay live.
     const GUARD = ['mobility', 'unstuck', 'elbow_room', 'idle_staring', 'item_collecting', 'torch_placing', 'hunting'];
     const prevModes = {};
-    try { for (const m of GUARD) if (bot.modes && bot.modes.exists && bot.modes.exists(m)) { prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
+    const _mfzC = acquireModeFreeze(bot, GUARD);   // ★T-0234
 
     const yOf = () => Math.floor(bot.entity.position.y);
     const heldUsable = () => usable.find(n => bot.inventory.items().some(i => i.name === n));
@@ -7071,7 +7072,7 @@ export async function pillarUp(bot, targetY = null, opts = {}) {
         }
     } finally {
         try { bot.clearControlStates && bot.clearControlStates(); } catch (e) {}
-        try { for (const m in prevModes) bot.modes.setOn(m, prevModes[m]); } catch (e) {}
+        try { _mfzC.release(); } catch (e) {}
     }
 
     const finalY = yOf();

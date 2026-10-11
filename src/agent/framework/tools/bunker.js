@@ -29,6 +29,7 @@
 
 import { LANE } from '../contracts.js';
 import { getLaneManager } from '../tool_lanes.js';
+import { acquireModeFreeze } from '../mode_freeze.js';
 
 // ★C280: include red_sand + terracotta(+color variants) + sandstones so the bot can
 // seal in BADLANDS/MESA, where red_sand/terracotta are THE abundant blocks (the bot dug
@@ -89,7 +90,7 @@ async function _seal(bot, ctx, opts) {
 
     // ── mode-guard: pause movement modes so they can't drag the bot out mid-seal. ──
     const prevModes = {};
-    try { for (const m of GUARD_MODES) if (bot.modes && bot.modes.exists(m)) { prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
+    const _mfz = acquireModeFreeze(bot, GUARD_MODES);   // ★T-0234 refcounted (shared registry)
 
     try {
         const startY = Math.floor(bot.entity.position.y);
@@ -138,6 +139,6 @@ async function _seal(bot, ctx, opts) {
         log(`[bunker] dig=${dug} cap=${capped} walls=${walls} covered=${covered} foot=${foot.x},${foot.y},${foot.z}`);
         return { dig: dug, cap: capped, walls, covered, foot: { x: foot.x, y: foot.y, z: foot.z } };
     } finally {
-        try { for (const m of Object.keys(prevModes)) bot.modes.setOn(m, prevModes[m]); } catch (e) {}
+        try { _mfz.release(); } catch (e) {}
     }
 }

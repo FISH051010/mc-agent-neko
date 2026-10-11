@@ -7,6 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
+import { acquireModeFreeze } from '../../../src/agent/framework/mode_freeze.js';
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 // ★perf 2026-07-09: death_log.jsonl grows all session and was re-read+split twice per collect-loop
@@ -438,7 +439,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
         const _guard = ['item_collecting', 'auto_eat', 'self_defense', 'self_preservation', 'hunting', 'torch_placing', 'unstuck', 'cowardice', 'idle_staring', 'elbow_room', 'tool_keeper'];
         const _prev = {};
         try { bot.clearControlStates(); } catch (e) {}
-        try { for (const m of _guard) if (bot.modes && bot.modes.exists(m)) { _prev[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
+        const _mfz = acquireModeFreeze(bot, _guard);   // ★T-0234 refcounted (shared registry)
         try { await bot.craft(r, count, table || undefined); }
         catch (e) {
             prog(`${tag}craft ${item} fail: ${e.message}`);
@@ -465,7 +466,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
                 } catch (e2) { prog(`${tag}★C349 craft ${item} retry still failing: ${e2.message}`); }
             }
         }
-        finally { try { for (const m in _prev) bot.modes.setOn(m, _prev[m]); } catch (e) {} }
+        finally { try { _mfz.release(); } catch (e) {} }
         return have() > before;
     };
     const placeTable = async () => {
