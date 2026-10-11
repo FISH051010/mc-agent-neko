@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { HUNTABLE_RE, skyOpenAt, STARVING_FOOD } from '../../../src/agent/framework/food_floor.js';
+import { HUNTABLE_RE, skyOpenAt, FOOD_FLOOR, cannotRegen } from '../../../src/agent/framework/food_floor.js';
 import { hostileActionableNear, isHostileEntity } from '../../../src/agent/framework/hostile_reach.js';
 const { goals, Movements } = mfp;
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
@@ -424,7 +424,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
         const c = inv();
         // ★T-0230: food≤STARVING_FOOD 且只剩生鸡 (烤不了) → 吃生鸡 (food 见底时饥饿效果是纯收益); 否则照旧不吃生鸡
         const pick = COOKED.find(n => c[n] > 0) || ['beef', 'porkchop', 'mutton', 'rabbit'].find(n => c[n] > 0)
-            || (bot.food <= STARVING_FOOD && c.chicken > 0 ? 'chicken' : null);
+            || ((bot.food <= FOOD_FLOOR || cannotRegen(bot.health, bot.food)) && c.chicken > 0 ? 'chicken' : null);   // ★T-0237 与 auto_eat 同档
         if (!pick) break;
         try { await raceI(bot, skills.consume(bot, pick), Math.min(left(), 5000)); ate++; } catch (e) { break; }
     }

@@ -63,6 +63,19 @@ export const DESCENT_MIN_HP = 10;
 // ★T-0188 (监工: 07:15 hp=11 food=11 零食物不回血, FOOD_FLOOR 无状态触发 hp<10 与 arbiter eatFloor hp≤12 口径不一 → hp 10-12 卡死):
 //   "回不了血" 统一判据 hp≤REGEN_HP_MAX 且 food<FOOD_RELEASE — FOOD_FLOOR 会话触发 / arbiter.eatFloor / pickAutoEatFood 应急档三处共用。
 export const REGEN_HP_MAX = 12;
+// ★T-0237 养伤锁存 (监工指派, worker-death 复盘挂起期 #1/#3/#6/#8: 死前 20-62min hp≤10 不回血, 决策层照派 MIGRATE/REPLENISH_KIT/
+//   GET_PORTAL_KIT/reclaimFurnace, #3 hp1 被 migrate 带着迎面走向骷髅)。入口与 descentBlocked 同一条线 (hp < DESCENT_MIN_HP),
+//   回到 HEAL_RELEASE_HP 才放手 (迟滞, 防 9↔10 抖动)。状态可由 hp 重建, 重启只丢中间带 (10-15) 的锁存, 可接受。
+export const HEAL_RELEASE_HP = 16;
+export function healLatchNext(active, hp) {
+    if (!Number.isFinite(hp)) return !!active;
+    if (hp < DESCENT_MIN_HP) return true;
+    if (hp >= HEAL_RELEASE_HP) return false;
+    return !!active;
+}
+/** 养伤期间不派的出门/迁移/远行类 kind (下矿类已由 descentBlocked 按技能名剔除; 这里补非下矿的出门任务)。 */
+export const HEAL_RISKY_KINDS = new Set(['MIGRATE', 'REPLENISH_KIT', 'GET_PORTAL_KIT', 'RECLAIM_FURNACE', 'GET_BED', 'HUNT_PEARLS', 'BANK_GEAR',
+    'GET_IRON_ARMOR_SET', 'GET_DIAMOND', 'GO_UNDERGROUND', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP', 'OPENING_SCOUT', 'GET_BLAZE_RODS', 'ENTER_NETHER', 'GO_END']);
 export function cannotRegen(hp, food) { return Number.isFinite(hp) && Number.isFinite(food) && hp <= REGEN_HP_MAX && food < FOOD_RELEASE; }
 const COOKED_RE = /^(cooked_\w+|bread|baked_potato)$/;
 

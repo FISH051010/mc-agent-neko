@@ -24,7 +24,8 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen, FOOD_RELEASE, healLatchNext, HEAL_RISKY_KINDS } from './food_floor.js';
+import { pickAutoEatFood } from './healing_reflex.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
 import { hostileActionableNear } from './hostile_reach.js';
@@ -34,6 +35,15 @@ const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS'
 // ★T-0149 零镐原地造镐: 压过夜链 (DUSK_*/NIGHT_* 91-94), 让位 HOLD@95 (真威胁先保命)
 export const PICKLESS_UPKEEP_PRIORITY = 94.5;
 export const NIGHT_ARMOR_PRIORITY = 94.2;
+export const HEAL_PRIORITY = 80;   // ★T-0237 养伤: FOOD_FLOOR 70 之上 (二者互斥: 有吃的才 HEAL), 夜链 91-94 / HOLD 95 之下
+/** ★T-0237 能就地养伤: food 已 ≥18, 或包里有 auto_eat 会挑的食物 (同 pickAutoEatFood 口径: 饿时放开生肉/腐肉/生鸡)。 */
+export function healFeasible(world, bot) {
+    try {
+        const v = (world && world.vitals) || {};
+        if (Number(v.food) >= FOOD_RELEASE) return true;
+        return !!pickAutoEatFood(bot.inventory.items(), { health: v.hp, food: v.food });
+    } catch (e) { return false; }
+}
 export const BED_ERRAND_PRIORITY = 66;   // ★T-0202 床优先: FOOD_FLOOR 70 之后、GET_ARMOR 58 之前
 export const BED_ERRAND_MIN_FOOD = 10;
 export const BED_NO_SHEEP_BACKOFF_MS = 8 * 60 * 1000;   // ★T-0208 一次"附近没羊"后 8min 不再侦察 (约 1/3 白天; 换个地方再找)   // ★T-0192 夜间造甲 > DUSK_MINE_NIGHT 94 (同分抢不下承诺), < 无镐补镐 94.5 / HOLD 95
@@ -671,6 +681,8 @@ export function proposeTasks(world, bot) {
     const push = (p) => out.push(p);
 
     const { vitals, threat, kit, time, migration, surfaceGate, mobility } = w;
+    // ★T-0237 养伤锁存每拍更新 (纯由 hp 推得, 重启可重建)
+    try { if (bot) bot._healLatch = dimOf(bot) === 'overworld' ? healLatchNext(bot._healLatch, vitals.hp) : false; } catch (e) {}
 
     // ★T-0195 (监工拍板, death #13): 无胸甲档 + keepInventory 关 → 挖掘原语破入天然空腔一律封口换向 (不等看见敌对)。
     //   每拍由决策层写策略标记, skills.sealCavityBreach 认它; 有胸甲后自动恢复"有敌对才封"。
@@ -810,6 +822,12 @@ export function proposeTasks(world, bot) {
             if (_plan.targeted) _ff.args[0] = { ..._ff.args[0], scoutToward: _plan.toward, scoutRadius: _plan.radius };
         }
         if (_ff) push({ kind: PROPOSAL_KIND.FOOD_FLOOR, priority: _ff.priority, skill: 'quickMeal', args: _ff.args, rationale: _ff.rationale });
+    }
+    // ★T-0237 养伤: hp<10 (锁存到 16) 且能把 food 吃到 ≥18 (已 ≥18 或包里有可吃) → HEAL@80 原地吃饱等回血 (healHold)。
+    //   没吃的 → 不提 HEAL, 由 FOOD_FLOOR (regen 锁存) 去猎; 白天是紧急 (isEmergency), 夜里让夜链庇护。
+    if (overworld && bot && bot._healLatch && healFeasible(w, bot)) {
+        push({ kind: PROPOSAL_KIND.HEAL, priority: HEAL_PRIORITY, skill: 'healHold',
+               rationale: `hp ${vitals.hp} — eat to ${FOOD_RELEASE}+ and hold still until regenerated (no outings/migrate/mining while low)` });
     }
 
     // 2) Food: stock to a BUFFER, not just survival (user #5: stockpile meat).
@@ -1561,9 +1579,11 @@ export function proposeTasks(world, bot) {
     // ★饥饿禁下矿 (T-0069 跟进, 监工拍板): food≤3 且零可吃 → 剔除一切派发下矿技能的提案 (含夜间整夜下矿),
     //   按技能名而非 kind 判, 新增的下矿 kind 也自动受限。isGoalDone 侧同口径释放已在执行的下矿承诺。
     let _final = out;
+    // ★T-0237 养伤期间剔除出门/迁移/远行类提案 (与 isGoalDone 同口径释放已承诺的)
+    if (bot && bot._healLatch) _final = _final.filter(p => !HEAL_RISKY_KINDS.has(p.kind));
     // ★监工加急#6 (18:22:30Z 实录: food 到 12 就翻 GET_DIAMOND, hp=1 带全套铁装下矿): hp<10 同样关门。
     if (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }))
-        _final = out.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));
+        _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));   // ★T-0237: 叠加在养伤过滤之上 (原为 out.filter 会冲掉前面的过滤)
     _final.sort((a, b) => b.priority - a.priority);
     return _final;
 }
@@ -1598,6 +1618,9 @@ function isBootstrapDone(world, bot) {
 /** Has the committed goal of `kind` been satisfied? (Completion criteria.) */
 export function isGoalDone(kind, world, bot) {
     const w = world || EMPTY_WORLD;
+    // ★T-0237: 养伤期间已承诺的出门/迁移/远行类视为结束 → 释放 (kernel 打断子技能); HEAL 本身: 回血放手或吃不饱 (交给 FOOD_FLOOR) 即结束
+    if (bot && bot._healLatch && HEAL_RISKY_KINDS.has(kind)) return true;
+    if (kind === PROPOSAL_KIND.HEAL) return !(bot && bot._healLatch) || !healFeasible(w, bot);
     // ★饥饿禁下矿 (T-0069 跟进): 下矿类承诺在 food≤3 且零可吃时视为结束 → 释放 → kernelDriver 见 kind 翻转打断矿里的子技能。
     if (DESCENT_KINDS.has(kind)) {
         const _food = (w.vitals && w.vitals.food != null) ? w.vitals.food : (bot && bot.food);
@@ -1777,6 +1800,7 @@ function isEmergency(p, world, liveKind) {
     // ★T-0230 (10-11 01:00-01:06Z: 白天 food 6→0、hp 20→1, REPLENISH_KIT@67 的粘性承诺握着身体 surfaceUp 零升高, FOOD_FLOOR@70 抢不下;
     //   食物本能关 (用户令) 时 GET_FOOD 整条不提, 紧急只认它 → 饥饿永远不是紧急): 白天 FOOD_FLOOR 在 food≤STARVING_FOOD 或回不了血时是紧急。
     //   夜里不算 (夜里饿着的最优解是庇护等天亮, 不是摸黑出去猎)。
+    if (p.kind === PROPOSAL_KIND.HEAL && world.time && world.time.phase === 'day') return true;   // ★T-0237 白天养伤抢下出门承诺
     if (p.kind === PROPOSAL_KIND.FOOD_FLOOR && world.time && world.time.phase === 'day' && world.vitals
         && (Number(world.vitals.food) <= STARVING_FOOD || cannotRegen(world.vitals.hp, world.vitals.food))) return true;
     // ★T-0149: 零镐原地造镐 (craft-only, 几秒, 不移动) — 必须能抢下已粘住的夜链承诺, 否则夜里徒手挖石到天亮
