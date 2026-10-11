@@ -345,8 +345,29 @@ export function digInterrupter(bot) {
     try {
         const o = bot._bodyOwner;
         const t = bot.targetDigBlock;
-        return `[by owner=${o ? o.name : '-'} digSlot=${bot._bodyDigLockOwner || '-'} digging=${t ? t.name + '@' + t.position : '-'} chopGen=${bot._chopGen ?? '-'}]`;
+        const a = bot._lastDigAbort;   // ★T-0260 who actually called stopDigging (probe below)
+        const by = a && Date.now() - a.at < 3000 ? ` abortBy=${a.by || '?'}` : '';
+        return `[by owner=${o ? o.name : '-'} digSlot=${bot._bodyDigLockOwner || '-'} digging=${t ? t.name + '@' + t.position : '-'} chopGen=${bot._chopGen ?? '-'}${by}]`;
     } catch (e) { return '[by ?]'; }
+}
+
+// ★T-0260 (live 10-11 04:22:54-57Z @45,67,-24: mineDown ×3 step-0 'Digging aborted [by owner=- …]' within ~1ms → GO_UNDERGROUND
+//   cooled; also 03:25:29). mineflayer raises 'Digging aborted' only from bot.stopDigging(), which emits 'diggingAborted'
+//   synchronously — the listener's stack holds the real caller (bot.stopDigging itself is reassigned per dig, so it can't be
+//   wrapped). Installed once per bot from a hot-reloaded skill; frames outside node_modules, top 4.
+export function installDigAbortProbe(bot) {
+    try {
+        if (!bot || bot._digAbortProbe || typeof bot.on !== 'function') return;
+        bot._digAbortProbe = true;
+        bot.on('diggingAborted', (block) => {
+            try {
+                const frames = String(new Error().stack || '').split('\n').slice(1).map(s => s.trim())
+                    .filter(s => s && !/node_modules|node:internal|node:events|EventEmitter|installDigAbortProbe|\bemit\b/.test(s))
+                    .slice(0, 4).map(s => s.replace(/^at /, '').replace(/\(?[A-Za-z]:[\\/].*?[\\/](src|bots)[\\/]/, '($1/').replace(/^file:\/\/\/.*?[\\/](src|bots)[\\/]/, '$1/'));
+                bot._lastDigAbort = { at: Date.now(), block: block ? `${block.name}@${block.position}` : '-', by: frames.join(' < ') };
+            } catch (e) {}
+        });
+    } catch (e) {}
 }
 
 // ★T-0139: heading memory for step-0 terrain aborts, shared by the fluid abort and the no-floor (cave void)
@@ -407,6 +428,7 @@ export function gravityPendingAbove(bn, x, feetY, z, span = 6) {
 
 export default async function mineDown(bot, ctx, opts = {}) {
     const { log, skills, Vec3 } = ctx;
+    installDigAbortProbe(bot);   // ★T-0260 name the stopDigging caller in 'Digging aborted' DONE lines
     const mdEnteredAt = Date.now();
     const steps = opts.steps || 40;
     const targetY = opts.targetY != null ? opts.targetY : 45;

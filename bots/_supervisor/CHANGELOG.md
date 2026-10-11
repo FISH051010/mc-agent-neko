@@ -3277,6 +3277,8 @@
 
 - **★C433-S chopWood 地表判据与 T-0251 同源: 树冠下 y≥63 非封闭即地表, 直接走向树 (T-0257, worker-tier 转, 零镐一阶)**（2026-10-11，worker-stuck，T-0257）: live 10-11 04:16:30-32Z @28,66,-10 重生零镐 (stick 4/planks 2/table 1) — chopWood ×3 各 0.4s 0 原木 → REPLENISH_KIT 冷却: 'not-surface y=66 enclosed=false sky=false highSurface=false tree=13.3b unreachable → surfacing' → 'digToSurface NOPICK boxed cooldown — yield to mobility' → 'surfacing hard-failed in no-pick stone box'。36 格天空探测把云杉树冠当封顶, _highOpenSurface 又要 y≥70, 地表上的 bot 被当成"石头盒子", 13.3b 外的树没去走。修: 新导出 chopOnSurface({y,enclosed,skyProbe,skyLight,highSurface}) — 高地判定 或 skyOpenAt===true (T-0189, 既有导出) 或 (y≥CHOP_SURFACE_Y=63 且非封闭, 同 T-0251 上浮目标线) 或旧 y≥58+探测 → 在地表; _notSurface 改用它。test/chop_surface_judge.test.mjs (T-0257 ×4)。热加载。全套 791/791。
 
+- **★C434-S 'Digging aborted' 抓真凶探针: diggingAborted 同步事件记 stopDigging 调用栈 (T-0260 第一步, 开局下矿主卡点)**（2026-10-11，worker-stuck，T-0260）: live 10-11 04:22:54-57Z @45,67,-24 (两把木镐刚重建) — GO_UNDERGROUND → mineDown ×3 每次 DIAG step0 后 1-3ms 'dig threw: Digging aborted [by owner=- digSlot=- digging=- chopGen=7]' → 冷却 5min (03:25:29 也有一次)。mineflayer 只在 bot.stopDigging() 抛此错 (bot.stopDigging 每次 dig 重新赋值, 无法包装), 而 stopDigging 同步 emit 'diggingAborted' — 监听器里的调用栈就是真凶; chopGen=7 只是最近一次 chop 的世代号, 不是中止信号。新导出 installDigAbortProbe (每 bot 一次, mineDown 入口调用, 热加载即生效): 记 bot._lastDigAbort={at,block,by=非 node_modules 前 4 帧}; digInterrupter 3s 内附 'abortBy=…'。test/dig_abort_probe.test.mjs (T-0260 ×3)。定位后再修根 + 补 chop 取消→mineDown 首挖用例。全套 796/796。
+
 ---
 
 ---
