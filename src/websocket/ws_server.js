@@ -122,6 +122,7 @@ class WSMessageServer {
 
             // Send current inventory if agent is online
             this.sendInitialInventory(ws);
+            ws.send(JSON.stringify({ type: 'viewer_info', viewer: this.agent?.bot?.viewer?.info || { available: false } }));
 
             // ★2026-07-07 用户令: 给刚连上的客户端补发一帧"当前状态人话" (bot_status_nl)。
             //   周期 timer 只在状态"变化"时广播(全局 dedup _lastNLText), 所以一个在稳态中途接入的

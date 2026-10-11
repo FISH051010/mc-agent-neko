@@ -16,10 +16,7 @@ import { installVineUnstick } from './library/vine_unstick.js';
 import { installArrowGuard } from './arrow_guard.js';
 import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
-// NOTE (local deploy): addBrowserViewer import removed — it is HARD-DISABLED below
-// (its only call site is commented out) and statically importing browser_viewer.js
-// pulls in prismarine-viewer, whose require/import mix crashes Node's ESM/CJS loader
-// (ERR_INTERNAL_ASSERTION) at startup. Re-add after building headless-gl if you want it.
+// Browser transport is loaded on spawn only when rendering is enabled.
 import { serverProxy, sendOutputToServer, sendSkinStatusToServer } from './mindserver_proxy.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
@@ -554,13 +551,14 @@ export class Agent {
                 this._disconnectHandled = false;
                 this._reconnectNowInFlight = false;
                 if (reconnectAttempt > 0) console.log(`✅ Bot reconnected successfully (attempt ${reconnectAttempt}, spawn confirmed)`);
-                // HARD-DISABLED (unconditional): the prismarine-viewer browser renderer
-                // crashes the agent subprocess (exit 1) → auto-restart → ~15s offline → bot
-                // dies AFK. Env-gating didn't survive subprocess restarts, so the viewer (and
-                // the churn) came back on every restart. Never start it. (Visual feed gone;
-                // bot staying alive matters more. To restore the feed, re-enable this line.)
-                // addBrowserViewer(this.bot, this.count_id);
-                console.log('🛑 addBrowserViewer HARD-DISABLED (no renderer, no churn)');
+                if (settings.render_bot_view) {
+                    try {
+                        const { addBrowserViewer } = await import('./vision/browser_viewer.js');
+                        await addBrowserViewer(bot, this.count_id);
+                    } catch (error) {
+                        console.warn('Browser viewer unavailable; continuing without rendering:', error.message);
+                    }
+                }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
 

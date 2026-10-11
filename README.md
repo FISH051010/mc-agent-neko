@@ -50,6 +50,16 @@ If you encounter issues, check the [FAQ](https://github.com/mindcraft-bots/mindc
 
 
 # Configuration
+
+## Browser visualization
+
+An optional modern viewer adds first-person, third-person and dungeon 2.5D views,
+inventory, survival HUD, chat and a minimap for the existing bot. Local and LAN
+devices can watch concurrently. The frontend comes from
+[mc-visual-console](https://github.com/jcs130/mc-visual-console), with a bundled
+Mineflayer host adapter. See [setup and resource generation](docs/modern-viewer.md).
+The modern renderer currently supports Minecraft Java 1.20.6; it is disabled by default.
+
 ## Model Customization
 
 You can configure project details in `settings.js`. [See file.](settings.js)

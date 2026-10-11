@@ -119,3 +119,4 @@ bots/_supervisor/oracle_shared.mjs -export-ignore
 
 # patch 文件保留行尾空白（来自 origin/main）
 *.patch whitespace=-blank-at-eol
+src/agent/vision/modern/host.mjs text eol=lf
