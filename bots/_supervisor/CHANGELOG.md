@@ -3275,6 +3275,8 @@
 
 - **★C432-S chopWoodWithin 超时后等孤儿砍树循环真正退出再交还身体 (T-0256 续, 幽灵栈)**（2026-10-11，worker-stuck，T-0256）: live 04:05:35Z 'replenish-chop-timeout (superseded orphan chop loop)' 后 replenishKit 立刻重派, 而 gen1 孤儿 chopWood 正在 pinned-stair 长操作里, 04:05:42 才在 iter11 看到 _superseded ('chopWood YIELD (superseded gen1→4)') — 两个砍树循环同时驱动身体 7s。gen 1→4 是 supersede/cancel/新进入各 +1, 不是 3 个幽灵栈。修: chopWoodWithin 超时 → cancelChopWood 后有界 (drainMs 默认 8s) 等孤儿 promise 落定, 再 setGoal(null)+clearControlStates, 然后才把超时抛给调用方。test/chopwood_within.test.mjs 追加 T-0256 ×2 (排空 / 有界)。src → 需重启。全套 787/787。
 
+- **★C433-S chopWood 地表判据与 T-0251 同源: 树冠下 y≥63 非封闭即地表, 直接走向树 (T-0257, worker-tier 转, 零镐一阶)**（2026-10-11，worker-stuck，T-0257）: live 10-11 04:16:30-32Z @28,66,-10 重生零镐 (stick 4/planks 2/table 1) — chopWood ×3 各 0.4s 0 原木 → REPLENISH_KIT 冷却: 'not-surface y=66 enclosed=false sky=false highSurface=false tree=13.3b unreachable → surfacing' → 'digToSurface NOPICK boxed cooldown — yield to mobility' → 'surfacing hard-failed in no-pick stone box'。36 格天空探测把云杉树冠当封顶, _highOpenSurface 又要 y≥70, 地表上的 bot 被当成"石头盒子", 13.3b 外的树没去走。修: 新导出 chopOnSurface({y,enclosed,skyProbe,skyLight,highSurface}) — 高地判定 或 skyOpenAt===true (T-0189, 既有导出) 或 (y≥CHOP_SURFACE_Y=63 且非封闭, 同 T-0251 上浮目标线) 或旧 y≥58+探测 → 在地表; _notSurface 改用它。test/chop_surface_judge.test.mjs (T-0257 ×4)。热加载。全套 791/791。
+
 ---
 
 ---

@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
 import { kernelYieldRequested } from './surfaceUp.js';   // ★T-0197 kernel commitment-flip stamp (T-0181)
+import { skyOpenAt } from '../../../src/agent/framework/food_floor.js';   // ★T-0257 T-0189 surface criterion (existing export)
 const _CHOP_PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const _dbg = (s) => { try { fs.appendFileSync(_CHOP_PROG, `[${new Date().toISOString()}] [chopDBG] ${s}\n`); } catch (e) {} };
 // ★perf 2026-07-09: death_log.jsonl grows all session and was re-read+split every main-loop iteration
@@ -114,6 +115,18 @@ export function xrayTrunkSkip(dist, canSee) {
 //   riskyTree's high-tree needs dy≥8, so it stayed the target pass after pass ('defer blacklist … climb first' while
 //   stale≤6), and the 16-log scan was mostly that one trunk. A human chops a tree whose trunk stands on the ground;
 //   a dangling trunk is the last resort; two failed climbs on one tree → next tree.
+// ★T-0257 (live 10-11 04:16:30Z @28,66,-10, worker-tier 转, 零镐一阶): 'not-surface y=66 enclosed=false sky=false
+//   highSurface=false tree=13.3b → surfacing' → 'digToSurface NOPICK boxed' → 0 logs ×3 → cooled. The 36-block sky probe
+//   counts a leaf canopy as a roof and _highOpenSurface needs y≥70. Surface = high-open verdict, or sky open over the head
+//   (T-0189 skyOpenAt), or at/above the climb target 63 and not enclosed (T-0251 line), or the old y≥58+probe.
+export const CHOP_SURFACE_Y = 63;
+export function chopOnSurface({ y, enclosed, skyProbe, skyLight, highSurface }) {
+    if (highSurface) return true;
+    if (skyLight === true) return true;
+    if (enclosed) return false;
+    if (Number.isFinite(y) && y >= CHOP_SURFACE_Y) return true;
+    return Number.isFinite(y) && y >= 58 && !!skyProbe;
+}
 export const HIGH_TREE_DEFER_MAX = 2;
 export const GROUNDED_PREFER_R = 48;
 const _GROUND_NOT = /(leaves|_log|_wood|_stem)$/;
@@ -1986,7 +1999,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
         } catch (e) { _skyAboveNow = false; }
         const _enclosedNow = !!(bot._mobility && bot._mobility.enclosed);
         const _highSurfaceLike = _highOpenSurface();
-        const _notSurface = !_highSurfaceLike && (_yNow < 58 || _enclosedNow || !_skyAboveNow);
+        const _notSurface = !chopOnSurface({ y: _yNow, enclosed: _enclosedNow, skyProbe: _skyAboveNow, skyLight: skyOpenAt(bot), highSurface: _highSurfaceLike });   // ★T-0257 same surface criterion as T-0251
         const _nearHighTree = nearest && nearest.b && nearest.b.position
             && ndist <= 12 && (nearest.b.position.y - bot.entity.position.y) >= 4;
         if (!_opts.criticalForageLocalOnly && _nearHighTree && surfaced < 4) {
