@@ -307,6 +307,38 @@ export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     return null;
 }
 
+// ★T-0139 reopened (监工, live 10-11 02:25-02:27Z @278..284,58,-41..-44): a one-block cave roof over a big cavity —
+//   every heading 'no floor support … (air)', no hop column, 7 dispatches → cooldown, with 414 cobblestone in the pack.
+//   A human doesn't walk away from a cave roof: if the cave floor is close they step down into it (≤3 blocks = no fall
+//   damage), otherwise they put a block under the next step and keep going (挖三填一).
+//   → { kind:'drop', depth, landY } | { kind:'bridge', place:[{x,y,z,on}] } | null.  `on` = placeBlock's placeOn
+//   (the side of the target the reference block is on). Air voids only — fluids keep their own branch.
+export const VOID_SAFE_DROP = 3;
+const VOID_AIR_RE = /^(air|cave_air|void_air)$/;
+const BAD_LANDING_RE = /^(magma_block|campfire|soul_campfire|pointed_dripstone|powder_snow|sweet_berry_bush|cactus)$/;
+export function planVoidBridge(bn, cx, cy, cz, sx, sz) {
+    const nm = (b) => (b && b.name) || 'air';
+    const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
+    const fx = cx + sx, fz = cz + sz;
+    if (!VOID_AIR_RE.test(nm(bn(fx, cy - 2, fz)))) return null;
+    // ① shallow cave: first solid within VOID_SAFE_DROP under the support cell, every cell on the way plain air
+    for (let m = 1; m <= VOID_SAFE_DROP; m++) {
+        const b = bn(fx, cy - 2 - m, fz);
+        if (VOID_AIR_RE.test(nm(b))) continue;
+        if (solid(b) && !BAD_LANDING_RE.test(nm(b)) && !MD_GRAV_RE.test(nm(b))) return { kind: 'drop', depth: m, landY: cy - 1 - m };
+        break;   // fluid / junk / gravity block in the way → don't drop
+    }
+    // ② deep (or wet) cave: build the support. Against the new-feet cell's underside when it is rock (cave roof);
+    //    when it is open too, first fill it from our own floor's side, then the support under it (dug again next).
+    const feet = bn(fx, cy - 1, fz);
+    if (FLUID.test(nm(feet))) return null;
+    const support = { x: fx, y: cy - 2, z: fz, on: 'top' };
+    if (solid(feet)) return { kind: 'bridge', place: [support] };
+    if (!solid(bn(cx, cy - 1, cz))) return null;
+    const SIDE = { '-1,0': 'west', '1,0': 'east', '0,-1': 'north', '0,1': 'south' };
+    return { kind: 'bridge', place: [{ x: fx, y: cy - 1, z: fz, on: SIDE[`${-sx},${-sz}`] }, support] };
+}
+
 // ★T-0148 诊断 (监工): 'Digging aborted' = 别人在我们挖到一半时开了新 dig 或调了 stopDigging。把那一刻谁持有身体/
 //   挖掘槽/在挖什么记进 DONE, 下次一眼看出是孤儿 chopWood、反射 mode 还是 pathfinder。只诊断, 不改 strike 计数。
 export function digInterrupter(bot) {
@@ -482,6 +514,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     log_(`START pos=${Math.round(bot.entity.position.x)},${Math.round(bot.entity.position.y)},${Math.round(bot.entity.position.z)} hp=${Math.round(bot.health)} food=${bot.food} heading=${sx},${sz} targetY=${targetY}`);
     let dug = 0, ore = 0, abort = null, noProg = 0;
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
+    let voidBridges = 0;   // ★T-0139 reopened: cave steps bridged / dropped this dispatch (≤48)
     let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0, deferredByShooter = false;   // ★T-0225 deferredByShooter   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1); ★T-0203 cavity re-heading (≤3)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
     const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
@@ -493,6 +526,9 @@ export default async function mineDown(bot, ctx, opts = {}) {
     // So each step: if the lone pick is about to break AND we can't craft a replacement, ABORT
     // now (still has a few uses to climb back; higher layer then surfaces for wood).
     const invCount = (re) => bot.inventory.items().filter(it => re.test(it.name || '')).reduce((s, it) => s + it.count, 0);
+    // ★T-0139: plain filler for a stair support over a cave (never ores/logs/planks the tier chain needs)
+    const bridgeBlockName = () => ['cobblestone', 'cobbled_deepslate', 'dirt', 'andesite', 'diorite', 'granite', 'tuff', 'stone', 'deepslate', 'netherrack']
+        .find(n => invCount(new RegExp(`^${n}$`)) > 0) || null;
     // ★2026-07-05 用户令1: 地底隧道直通床区 — 床锚 10-48b 内 → 井口设在家门口, 竖井天然
     //    通家 (死亡重生即矿口, 免地表折返税)。>48b 不折返 (远征矿有自己的语境)。
     try {
@@ -993,7 +1029,32 @@ export default async function mineDown(bot, ctx, opts = {}) {
         const _below = [3, 4, 5, 6].map(d => nm(bn(fx, cy - d, fz)));
         const _supportCollapses = supportCollapses(nm(support), _below);
         if (_supportCollapses) log_(`support ${nm(support)}@${fx},${cy - 2},${fz} hangs over ${_below.join('/')} — collapses when dug above; treating as void (T-0158)`);
-        if (_supportCollapses || /^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support))) {
+        // ★T-0139 reopened: cave under the next step — step down when the floor is ≤3 below, else place the support
+        //   (挖三填一) and descend as usual. Only if that can't be done fall through to void hop / relocate / abort.
+        let _voidHandled = false;
+        if (!_supportCollapses && voidBridges < 48) {
+            const _vb = planVoidBridge(bn, cx, cy, cz, sx, sz);
+            if (_vb && _vb.kind === 'drop') {
+                _voidHandled = true; voidBridges++;
+                if (voidBridges <= 3 || voidBridges % 8 === 0) log_(`void under ${fx},${cy - 2},${fz}: cave floor ${_vb.depth}b down — stepping down into it (T-0139)`);
+            } else if (_vb && _vb.kind === 'bridge') {
+                const _blk = bridgeBlockName();
+                if (_blk && invCount(new RegExp(`^${_blk}$`)) >= _vb.place.length) {
+                    let _ok = true;
+                    for (const p of _vb.place) {
+                        let r = false;
+                        try { r = await skills.placeBlock(bot, _blk, p.x, p.y, p.z, p.on, true, { positioning: false }); } catch (e) { r = false; }
+                        if (!r && !(bn(p.x, p.y, p.z) && bn(p.x, p.y, p.z).boundingBox === 'block')) { _ok = false; break; }
+                    }
+                    const _sup = bn(fx, cy - 2, fz);
+                    if (_ok && _sup && _sup.boundingBox === 'block') {
+                        _voidHandled = true; voidBridges++;
+                        if (voidBridges <= 3 || voidBridges % 8 === 0) log_(`void under ${fx},${cy - 2},${fz}: placed ${_vb.place.length} ${_blk} as stair support (#${voidBridges}, T-0139)`);
+                    } else log_(`void bridge at ${fx},${cy - 2},${fz} failed (placed=${_ok}) — falling back to void hop`);
+                } else log_(`void under ${fx},${cy - 2},${fz}: no filler block to bridge (need ${_vb.place.length})`);
+            }
+        }
+        if (!_voidHandled && (_supportCollapses || /^(air|cave_air|void_air|water|flowing_water)$/.test(nm(support)))) {
             rememberAbortedHeading(bot, sx, sz);   // ★T-0139 next dispatch turns away from the void
             // ★T-0137② turn / sidestep ≤4b to a column with 3 solid below and restart the stair — this dispatch
             if (voidHops < 3) {

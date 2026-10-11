@@ -27,6 +27,6 @@ test('T-0139: memory is local (8b) and TTL-bound; all four cardinals failed → 
 
 test('T-0139: mineDown wires the void abort into the shared heading memory', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
-    assert.match(src, /test\(nm\(support\)\)\) \{\s*\n\s*rememberAbortedHeading\(bot, sx, sz\);/, 'void abort feeds the heading memory first');
+    assert.match(src, /test\(nm\(support\)\)\)\)? \{\s*\n\s*rememberAbortedHeading\(bot, sx, sz\);/, 'void abort feeds the heading memory first');
     assert.match(src, /const _rot = rotateAwayFromAborted\(bot\._mineDownFluidAvoid, p0, sx, sz\);/);
 });
