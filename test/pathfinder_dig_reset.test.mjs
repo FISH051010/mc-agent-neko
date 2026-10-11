@@ -38,3 +38,19 @@ test('T-0260: the patch file carries the change (reproducible by patch-package o
     assert.match(patch, /digTargetPos/);
     assert.match(patch, /\+\s*bot\.removeListener\('diggingAborted', detectDiggingStopped\)/);
 });
+
+test('T-0260: the patch carries EVERY line of the fix, not just the declaration (a fresh install is the only copy players get)', () => {
+    // worker-tests mutation 10-11: dropping the resetPath target check or the digTargetPos assignment from the .patch kept all
+    // three pins above green — node_modules on the dev machine was already patched — yet `npm install` (postinstall patch-package,
+    // the consumer build) would ship the old resetPath that kills the skill's fresh dig.
+    for (const line of [
+        /^\+\s*let digTargetPos = null/m,
+        /^\+.*digTargetPos = block \? block\.position : null/m,
+        /^\+\s*if \(bot\.targetDigBlock && digTargetPos && bot\.targetDigBlock\.position && bot\.targetDigBlock\.position\.equals\(digTargetPos\)\) \{/m,
+        /^\+\s*bot\.removeListener\('diggingAborted', detectDiggingStopped\)/m,
+        /^\+\s*bot\.removeListener\('diggingCompleted', detectDiggingStopped\)/m,
+        /^-\s*bot\.removeAllListeners\('diggingAborted', detectDiggingStopped\)/m,
+    ]) assert.match(patch, line);
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    assert.match(pkg.scripts.postinstall || '', /patch-package/, 'patches are applied on install');
+});
