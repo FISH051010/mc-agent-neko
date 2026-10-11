@@ -6600,17 +6600,22 @@ export async function coverFromShooter(bot, shooter, { tag = 'cover' } = {}) {
  * @param botPos bot.entity.position (浮点) ; blockPos 被挖方块坐标 (整数)
  */
 export function overheadGravityRisk(blockAt, botPos, blockPos) {
-    if (!botPos || !blockPos) return false;
+    return !!overheadGravityCell(blockAt, botPos, blockPos);
+}
+/** ★T-0268b: the gravity cell that makes the dig unsafe ({x,y,z,name}) — the refusal log names it, not the dug block. */
+export function overheadGravityCell(blockAt, botPos, blockPos) {
+    if (!botPos || !blockPos) return null;
     const feetY = Math.floor(botPos.y);
     const dy = blockPos.y - feetY;
-    if (dy < 2 || dy > 4) return false;
+    if (dy < 2 || dy > 4) return null;
     const xs = new Set([Math.floor(botPos.x - 0.3), Math.floor(botPos.x + 0.3)]);
     const zs = new Set([Math.floor(botPos.z - 0.3), Math.floor(botPos.z + 0.3)]);
-    if (!xs.has(blockPos.x) || !zs.has(blockPos.z)) return false;
+    if (!xs.has(blockPos.x) || !zs.has(blockPos.z)) return null;
     for (let y = blockPos.y; y <= blockPos.y + 3; y++) {
-        if (GRAVITY_BLOCK_RE.test(((blockAt(new Vec3(blockPos.x, y, blockPos.z)) || {}).name) || '')) return true;
+        const name = ((blockAt(new Vec3(blockPos.x, y, blockPos.z)) || {}).name) || '';
+        if (GRAVITY_BLOCK_RE.test(name)) return { x: blockPos.x, y, z: blockPos.z, name };
     }
-    return false;
+    return null;
 }
 
 /**

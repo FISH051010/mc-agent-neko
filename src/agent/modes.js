@@ -4909,6 +4909,15 @@ const modes_list = [
                                 bot.dig(fresh, true),
                                 new Promise((_, rej) => setTimeout(() => rej(new Error('dig-timeout')), digMs)),
                             ]);
+                            // ★T-0268b: every mobility rescue dig (MAROONED-climb, ENTOMBED/SEALED/POCKET dig-out …) leaves a line with the
+                            //   gravity column it opened under — death #55 couldn't tell which dig dropped the gravel. 1s throttle.
+                            if (Date.now() - (bot._mobDigLogAt || 0) >= 1000) {
+                                bot._mobDigLogAt = Date.now();
+                                const _gc = [];
+                                for (let _gy = 1; _gy <= 4; _gy++) { const _gb = bot.blockAt(fresh.position.offset(0, _gy, 0)); if (_gb && skills.GRAVITY_BLOCK_RE.test(_gb.name || '')) _gc.push(`${_gb.name}@y${fresh.position.y + _gy}`); }
+                                const _fp = bot.entity.position;
+                                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [mobility] dug ${fresh.name}@${fresh.position.x},${fresh.position.y},${fresh.position.z} (${why}) feet=${Math.floor(_fp.x)},${Math.floor(_fp.y)},${Math.floor(_fp.z)} gravityAbove=${_gc.join('/') || '-'} hp=${Math.round(bot.health || 0)} (T-0268b)\n`); } catch (e) {}
+                            }
                             // ★T-0131 ①: the cell is open but its gravity column may still be coming down — drain it
                             //   (re-dig what lands) before ANY step into it; unresolved → hold steps, report failure.
                             if (_gravity) {
@@ -5834,14 +5843,16 @@ const modes_list = [
                 //   2..4 格、且其本身或上方 3 格有重力块 = 整列塌进身上 → 拒挖 (throw, 调用方按挖掘失败换路/横挪)。
                 //   头格(脚+1)不拦 (已在窒息, 不挡自救)。
                 if (block && block.position) {
-                    let _ogr = false;
-                    try { _ogr = skills.overheadGravityRisk((p) => bot.blockAt(p), bot.entity.position, block.position); } catch (e) {}
+                    let _ogrCell = null;   // ★T-0268b: the real gravity cell (the dug block itself may be tuff/stone)
+                    try { _ogrCell = skills.overheadGravityCell((p) => bot.blockAt(p), bot.entity.position, block.position); } catch (e) {}
+                    const _ogr = !!_ogrCell;
                     if (_ogr && !skills.suffocationRescueActive(bot)) {   // ★T-0268 suffocation dig-out exempt
+                        const _ogrWhy = `overhead gravity column: ${_ogrCell ? `${_ogrCell.name}@${_ogrCell.x},${_ogrCell.y},${_ogrCell.z} in the column above ` : ''}${block.name}@${block.position.x},${block.position.y},${block.position.z} (feet y=${Math.floor(bot.entity.position.y)})`;
                         if (Date.now() - (bot._ogrLogAt || 0) > 5000) {
                             bot._ogrLogAt = Date.now();
-                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [dig-gate] ★overhead gravity column — refused dig ${block.name}@${block.position.x},${block.position.y},${block.position.z} above own feet y=${Math.floor(bot.entity.position.y)} skill=${bot._currentSkill || '-'} (T-0172)\n`); } catch (e) {}
+                            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [dig-gate] ★refused dig — ${_ogrWhy} skill=${bot._currentSkill || '-'} (T-0172)\n`); } catch (e) {}
                         }
-                        const err = new Error(`overhead gravity column: ${block.name} above own head — sidestep first`);
+                        const err = new Error(`${_ogrWhy} — sidestep first`);
                         write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
                         throw err;
                     }
