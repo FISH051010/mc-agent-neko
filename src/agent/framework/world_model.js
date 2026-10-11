@@ -862,11 +862,18 @@ export function proposeTasks(world, bot) {
     //   黄昏前窗口 (tod PRE_DUSK 9000-12000) 封坑填充 (FILL_RE 去木料) < SEAL_FILLER_MIN 且有镐 → 就地下挖 ≤6 格取土石 (下挖即庇护,
     //   与 NIGHT_STONE_BOOTSTRAP 同一下挖目标, 但不限木镐/不限夜里)。@69: 同窗口先吃 (dusk 补餐 FOOD_FLOOR@70) 再备料, 排在熔铁造甲之前。
     if (overworld && time.phase === 'day' && Number.isFinite(time.tod) && time.tod >= PRE_DUSK_TOD_LO && time.tod < PRE_DUSK_TOD_HI
-        && (kit.picks || 0) >= 1 && !(threat.actionable > 0) && sealFillerCount(invCounts(bot)) < SEAL_FILLER_MIN) {
-        const _ty = stoneBootstrapTargetY(w);
-        push({ kind: TASK.PRE_DUSK_FILLER, priority: PRE_DUSK_FILLER_PRIORITY, skill: 'mineDown', args: [{ targetY: _ty }],
-               rationale: `pre-dusk: only ${sealFillerCount(invCounts(bot))} seal-filler blocks (<${SEAL_FILLER_MIN}) — dig down ≤6 in place for dirt/cobble before night (descending = shelter)`,
-               hints: { targetY: _ty } });
+        && !(threat.actionable > 0) && sealFillerCount(invCounts(bot)) < SEAL_FILLER_MIN) {
+        if (totalPicks(bot) >= 1) {
+            const _ty = stoneBootstrapTargetY(w);
+            push({ kind: TASK.PRE_DUSK_FILLER, priority: PRE_DUSK_FILLER_PRIORITY, skill: 'mineDown', args: [{ targetY: _ty }],
+                   rationale: `pre-dusk: only ${sealFillerCount(invCounts(bot))} seal-filler blocks (<${SEAL_FILLER_MIN}) — dig down ≤6 in place for dirt/cobble before night (descending = shelter)`,
+                   hints: { targetY: _ty } });
+        } else {
+            // ★T-0262 补 (监工): 零镐 (死亡重生后第一晚) — 泥土徒手就能挖, 本身就是封坑料: 挖地表泥土到 SEAL_FILLER_MIN, 不下挖石头。
+            push({ kind: TASK.PRE_DUSK_FILLER, priority: PRE_DUSK_FILLER_PRIORITY, skill: 'gatherDirt', args: [{ count: SEAL_FILLER_MIN }],
+                   rationale: `pre-dusk, no pick: only ${sealFillerCount(invCounts(bot))} seal-filler blocks — hand-dig surface dirt to ${SEAL_FILLER_MIN} (one night pit)`,
+                   hints: { pickless: true } });
+        }
     }
 
     // 2) Food: stock to a BUFFER, not just survival (user #5: stockpile meat).
@@ -1752,7 +1759,7 @@ export function isGoalDone(kind, world, bot) {
             return w.time.phase === 'day';
         // ★T-0175: 石镐到手 (下一拍夜计划按石镐预算重评 → MINE_THROUGH_NIGHT) 或天亮
         case TASK.PRE_DUSK_FILLER:   // ★T-0262 攒够备料目标 或 黄昏前窗口结束 (入夜交给夜链)
-            return sealFillerCount(invCounts(bot)) >= SEAL_FILLER_TARGET || !(w.time && w.time.phase === 'day' && Number.isFinite(w.time.tod) && w.time.tod >= PRE_DUSK_TOD_LO && w.time.tod < PRE_DUSK_TOD_HI);
+            return sealFillerCount(invCounts(bot)) >= (totalPicks(bot) >= 1 ? SEAL_FILLER_TARGET : SEAL_FILLER_MIN) || !(w.time && w.time.phase === 'day' && Number.isFinite(w.time.tod) && w.time.tod >= PRE_DUSK_TOD_LO && w.time.tod < PRE_DUSK_TOD_HI);
         case TASK.NIGHT_STONE_BOOTSTRAP:
             return w.time.phase === 'day' || /stone|iron|diamond|netherite/.test((w.kit && w.kit.pickTier) || '');
         // ── Opening tasks. SCOUT is done once both wood + village are known landmarks. ──

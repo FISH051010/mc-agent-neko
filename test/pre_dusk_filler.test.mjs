@@ -52,3 +52,26 @@ test('T-0262: modes.js 不再有本地 FILL_RE 副本 (C280)', () => {
     assert.ok(!/^const FILL_RE = /m.test(src));
     assert.match(src, /import \{ FILL_RE \} from '\.\/framework\/filler\.js';/);
 });
+
+test('T-0262 补 (监工): 零镐 + 零填充 + 黄昏前 → 提徒手挖泥土 (gatherDirt, 攒 8 块), 不下挖石头; 8 块即完成', () => {
+    const bare = { stick: 4, spruce_planks: 2, crafting_table: 1, cooked_beef: 4 };
+    const w = mkWorld(10000); w.kit = { ...w.kit, picks: 0, pickTier: 'none' };
+    const p = proposeTasks(w, mkBot(bare)).find(x => x.kind === 'PRE_DUSK_FILLER');
+    assert.ok(p && p.skill === 'gatherDirt' && p.args[0].count === SEAL_FILLER_MIN, JSON.stringify(p));
+    assert.equal(isGoalDone('PRE_DUSK_FILLER', w, mkBot({ ...bare, dirt: 8 })), true, 'pickless target = one pit (8)');
+    assert.equal(isGoalDone('PRE_DUSK_FILLER', w, mkBot({ ...bare, dirt: 5 })), false);
+});
+
+test('T-0262 补: gatherDirt 徒手挖泥土/草方块直到 8 块; 附近挖不到 → failed (不空转)', async () => {
+    process.chdir(home);
+    const { default: gatherDirt } = await import('../bots/_supervisor/skills/gatherDirt.js');
+    const inv = {};
+    const asked = [];
+    const ctx = { world: { getInventoryCounts: () => ({ ...inv }) }, skills: { collectBlock: async (_b, name, n) => { asked.push(name); if (name === 'grass_block') { inv.dirt = (inv.dirt || 0) + Math.min(n, 3); return true; } return false; } } };
+    const r = await gatherDirt({}, ctx, { count: 8 });
+    assert.equal(r, true);
+    assert.ok(inv.dirt >= 8, `dirt ${inv.dirt}`);
+    assert.ok(asked.every(n => /dirt|grass/.test(n)), 'never digs stone');
+    const r2 = await gatherDirt({}, { world: { getInventoryCounts: () => ({}) }, skills: { collectBlock: async () => false } }, { count: 8 });
+    assert.equal(r2.failed, true);
+});
