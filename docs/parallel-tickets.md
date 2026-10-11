@@ -185,6 +185,8 @@ node bots/_supervisor/deploy-lock.mjs status                                    
 
 ## 自动探测在测什么（botwatch.mjs）
 
+> **新检测器上线前必须回放校准**：判据写进 `bots/_supervisor/botwatch-trackers.mjs`（botwatch 与回放跑同一份代码），在 `bots/_supervisor/tools/replay-detector.mjs` 的 `ADAPTERS` 里挂一个适配器，然后 `node bots/_supervisor/tools/replay-detector.mjs <名字> --triage [--from ISO]`：按 botwatch 的 15s 节拍回放 progress.txt + vitals.jsonl 历史（离线/日志空档自动跳过），逐段列出命中及证据（位移、mobility、日志标签），逐段判真/误报后再上线。现有适配器：`idle-dispatch`、`cooldown-churn`。
+
 | 信号 | type | dedupKey | 触发 |
 |---|---|---|---|
 | 死亡计数上升 | death | death-loop | death_log.jsonl 增长 |
