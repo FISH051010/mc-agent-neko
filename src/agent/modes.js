@@ -1939,7 +1939,9 @@ const modes_list = [
                         // execute wedges somewhere in here while the bot floats. Cheap
                         // breadcrumbs to progress.txt so the NEXT float tells us WHERE.)
                         const _tr = (s) => { try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [swim] ${s}\n`); } catch (e) {} };
-                        _tr(`enter y=${Math.floor(bot.entity.position.y)}`);
+                        // ★T-0277: say WHY the [B] "follow the pathfinder across the water" yield didn't hold (06:37-06:38 quickMeal
+                        //   scout dragged ashore 6× in a row on a day lake crossing; the old trace couldn't tell which gate failed).
+                        _tr(`enter y=${Math.floor(bot.entity.position.y)} why: goto=${gotoActive} pfMoving=${_pfMoving} pfAgo=${bot._swimPathMovingAt ? Date.now() - bot._swimPathMovingAt : -1}ms mining=${miningActive} drownDmg=${drowningDamage} futile=${_jumpFutile} crossing=${_swimCrossing} oxy=${bot.oxygenLevel} skill=${bot._currentSkill || '-'} goal=${!!(bot.pathfinder && bot.pathfinder.goal)}`);
                         const isWater = (b) => b && WSET.includes(b.name);
                         const AIRY = ['air', 'cave_air', 'void_air', 'short_grass', 'tall_grass', 'fern'];
                         const isAir = (b) => b && AIRY.includes(b.name);

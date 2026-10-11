@@ -12,6 +12,14 @@
 
 ---
 
+## C415. 观测: 游泳 get-out 触发时记录 [B] "随寻路过水" 让路各门的值（modes.js 需重启,T-0277,worker-death,⏳待重启）
+- **证据**: 10-11 06:37-06:38 白天 0 敌对，quickMeal 侦察连续 6 次在同一片湖边被 `[swim] enter i=0 stall=0` 的 surface get-out 拽回岸，body-gate 拒绝 39/52 次，FOOD_FLOOR 差一次就进冷却。
+- **假设**: [B] 分支（寻路在驱动、没淹血、jump 有效、确在前进时只按 jump 随寻路走）有某个门没过。我最初怀疑过水进度阀的锚点不复位，但 update 开头陆上已经清零 bot._swimYield，所以排除。剩下 gotoActive（侦察腿多为瞬间 unreachable，寻路器可能没在走）、miningActive、_jumpFutile 等，现有日志分不出是哪个。
+- **改动**: `[swim] enter` 日志追加 goto/pfMoving/pfAgo/mining/drownDmg/futile/crossing/oxy/skill/goal。测试 test/swim_getout_why.test.mjs 钉住这些字段。离线无法复现（需要水边的实时寻路器状态），游戏内回退信号就是这一行日志。
+- **可证伪预测**: 下次复现时这行日志能直接指出失败的门。若 goto=false 且 skill=quickMeal，问题在侦察的寻路腿，而不在游泳反射。
+- **回滚法**: 恢复原 `_tr(enter y=...)` 一行。
+
+---
 ## C414. ★饥饿冻身不再锁死夜庇护: famineBodyFreeze 让路给 nightShelter / NIGHT_DIG_ONE / NIGHT_SEAL（modes.js 需重启,T-0274,worker-death,⏳待重启）
 - **证据**: 10-11 06:06:36 承诺从 FOOD_FLOOR 翻成 NIGHT_DIG_ONE，06:06:40 派发 nightShelter dig_one。从 06:06:51 到 06:08:52 每 15 秒一条 `FAMINE body freeze ... skill=nightShelter`，2 分 16 秒里 pos 只从 y69 挖到 y67，hp1/food0 的 bot 在地表夜里暴露了 2 分钟以上。06:08:56 bunkerDown（反射本身）接手，7 秒就封好了。
 - **假设**: famineBodyFreeze 的放行条件只有觅食类技能和 FOOD_FLOOR 承诺。承诺一翻到夜庇护，放行就失效，冻身每拍执行 setGoal(null)/stop()/clearControlStates()，把 nightShelter 的挖掘和移动清掉。food 已经是 0，冻身省不下任何饥饿值，不应该挡安全动作。
