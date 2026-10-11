@@ -40,3 +40,25 @@ test('T-0260: mineDown installs the probe on entry', () => {
     assert.ok(i > 0);
     assert.match(src.slice(i, i + 400), /installDigAbortProbe\(bot\);/);
 });
+
+// v2 (10-11 05:30:41/44Z: mobility 'dig retry … (MAROONED/ENTOMBED) …: Digging aborted' — the probe recorded the caller but only
+// mineDown's DONE line read it back, so aborts in other skills/reflexes left no trace). Every abort now writes one line itself.
+test('T-0260 v2: every abort is logged with block / caller / holder / skill; an older listener is replaced, not stacked', async () => {
+    const { DIG_ABORT_PROBE_V } = await import('../bots/_supervisor/skills/mineDown.js');
+    const bot = fakeBot();
+    const old = () => {};
+    bot.on('diggingAborted', old);
+    bot._digAbortProbe = true; bot._digAbortListener = old;     // a v1-era install
+    const lines = [];
+    bot._digAbortSink = (s) => lines.push(s);
+    bot._bodyOwner = { kind: 'mode', name: 'mode:mobility' }; bot._currentSkill = 'mineDown';
+    installDigAbortProbe(bot);
+    assert.equal(bot._digAbortProbe, DIG_ABORT_PROBE_V);
+    assert.equal(bot.listenerCount('diggingAborted'), 1, 'old listener removed');
+    function mobilityGuardedDig() { bot.stopDigging(); }
+    mobilityGuardedDig();
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /\[dig-abort\] grass_block@\(44, 66, -23\) by=.*mobilityGuardedDig.* holder=mode:mobility skill=mineDown/);
+    mobilityGuardedDig();
+    assert.equal(lines.length, 1, 'throttled');
+});

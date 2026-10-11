@@ -3309,6 +3309,8 @@
 
 - **★C438-S mineDown 不再把"反射借走身体"当楔死 (T-0267)**（2026-10-11，worker-stuck，T-0267）: live 10-11 05:18:42-58Z @75,66,166 — '[body-gate] skill mineDown setControlState(forward) refused — mode:item_collecting holds the body (T-0231)' (item_collecting 在捡 mineDown 自己顺手采矿的掉落) → 这一步零进展 → noProg → 楔死恢复链当成幽灵方块: 'ghost-buster: resync cleared=0 fwdOpen=true' ×2, 两次恢复额度白烧; 05:07:55-05:08:03 self_preservation 持身同形 → 'wedge x4 at same spot 52,157' moveAway 8b + 诚实失败。修: 每步走路前后快照 reflexGateRefusals (T-0241 计数), 新导出纯函数 stepOutcome({descended,movedHoriz,gateBlocked,reflexWaits}) → 'progress'|'reflex'|'wedge'; 'reflex' 时打 'step held by a reflex (<持身者>) — not a wedge, waiting …(T-0267)', 等 reflexHolds 释放 ≤4s 后重走本步, 不计 noProg; 每派发 ≤REFLEX_STEP_WAITS_MAX=8 次, 超过照常按楔死处理。test/minedown_wedge_vs_reflex.test.mjs (T-0267 ×3)。热加载。全套 840/840。
 
+- **★C439-S 'Digging aborted' 探针 v2: 每次中止自己写一行 [dig-abort] (T-0260)**（2026-10-11，worker-stuck，T-0260）: 10-11 05:30:41/44Z mobility 'dig retry … (MAROONED/ENTOMBED) …: Digging aborted' — v1 探针只记 bot._lastDigAbort, 只有 mineDown DONE 读回, 别的技能/反射的中止不留调用者。v2: DIG_ABORT_PROBE_V=2 版本化 (热加载新版替换自己存的监听器; v1 匿名只记录, 原样保留; 绝不 removeAllListeners — mineflayer-pathfinder 也监听 diggingAborted), 每次中止 2s 限频写 '[dig-abort] <block> by=<调用帧> holder=<持身者> skill=<技能> (T-0260)' 进 progress (_digAbortSink 可注入供测试)。test/dig_abort_probe.test.mjs 追加 v2 ×1。热加载。
+
 ---
 
 ---
