@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0222 one gate predicate
-import { skyOpenAt } from '../../../src/agent/framework/food_floor.js';   // ★T-0251 T-0189 surface criterion (existing export)
+import { shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 
@@ -74,15 +74,8 @@ export async function reclaimTable(bot, { skills, world }, { maxMs = 6000 } = {}
 //   wide 64 top-up), the climb gained 0 ×3 → cooled; ④-pre wanted raw ≥3 alone and ④ broke silently. Craft it where you
 //   stand; the surface is for wood. Mirrors world_model REPLENISH_PLANKS_TRIGGER (=4) and pickPlanHasMat (ingot+raw ≥3 & fuel).
 export const REPLENISH_WOOD_FLOOR = 4;
-// ★T-0251 (live 03:42:17Z 监工: y72 on the surface under a spruce trunk → onSurface=false → '① underground (y=72) →
-//   surfaceUp target 63' → gain 0). Surface = sky open over the head (T-0189 skyOpenAt, food_floor/quickMeal's criterion) OR
-//   already at/above surfaceUp's own target (nothing to climb to) OR the old roof scan (a leaf canopy dims skyLight <14).
-export const SURFACE_UP_TARGET_Y = 63;
-export function shouldClimbForKit({ y, sky, oldSurface }) {
-    if (sky === true) return false;
-    if (Number.isFinite(y) && y >= SURFACE_UP_TARGET_Y) return false;
-    return !oldSurface;
-}
+// ★T-0251 → T-0258: "on the surface / worth climbing" is surface_judge.shouldClimbToSurface (canopy never a roof, no climb
+//   at/above SURFACE_Y); the module-local copies (T-0251 helpers) are gone.
 const _n = (c, k) => (c && c[k]) || 0;
 const _planksOf = (c) => Object.keys(c || {}).filter(k => k.endsWith('_planks')).reduce((s, k) => s + c[k], 0);
 const _hasFuel = (c) => _n(c, 'coal') > 0 || _n(c, 'charcoal') > 0;
@@ -153,20 +146,8 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     const tierPickGoalMet = () => { const bt = bestPickTier(); if (bt >= 4) return effDiaPicksN() >= 3; if (bt >= 3) return effIronPicksN() >= IRON_PICK_TARGET; return picks() >= 3; };
     const tableNear = () => { try { return !!world.getNearestBlock(bot, 'crafting_table', 4); } catch (e) { return false; } };
 
-    // 地表判定: 头顶 10 格无实体方块 (树叶/藤不算封顶, 抄 prepNether coveredAboveNow 的排除法) 且 y>=55
-    const openAboveNoCanopy = (depth = 10) => {
-        try {
-            const p = bot.entity.position.floored();
-            for (let dy = 1; dy <= depth; dy++) {
-                const b = bot.blockAt(p.offset(0, dy, 0));
-                if (b && /water|lava/.test(b.name || '')) return false;
-                if (b && b.boundingBox === 'block' && !/_leaves$|^leaves$|vine|mangrove_roots|azalea/.test(b.name || '')) return false;
-            }
-            return true;
-        } catch (e) { return false; }
-    };
-    // ★T-0251: sky over the head (T-0189 skyOpenAt, same as food_floor/quickMeal) or at/above the climb target = surface
-    const onSurface = () => { try { return !shouldClimbForKit({ y: bot.entity.position.y, sky: skyOpenAt(bot), oldSurface: bot.entity.position.y >= 55 && openAboveNoCanopy(10) }); } catch (e) { return false; } };
+    // ★T-0251 → T-0258: on the surface (or nowhere to climb to) = not shouldClimbToSurface — the one surface criterion
+    const onSurface = () => !shouldClimbToSurface(bot);
     // ★T-0222: count only hostiles that can actually reach/see the bot (a skeleton behind the wall froze every gate)
     const hostilesNear = (r = 16) => hostileActionableNear(bot, r);
     const isNight = () => { try { const t = bot.time.timeOfDay; return t >= 13000 && t <= 23000; } catch (e) { return false; } };

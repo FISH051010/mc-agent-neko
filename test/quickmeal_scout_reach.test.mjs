@@ -20,7 +20,9 @@ function rig({ skyLight = 15, unreachableLegs = 3 }) {
     let leg = 0;
     const cow = { name: 'cow', position: V(80, 70, 0), isValid: true };
     const bot = { food: 5, health: 11, entity: { position: V(0, 61, 0) }, entities: {},
-        blockAt: () => ({ name: 'air', skyLight }),
+        // (T-0258: a dark head block now needs a real roof — surface_judge reads geometry, not just sky light)
+        blockAt: (p) => (skyLight < 14 && p && p.y >= Math.floor(bot.entity.position.y) + 2 && p.y <= Math.floor(bot.entity.position.y) + 3)
+            ? { name: 'stone', boundingBox: 'block', skyLight } : { name: 'air', skyLight },
         pathfinder: { stop() {}, setMovements() {},
             goto: async (g) => {
                 goals.push(g); leg++;

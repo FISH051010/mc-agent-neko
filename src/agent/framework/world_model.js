@@ -25,6 +25,7 @@ import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
 import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen, FOOD_RELEASE, healLatchNext, HEAL_RISKY_KINDS, FORAGE_FOOD, PRE_DUSK_TOD_LO, PRE_DUSK_TOD_HI } from './food_floor.js';
+import { onSurfaceNow } from './surface_judge.js';   // ★T-0258
 import { pickAutoEatFood } from './healing_reflex.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
@@ -843,7 +844,7 @@ export function proposeTasks(world, bot) {
         }
         const _ff = foodFloorProposal({ foodInstincts, overworld, phase: time.phase, food: vitals.food,
             actionable: threat.actionable, counts: invCounts(bot), animal: _animal,
-            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch, hp: vitals.hp, skyOpen: skyOpenAt(bot) });   // ★T-0188 回不了血也侦察; ★T-0189 头顶见天不算地下
+            botY: _bp ? _bp.y : NaN, botPos: _bp, depthBand: w.pos && w.pos.depthBand, latch: _latch, hp: vitals.hp, skyOpen: skyOpenAt(bot), onSurface: onSurfaceNow(bot) });   // ★T-0258 one surface criterion   // ★T-0188 回不了血也侦察; ★T-0189 头顶见天不算地下
         // ★T-0209 目击记忆: 侦察且没有新鲜猎物时, 朝最近一次见过牲畜的地方出发 (≤200b, 有目标的出行)
         if (_ff && _ff.args && _ff.args[0] && _ff.args[0].scout && !_ff.args[0].scoutToward && _bp) {
             const _plan = scoutPlanToward(nearestSighting(bot && bot._landmarks, HUNTABLE_RE, _bp), _ff.args[0].scoutRadius || 96);

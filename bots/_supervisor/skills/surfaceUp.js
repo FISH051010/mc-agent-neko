@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
 import { acquireModeFreeze } from '../../../src/agent/framework/mode_freeze.js';
+import { onSurfaceNow, SURFACE_Y } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 const { goals, Movements } = mfp;
 // Real-time debug log (appendFileSync, unbuffered) — skill log() goes to block-buffered
 // stdout which the supervisor can't read for minutes, leaving surfaceUp un-debuggable.
@@ -260,7 +261,10 @@ export default async function surfaceUp(bot, ctx, targetY = 63, opts = {}) {
     // re-calls surfaceUp every ~3s forever (live 17:37 idle-spin @-101,62,147). Treat
     // in-water as not-ready so swimOutOfWater runs. (Sealed-pocket case keeps openAbove(8)
     // false as before; this only adds the water exclusion.)
-    const surfaceReady = () => !inWater() && openAbove(8) && (openSky() || yNow() >= targetY - 2);
+    // ★T-0258: on the surface by the shared criterion (canopy is not a roof) counts as arrived for a plain surface climb
+    //   (target ≤ SURFACE_Y); an explicit height request (e.g. KILL-BOX y≥70) still needs the height. Old test kept as the OR.
+    const surfaceReady = () => !inWater() && ((onSurfaceNow(bot) && (targetY <= SURFACE_Y || yNow() >= targetY - 2))
+        || (openAbove(8) && (openSky() || yNow() >= targetY - 2)));
     const inWater = () => {
         try {
             const p = bot.entity.position.floored();
