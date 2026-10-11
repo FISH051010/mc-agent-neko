@@ -1930,6 +1930,15 @@ function isNightPlan(kind) {
  * across ticks. Returns the chosen Proposal annotated with {committed:true}.
  * @returns {(import('./contracts.js').Proposal & {committed:boolean})|null}
  */
+/** ★T-0271 兜底子技能与新提案是不是同一种活: 同 skill; 或兜底在砍木而新提案 (补给/补镐类) 缺木时第一步也是砍木。 */
+export function fallbackSameWork(c, top, bot) {
+    if (!c || !top) return false;
+    if (top.skill && top.skill === c.skill) return true;
+    if (c.skill === 'chopWood' && /^(replenishKit|chopWood|craftChain)$/.test(top.skill || '')
+        && (top.kind === PROPOSAL_KIND.REPLENISH_KIT || top.kind === PROPOSAL_KIND.TOOL_UPKEEP || top.kind === PROPOSAL_KIND.IDLE_FALLBACK)
+        && woodUnits(bot) < 16) return true;
+    return false;
+}
 export function commitGoal(bot, proposals, world) {
     const w = world || (bot && bot._world) || EMPTY_WORLD;
     const top = proposals && proposals[0];
@@ -1996,6 +2005,14 @@ export function commitGoal(bot, proposals, world) {
             if (match.skill) bot._commitment.skill = match.skill;
         }
         return { ...match, committed: true };
+    }
+
+    // ★T-0271 (05:45:52Z 实录: IDLE_FALLBACK chopWood(8) 正走向树, REPLENISH_KIT 45s 冷却到期 → 每秒 "flipped IDLE_FALLBACK→REPLENISH_KIT
+    //   mid-child → interrupt chopWood", 换成同样先砍木的 replenishKit): 兜底是开放式 kind (isGoalDone 恒真) 不粘, 但子技能正在做的
+    //   与新头号本质相同 (都是砍木) 时不打断 — 等兜底子技能跑完再切换。紧急/夜计划照抢。
+    if (c && c.kind === PROPOSAL_KIND.IDLE_FALLBACK && top && top.kind !== c.kind && bot && bot._currentSkill === c.skill
+        && fallbackSameWork(c, top, bot) && !isNightPlan(top.kind) && !(proposals || []).some(p => isEmergency(p, w, c.kind))) {
+        return { kind: c.kind, skill: c.skill, args: (c.args || []), priority: 2, committed: true, rationale: `(T-0271 holding fallback ${c.skill}: ${top.kind} would do the same work)` };
     }
 
     // No commitment, or it's done → commit to the new top-ranked goal.

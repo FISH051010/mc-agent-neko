@@ -56,3 +56,25 @@ test('T-0263: 兜底选到下挖但 4 格内有怪 → 不派 (过 T-0243 下挖
     const fb = proposeTasks(mkWorld(), b).find(p => p.kind === 'IDLE_FALLBACK');
     assert.equal(fb, undefined, JSON.stringify(fb));
 });
+
+test('T-0271: 兜底 chopWood 正在跑, 零镐零木 REPLENISH_KIT 冷却到期成头号 → 不打断 (同样先砍木), 兜底跑完再切; 紧急照抢', async () => {
+    const { commitGoal } = await import('../src/agent/framework/world_model.js');
+    const fb = { kind: 'IDLE_FALLBACK', skill: 'chopWood', args: [8] };
+    const rk = { kind: 'REPLENISH_KIT', priority: 67, skill: 'replenishKit', args: [] };
+    // 05:45:52Z 现场: 零镐零木, 兜底砍木中
+    const b = mkBot({ dirt: 3 }); b._commitment = { ...fb, since: Date.now() }; b._currentSkill = 'chopWood';
+    const r = commitGoal(b, [rk], mkWorld());
+    assert.equal(r.kind, 'IDLE_FALLBACK', JSON.stringify(r));
+    assert.equal(b._commitment.kind, 'IDLE_FALLBACK', 'commitment not flipped → kernel does not interrupt chopWood');
+    // 子技能跑完 (_currentSkill 清掉) → 切到 REPLENISH_KIT
+    b._currentSkill = null;
+    assert.equal(commitGoal(b, [rk], mkWorld()).kind, 'REPLENISH_KIT');
+    // 木够了 (补给缺的是镐不是木) → 不算同活, 照切
+    const w2 = mkBot({ spruce_log: 6 }); w2._commitment = { ...fb, since: Date.now() }; w2._currentSkill = 'chopWood';
+    assert.equal(commitGoal(w2, [rk], mkWorld()).kind, 'REPLENISH_KIT');
+    // 紧急 (饿) 照抢
+    const e = mkBot({ dirt: 3 }); e._commitment = { ...fb, since: Date.now() }; e._currentSkill = 'chopWood';
+    const w = mkWorld(); w.vitals = { ...w.vitals, food: 2, hp: 20 };
+    const ff = { kind: 'FOOD_FLOOR', priority: 89, skill: 'quickMeal', args: [] };
+    assert.equal(commitGoal(e, [ff, rk], w).kind, 'FOOD_FLOOR');
+});
