@@ -57,6 +57,10 @@ bots/_supervisor/*
 !bots/_supervisor/test/
 bots/_supervisor/test/*
 !bots/_supervisor/test/*.test.mjs
+# replay/calibration tooling for botwatch detectors (三段式 negate: 目录放行 → 内容忽略 → 只放行 .mjs)
+!bots/_supervisor/tools/
+bots/_supervisor/tools/*
+!bots/_supervisor/tools/*.mjs
 
 # ── 用户层文件（分发包里在包根，开发机上就落在仓库根）────────────────────────
 # settings.js / env.defaults.json 是**随代码发行的默认值**，要提交；
