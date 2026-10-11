@@ -41,6 +41,12 @@
 **可证伪预测**: 水下 ENTOMBED + 技能挖掘时 self_preservation 照常 'heading for air'; surfaceUp 水中出现 `★danger mid-climb`; 不再出现技能持身水下挖到溺死。
 **回滚**: revert, 重启。回归 submerged_trap 'T-0232' + surfaceup_danger 'T-0232'。
 
+## C400. ★T-0235 death_log 归因沿用上一次死亡: 只信新鲜的 _deathLayers 快照（agent.js + 新 death_attribution.js 需重启,worker-tests,⏳待重启）
+- **证据**: worker-death 用 act_trace 核对: #4 实际 mineDown、#6 reclaimFurnace、#7 mineDown, death_log 记的都是上一条的值; 线上最近 12 条里 6/11 对相邻记录 skill+action 完全相同。
+- **机理**: mineflayer `death` 由 update_health(hp<=0) 触发; 原版服务端先广播死亡聊天消息、下一 tick 才同步血量 → 聊天触发的 death_log 写入早于 `death` 处理器刷新 `bot._deathLayers`, 读到上一次死亡的快照(从不清空、无时间戳)。
+- **改动**: 快照加 `at` 时间戳; 写入经 `pickDeathLayers` 只认 15s 内快照, 否则读实时层(此刻技能还在跑, 实时层就是死亡瞬间)。
+- **预测**: 重启后 death_log 的 skill 与 act_trace 死亡时刻一致, 不再出现整串相邻记录相同。**钉子**: test/death_attribution.test.mjs(修复前 3/4 红)。提交 3cb5405。
+
 ## C399. ★★身体所有权闸: 反射 mode 持身期间, 技能调用链的寻路目标/移动键/清键一律拒绝（modes.js/skills.js/framework/reflex_body_gate.js 需重启,T-0231,worker-death,✅已上线 01:23:28Z 86034a5）
 
 **证据**: death #22 04:51:13 act_trace `ctrl forward,back,right,sneak,sprint` + `path=1` + act=mode:self_preservation — branchMine 的寻路与 sprintFlee 同时驱动身体。ws 派发的受监督技能 (kernelDriver→子技能) 不在 ActionManager 里跑, 反射 execute()→runAction 的 stop() 只停 ActionManager 的 action, 停不到它; 仲裁器判"反射赢", 技能照样 setGoal/按键; sprintFlee 入口还把全局 interrupt_code 吞掉。= 让位没有以接收方独占为前提。
