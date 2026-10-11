@@ -31,6 +31,7 @@ import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
 import { sealFillerCount, SEAL_FILLER_MIN, SEAL_FILLER_TARGET } from './filler.js';
 import { hostileActionableNear, hostileRawNear, DESCENT_HOSTILE_R } from './hostile_reach.js';
+import { descentGateOpen } from './night_owner.js';   // ★T-0282 下挖门单一来源 (夜庇护 hold 让位同判据)
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways, hasShield, protectionHaveNames, SHIELD_PLANKS, chestTierArmor } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP', 'PRE_DUSK_FILLER']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
@@ -1638,11 +1639,11 @@ export function proposeTasks(world, bot) {
     // ★T-0237 养伤期间剔除出门/迁移/远行类提案 (与 isGoalDone 同口径释放已承诺的)
     if (bot && bot._healLatch) _final = _final.filter(p => !HEAL_RISKY_KINDS.has(p.kind));
     // ★监工加急#6 (18:22:30Z 实录: food 到 12 就翻 GET_DIAMOND, hp=1 带全套铁装下矿): hp<10 同样关门。
-    if (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }))
-        _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));   // ★T-0237: 叠加在养伤过滤之上 (原为 out.filter 会冲掉前面的过滤)
     // ★T-0243 (T-0242): 4 格内有原始敌对 (不看可达) → 不派任何下挖技能 (与 mineDown 让位同一谓词 hostile_reach.hostileRawNear)
-    if (bot && hostileRawNear(bot, DESCENT_HOSTILE_R) > 0)
-        _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));
+    // ★T-0282 单一来源: 两道下挖门 = night_owner.descentGateOpen — 夜庇护 hold 的让位条件 (decisionOwnsNightMining) 用同一个函数,
+    //   门关时提案侧不提夜挖、hold 也不让, 门开时提了夜挖 hold 就让位 (不再整夜"提了必拒")。
+    if (!descentGateOpenFor(bot, vitals))
+        _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));   // ★T-0237: 叠加在养伤过滤之上 (原为 out.filter 会冲掉前面的过滤)
     // ★T-0263 白天兜底 (监工通用规则; IDLE-DISPATCH 回放 10-09→10-11 15 段白天零派发: 主任务 3 连败冷却后其余提案也冷却/被门挡,
     //   只剩 skill 为空的 FREE_PLAY → 原地空站 3-10min): 白天、无可动威胁、不在养伤、除 FREE_PLAY 外一个可派的都没有 →
     //   推一个有界的兜底活 (按需: 缺木 → 砍木; 封坑料不足 → 攒土石; 其余 → 资源侦察)。开放式 kind (isGoalDone default=true),
@@ -1655,7 +1656,7 @@ export function proposeTasks(world, bot) {
             && !_final.some(p => p.kind !== PROPOSAL_KIND.FREE_PLAY) && !(_cdu && Date.now() < _cdu)) {
             let fb = dayFallbackTask(w, bot);
             // 兜底在过滤之后才加: 下挖类须自己过下挖门 (T-0237 descentBlocked / T-0243 近距原始敌对), 不满足就不派 (交给反射/HEAL, 不退成漫游)
-            if (fb && DESCENT_SKILL_RE.test(fb.skill) && (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }) || hostileRawNear(bot, DESCENT_HOSTILE_R) > 0))
+            if (fb && DESCENT_SKILL_RE.test(fb.skill) && !descentGateOpenFor(bot, vitals))   // ★T-0282 同一下挖门
                 fb = null;
             if (fb) _final.push({ kind: PROPOSAL_KIND.IDLE_FALLBACK, priority: 2, ...fb });
         }
@@ -1930,6 +1931,14 @@ function isNightPlan(kind) {
  * across ticks. Returns the chosen Proposal annotated with {committed:true}.
  * @returns {(import('./contracts.js').Proposal & {committed:boolean})|null}
  */
+/** ★T-0282 下挖门单一来源 = night_owner.descentGateOpen (夜庇护 hold 让位同判据, 判据函数只有这一份)。
+ *  决策层其余门都按本拍 world 快照 (vitals) 判 → 血食取 vitals (线上与 bot.food/health 同源), 缺时回落 bot; 无 bot 时只看饥饿/血量门。 */
+export function descentGateOpenFor(bot, vitals = {}) {
+    if (!bot) return !descentBlocked({ food: vitals.food, counts: {}, hp: vitals.hp });
+    const food = Number.isFinite(vitals.food) ? vitals.food : bot.food;
+    const health = Number.isFinite(vitals.hp) ? vitals.hp : bot.health;
+    return descentGateOpen(food === bot.food && health === bot.health ? bot : Object.assign(Object.create(bot), { food, health }));
+}
 /** ★T-0275 (06:19:24Z 实录: food 0 侦察到鸡, 猎到吃下 food 2; 06:19:26-29 FOOD_FLOOR 三连派不带侦察的 quickMeal → "no huntable
  *  animal within 48b" ×3 → 冷却 5min, hp1 food2 干等): 'animal' 地标 25s 内算新鲜, 刚被杀掉的那只还挂着 → animalOk → 提案只派短猎
  *  不带 scout, 技能必拒 (铁律 2)。用前核对实体: bot 离地标 ≤LIVE_CHECK_R (实体肯定已加载) 而地标 6 格内没有活的可猎动物 → 作废。 */
