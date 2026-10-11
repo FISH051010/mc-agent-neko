@@ -3,6 +3,7 @@
 // 修 = 饥饿禁疾跑总闸: food ≤ 10 且无可动敌对 → setControlState('sprint', true) 改 false (pathfinder 也走这里), movements.allowSprinting=false。
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { installHungerSprintGate, sprintAllowed, SPRINT_FOOD_MAX } from '../src/agent/library/skills.js';
 
 function fakeBot(food, actionable = 0) {
@@ -47,4 +48,13 @@ test('T-0273: 边界 — food 正好 10 已禁疾跑, 11 才放; modes.js 真的
     const fs = await import('node:fs');
     const src = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     assert.match(src, /try \{ skills\.installHungerSprintGate\(bot\); \} catch \(e\) \{\}/);
+});
+
+test('T-0273 (监工验收): movements 被置 false 时也写 [sprint-gate] 诊断 — 之后 pathfinder 不再请求疾跑, grep 验收不会误判', () => {
+    const bot = fakeBot(5); installHungerSprintGate(bot);
+    assert.equal(bot._sprintGateLogAt, undefined);
+    bot.pathfinder.setMovements({ allowSprinting: true });   // 只走 movements 路径, 从不调 setControlState('sprint', true)
+    assert.ok(bot._sprintGateLogAt > 0, 'diagnostic line written on the movements path too');
+    const src = fs.readFileSync(new URL('../src/agent/library/skills.js', import.meta.url), 'utf8');
+    assert.ok(src.includes("logGate('movements.allowSprinting=false')"));
 });

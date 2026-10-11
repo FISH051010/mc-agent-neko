@@ -7518,21 +7518,24 @@ export function sprintAllowed(bot) {
 export function installHungerSprintGate(bot) {
     if (!bot || bot._sprintGateInstalled || typeof bot.setControlState !== 'function') return false;
     const rawSCS = bot.setControlState.bind(bot);
+    // ★T-0273 (监工验收): 两条拦截路径都写同一行诊断 (30s 限频) — movements 先置 false 后 pathfinder 不再请求疾跑, 只在 sprint=true 时写会 grep 不到
+    const logGate = (how) => {
+        if (Date.now() - (bot._sprintGateLogAt || 0) <= 30000) return;
+        bot._sprintGateLogAt = Date.now();
+        try { fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] [sprint-gate] food=${bot.food} ≤${SPRINT_FOOD_MAX}, no actionable hostile → walk, no sprint (${how}; T-0273)\n`); } catch (e) {}
+    };
     const gateMovements = () => {
         try {
             const m = bot.pathfinder && bot.pathfinder.movements;
             if (!m) return;
-            if (!sprintAllowed(bot)) { if (m.allowSprinting !== false) { m.allowSprinting = false; m._sprintGated = true; } }
+            if (!sprintAllowed(bot)) { if (m.allowSprinting !== false) { m.allowSprinting = false; m._sprintGated = true; logGate('movements.allowSprinting=false'); } }
             else if (m._sprintGated) { m.allowSprinting = true; m._sprintGated = false; }
         } catch (e) {}
     };
     bot.setControlState = (control, state) => {
         if (control === 'sprint' && state && !sprintAllowed(bot)) {
             gateMovements();
-            if (Date.now() - (bot._sprintGateLogAt || 0) > 30000) {
-                bot._sprintGateLogAt = Date.now();
-                try { fs_dz.appendFileSync(PROGRESS_FILE, `[${new Date().toISOString()}] [sprint-gate] food=${bot.food} ≤${SPRINT_FOOD_MAX}, no actionable hostile → walk, no sprint (T-0272)\n`); } catch (e) {}
-            }
+            logGate('sprint control refused');
             return rawSCS('sprint', false);
         }
         return rawSCS(control, state);
