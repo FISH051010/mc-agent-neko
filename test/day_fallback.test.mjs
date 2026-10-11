@@ -90,3 +90,20 @@ test('T-0271: 同活但紧急 — 零镐 TOOL_UPKEEP@PICKLESS (原地造镐几�
     const routine = { ...urgent, priority: 47 };
     assert.equal(commitGoal(mk(), [routine], mkWorld()).kind, 'IDLE_FALLBACK', 'routine upkeep is the same work → waits for the chop');
 });
+
+test('T-0275: 刚杀掉的猎物地标 (25s 内仍"新鲜") — 实体已没了就作废, FOOD_FLOOR 带侦察而不是派必拒的短猎', async () => {
+    const { liveAnimalLandmark } = await import('../src/agent/framework/world_model.js');
+    const lmChicken = { x: 45, y: 64, z: 0, dist: 3, age: 2000, meta: 'chicken' };
+    const pos = new Vec3(43, 64, 0);
+    const gone = { entity: { position: pos }, entities: {} };
+    assert.equal(liveAnimalLandmark(lmChicken, gone), null, 'killed: no live animal near the landmark');
+    const alive = { entity: { position: pos }, entities: { 7: { name: 'chicken', position: new Vec3(46, 64, 1) } } };
+    assert.equal(liveAnimalLandmark(lmChicken, alive), lmChicken);
+    const far = { entity: { position: new Vec3(200, 64, 0) }, entities: {} };
+    assert.equal(liveAnimalLandmark(lmChicken, far), lmChicken, 'too far to see → no verdict');
+    // 06:19:26Z 现场: food 2, 零可吃, 鸡刚吃掉 → 提案必须带 scout
+    const w = mkWorld(); w.vitals = { ...w.vitals, food: 2, hp: 1 }; w.landmarks = { ...(w.landmarks || {}), animal: lmChicken };
+    const b = mkBot({ feather: 1, wooden_pickaxe: 2 }); b.entity = { position: pos }; b.entities = {};
+    const ff = proposeTasks(w, b).find(p => p.kind === 'FOOD_FLOOR');
+    assert.ok(ff && ff.args[0].scout === true, JSON.stringify(ff && ff.args));
+});

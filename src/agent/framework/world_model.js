@@ -832,7 +832,7 @@ export function proposeTasks(world, bot) {
     //     就地烤 (quickMeal ≤60s)。不漫游、不种田、不追远处动物; 判据见 framework/food_floor.js。
     {
         const _bp = bot && bot.entity && bot.entity.position ? bot.entity.position : null;
-        const _animal = w.landmarks && w.landmarks.animal;
+        const _animal = liveAnimalLandmark(w.landmarks && w.landmarks.animal, bot);   // ★T-0275 刚杀掉的猎物地标不算
         // ★监工拍板: 会话锁存 (food≤6 触发 → food≥18 且熟食≥4 / 附近无动物时 food≥18 / 猎满 6 只 才释放)
         let _latch;
         if (!foodInstincts && bot) {
@@ -1930,6 +1930,20 @@ function isNightPlan(kind) {
  * across ticks. Returns the chosen Proposal annotated with {committed:true}.
  * @returns {(import('./contracts.js').Proposal & {committed:boolean})|null}
  */
+/** ★T-0275 (06:19:24Z 实录: food 0 侦察到鸡, 猎到吃下 food 2; 06:19:26-29 FOOD_FLOOR 三连派不带侦察的 quickMeal → "no huntable
+ *  animal within 48b" ×3 → 冷却 5min, hp1 food2 干等): 'animal' 地标 25s 内算新鲜, 刚被杀掉的那只还挂着 → animalOk → 提案只派短猎
+ *  不带 scout, 技能必拒 (铁律 2)。用前核对实体: bot 离地标 ≤LIVE_CHECK_R (实体肯定已加载) 而地标 6 格内没有活的可猎动物 → 作废。 */
+const LIVE_ANIMAL_CHECK_R = 48;
+export function liveAnimalLandmark(animal, bot) {
+    if (!animal || !bot || !bot.entities || !bot.entity || !bot.entity.position || !Number.isFinite(animal.x)) return animal || null;
+    const p = bot.entity.position;
+    if (Math.hypot(animal.x - p.x, animal.z - p.z) > LIVE_ANIMAL_CHECK_R) return animal;   // 太远看不到 → 不作判断
+    for (const e of Object.values(bot.entities)) {
+        if (!e || !e.position || !HUNTABLE_RE.test(e.name || '')) continue;
+        if (Math.hypot(e.position.x - animal.x, e.position.z - animal.z) <= 6) return animal;
+    }
+    return null;
+}
 /** ★T-0271 兜底子技能与新提案是不是同一种活: 同 skill; 或兜底在砍木而新提案 (补给/补镐类) 缺木时第一步也是砍木。 */
 export function fallbackSameWork(c, top, bot) {
     if (!c || !top) return false;
