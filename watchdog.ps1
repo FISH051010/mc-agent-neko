@@ -3,8 +3,9 @@
 # listening, it clears stale 8765/48909 and relaunches. Does NOT touch the MC LAN
 # server (55916) — that's the game world, managed separately. Logs to watchdog.log.
 #
-# Launch (detached, survives logout/session-end):
-#   Start-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-File','C:\Users\Administrator\Downloads\mc-agent-neko\watchdog.ps1' -WindowStyle Hidden
+# Launch (detached, survives session-end): powershell -NoProfile -File bots\_supervisor\ensure-stack.ps1
+#   ★T-0270: never Start-Process it from a Claude session — the child inherits that session's Job Object and is
+#   killed (silently, no log line) when the session ends. ensure-stack uses Invoke-CimMethod Win32_Process Create.
 # Stop: kill the powershell process running this file, or: Remove-Item watchdog.stop (create that file to make it exit cleanly).
 
 $ErrorActionPreference = 'SilentlyContinue'

@@ -54,6 +54,7 @@ bots/_supervisor/*
 !bots/_supervisor/ore-oracle-worker.mjs
 !bots/_supervisor/botwatch-trackers.mjs
 !bots/_supervisor/deploy-lock.mjs
+!bots/_supervisor/ensure-stack.ps1
 !bots/_supervisor/test/
 bots/_supervisor/test/*
 !bots/_supervisor/test/*.test.mjs
