@@ -1,5 +1,7 @@
 # 交接书：Neko Minecraft Agent 监工（写给下一个 agent）
 
+> ★★换会话/换客户端先读 [NEXT-SESSION.md](NEXT-SESSION.md)（分支状态、运行中的栈、用户定的下一轮方向、遗留）。
+
 > ★2026-10-11 最新一轮监工归档见 [session-2026-10-11-overseer.md](session-2026-10-11-overseer.md)（反复出现的 bug 模式 / 多 worker 协作 / 遗留）；重启流程以 [parallel-tickets.md](parallel-tickets.md) 部署锁为准，本文 §2 的"流程 v3"已过时。
 
 > 写于 2026-06-12。上一任监工（Claude）在 60+ 轮迭代后交棒。你接手的是一个**还在运行的系统**和一份**用 282 次死亡换来的经验库**。
