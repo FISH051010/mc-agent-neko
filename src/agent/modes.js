@@ -7777,7 +7777,7 @@ export function initModes(agent) {
             const b = agent.bot;
             if (Date.now() - (b._reflexGateLogAt || 0) < 5000) return;
             b._reflexGateLogAt = Date.now();
-            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [body-gate] skill ${b._currentSkill || '-'} ${kind}(${detail}) refused — ${holderName(b)} holds the body (T-0231)\n`); } catch (e) {}
+            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [body-gate] skill ${b._currentSkill || '-'} ${kind}(${detail}) ${/-deferred$/.test(kind) ? 'deferred to hold end' : 'refused'} — ${holderName(b)} holds the body (T-0231)\n`); } catch (e) {}
         } });
     } catch (e) {}
     if (agent.task) {

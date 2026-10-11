@@ -43,11 +43,22 @@ export function installReflexBodyGate(bot, { onBlock } = {}) {
         const origSetGoal = pf.setGoal.bind(pf);
         pf.setGoal = (goal, dynamic) => {
             if (goal && gated()) {
+                // ★T-0239 (live 03:04:35/03:05:38Z, starving): a SHORT timed hold (edge_unstick back-off, no mode owner) made this
+                //   throw at every scout leg — 17×/33× in 700ms, quickMeal burned its legs and gave up. Wait instead: apply the
+                //   goal when the hold ends (goto already listens; a later direct setGoal supersedes it). Not a refusal.
+                const _h = bot._reflexHold;
+                if (!(bot._bodyOwner && bot._bodyOwner.kind === 'mode') && _h && _h.until > Date.now()) {
+                    const tok = parts.goalTok = (parts.goalTok || 0) + 1;
+                    try { if (parts.onBlock) parts.onBlock('setGoal-deferred', goal && goal.constructor ? goal.constructor.name : '?'); } catch (e) {}
+                    setTimeout(() => { if (parts.goalTok === tok) { try { origSetGoal(goal, dynamic); } catch (e) {} } }, Math.max(0, _h.until - Date.now()) + 20);
+                    return;
+                }
                 blocked('setGoal', goal && goal.constructor ? goal.constructor.name : '?');
                 // throw (not no-op): pathfinder.goto() calls setGoal inside its promise executor — a no-op would hang it;
                 // a throw rejects goto → the skill sees an ordinary path failure and backs off.
                 throw new Error(`reflex holds the body (${holderName(bot)}) — skill pathing paused`);
             }
+            parts.goalTok = (parts.goalTok || 0) + 1;   // ★T-0239 any direct setGoal supersedes a deferred one
             return origSetGoal(goal, dynamic);
         };
     }

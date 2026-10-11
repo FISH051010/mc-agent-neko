@@ -3249,6 +3249,8 @@
 
 - **★C426-S surfaceUp 竖直优先门与竖爬兜底判据同源: 砂砾柱下无侧列时走阶梯寻路 (T-0244, worker-tier 转)**（2026-10-11，worker-stuck，T-0244）: live 10-11 03:03:23-26Z @-12,53,71 y53 白天无怪 — replenishKit ① surfaceUp ×3 每次 7ms 'gain 0.0' → ZERO delta → REPLENISH_KIT 冷却 5min (quickMeal 的 surfaceUp 也 53→53)。surfaceUp.log: 'vertical-first: overhead column clear/breachable → skip GoalY staircase' 接着 'fallback: gravity column over shaft … no gravity-free side column — stop'。竖直优先门把砂砾当"可破"跳过阶梯, 竖爬兜底 (T-0172) 又拒绝在砂砾下往上挖 → 两条路都不走。修: 新导出 verticalBlockedByGravity = gravityAboveShaft && !sidestepOutOfGravity, straightUpViable 命中即 false → 走 GoalY 阶梯 (pathfinder 不在下落方块下挖, 自行绕路); 零上升退出记 bot._surfaceUpWhy (最后一条判断), replenishKit '① surfaceUp result' 行带 '— why: …', 不再无声秒退。test/surfaceup_vertical_gravity.test.mjs (T-0244 ×4)。热加载 (surfaceUp/replenishKit 均子技能)。全套 748/748。
 
+- **★C427-S 短时反射持身期间技能寻路改为"等到持身结束再生效", 不再抛错 (T-0239 续)**（2026-10-11，worker-stuck，T-0239）: 实机 03:04:35 / 03:05:38Z 饥饿中 (hp→1): T-0239 的 edge_unstick 后退持身 700ms 生效 ('[body-gate] … reflex:edge_unstick holds the body'), 但闸在这 700ms 内对 quickMeal 侦察腿的 setGoal 一律抛错 — 17× / 33× 被拒, 侦察腿全烧光 ('without moving') 觅食整单放弃 (T-0241 已按 deferred 不计 strike, 但饭没吃上)。修: reflex_body_gate 对**短时持身** (_reflexHold, 无 mode 持身者) 的技能链 setGoal 改为延迟到持身结束 +20ms 再下发 (goto 已先挂好监听, 同一 goal 对象不触发 GoalChanged), 不抛错、不计拒绝; 期间任何直接 setGoal 作废待下发目标; mode 持身 (T-0231) 照旧拒绝。progress 行区分 'deferred to hold end' 与 'refused'。test/reflex_hold_defers_setgoal.test.mjs (T-0239 ×3)。src → 需重启。全套 751/751。
+
 ---
 
 ---
