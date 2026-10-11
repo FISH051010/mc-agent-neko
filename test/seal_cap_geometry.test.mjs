@@ -389,3 +389,18 @@ test('T-0180① C381: the cells the caller just dug (p+d column) are not cavity 
         assert.equal(cavityBreachAt(cave, p, dx, dz, { yLo: -1 }), true, `heading ${dx},${dz}: real cave`);
     }
 });
+
+test('T-0248 death #52: 封闭坑里苦力怕在外 (T-0127 hold) → 真·原地不动, 不再走 bunkerDown 挖/寻路/垫柱出坑; bunkerDown 每个移动子分支写 progress', async () => {
+    const fs = await import('node:fs');
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const br = m.slice(m.indexOf('pocket has no horizontal exit → ${_cResp}'), m.indexOf('pocket has no horizontal exit → ${_cResp}') + 1400);
+    assert.match(br, /if \(_cResp === 'hold'\) \{\s*execute\(this, agent, async \(\) => \{ await this\.creeperHoldInPocket\(agent\); \}\);/);
+    const hold = m.slice(m.indexOf('creeperHoldInPocket: async function'), m.indexOf('bunkerDown: async function'));
+    assert.ok(hold.length > 0);
+    assert.ok(!/dig|placeBlock|goToPosition|pillarUp|setControlState\(/.test(hold.replace(/\/\/[^\n]*/g, '')), 'hold never digs, places, walks or presses keys');
+    assert.match(hold, /nearestCreeper\(bot, 3\)/, 're-evaluates when the creeper closes in');
+    const bd = m.slice(m.indexOf('bunkerDown: async function'), m.indexOf('bunkerDown: async function') + 30000);
+    for (const tag of ["_bdLog('enter')", '_bdLog(`relocate→', "_bdLog('no-filler roof-niche dig+walk')", "_bdLog('cap failed → pillar-up fallback')", "_bdLog('seal failed → run from swarm')"]) {
+        assert.ok(bd.includes(tag), `bunkerDown logs: ${tag}`);
+    }
+});

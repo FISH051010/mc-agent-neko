@@ -1189,8 +1189,35 @@ const modes_list = [
         // eventually gets cornered/killed — digging down + capping is the only reliable
         // escape. Robust at a water edge (dig 4 to get below the water table into solid
         // rock; cap the head; seal open sides; blockless L-niche fallback when naked).
+        // ★T-0248: T-0127 'hold' made real (death #52 03:16:04): sealed pocket + creeper outside → stay put. No digging, no pillaring, no
+        //   walking — a creeper that can't see you won't ignite and the walls absorb most of a blast. Re-evaluate on any hit or
+        //   when the creeper closes inside 3b (the next tick decides again, e.g. punch-back if the wall is gone).
+        creeperHoldInPocket: async function (agent) {
+            const bot = agent.bot;
+            try { bot.clearControlStates(); } catch (e) {}
+            try { bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null); } catch (e) {}
+            for (let t = 0; t < 2000; t += 200) {
+                await new Promise(r => setTimeout(r, 200));
+                if (bot.interrupt_code || bot.health <= 0) break;
+                if (Date.now() - (bot.lastDamageTime || 0) < 400) break;
+                const c = this.nearestCreeper(bot, 3);
+                if (c) break;
+            }
+        },
         bunkerDown: async function (agent) {
             const bot = agent.bot;
+            // ★T-0248: bunkerDown digs / walks / pillars — every body-moving entry must leave a progress line (death 03:16:04 had
+            //   none: dirt dig → path=1 → surface, unattributable). Rate-limited; the step markers below name the sub-branch.
+            const _bdLog = (what) => {
+                try {
+                    const k = `_bdLogAt_${what}`;
+                    if (Date.now() - (this[k] || 0) < 3000) return;
+                    this[k] = Date.now();
+                    const p = bot.entity.position;
+                    fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] bunkerDown ${what} @${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)} hp=${Math.round(bot.health)} hostiles=${this.nearbyHostiles(bot).length} (T-0248)\n`);
+                } catch (e) {}
+            };
+            _bdLog('enter');
             // ★OSCILLATION BREAKER (the 300ms "securing ↔ Can't seal ↔ running" thrash,
             // 03:47, 13min of standstill): with NO mobs around, a failed bunker re-fired
             // every mode tick, and each refire's interrupt starved the skill layer
@@ -1331,7 +1358,7 @@ const modes_list = [
                     }
                 }
                 const best = bestDirt || bestAny;   // dirt first (diggable naked) → any solid fallback
-                if (best) { try { await skills.goToPosition(bot, best.x, best.y, best.z, 0); } catch (e) {} }
+                if (best) { _bdLog(`relocate→${best.x},${best.y},${best.z}`); try { await skills.goToPosition(bot, best.x, best.y, best.z, 0); } catch (e) {} }
             }
             const y0 = Math.floor(bot.entity.position.y);
             // SPEED MATTERS: under a swarm we lose ~1hp per dig-tick, so get SEALED ASAP.
@@ -1375,6 +1402,7 @@ const modes_list = [
             }
             const headOpen = () => { const h = bot.blockAt(bot.entity.position.offset(0, 2, 0)); return !h || OPENISH.includes(h.name); };
             if (headOpen() && !fillerOf()) {
+                _bdLog('no-filler roof-niche dig+walk');
                 for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                     const pp = bot.entity.position.floored();
                     const roof = bot.blockAt(pp.offset(dx, 2, dz));
@@ -1408,6 +1436,7 @@ const modes_list = [
             // 4 walls) = a sealed platform that zombies/skeletons/creepers can't reach. A naked
             // respawn has dirt from digging; works anywhere we have filler.
             if (!headBlocked() && fillerOf()) {
+                _bdLog('cap failed → pillar-up fallback');
                 for (let up = 0; up < 2 && fillerOf(); up++) {
                     const fb = fillerOf();
                     try { await skills.placeBlockUnderFeet(bot, fb, { retries: 1, settleMs: 160 }); } catch (e) { try { bot.setControlState('jump', false); } catch (e2) {} }
@@ -1471,6 +1500,7 @@ const modes_list = [
                     }
                 }
                 say(agent, 'Can\'t seal here — running from the swarm.');
+                _bdLog('seal failed → run from swarm');
                 // Sprint directly AWAY from the hostiles' centroid, re-aiming each hop as they
                 // move. Bounded (~12 hops) so it can never become its own loop; breaks the
                 // instant we lose contact. Running relocates us — onto diggable dirt or out of
@@ -2399,7 +2429,14 @@ const modes_list = [
                                     `[${new Date().toISOString()}] [self_preservation] creeper ${cr0Dist.toFixed(1)}m but pocket has no horizontal exit → ${_cResp} (no backoff, T-0127) hp=${Math.round(bot.health)}\n`);
                             } catch (e) {}
                         }
-                        execute(this, agent, async () => { await this.bunkerDown(agent); });
+                        // ★T-0248 death #52 03:16:04 (10-11, hp1 夜坑): 'hold' 也走 bunkerDown, 而 bunkerDown 只在 sealedNightBox 时驻留 —— 那一拍判据
+                        //   没成立, 它挖、跳、往上垫, 03:16:01 挖到地表 y76 暴露 → 苦力怕 2.1b 炸死。'hold' 就是原地不动: 不挖不垫,
+                        //   挨打/苦力怕 ≤3b 时提前返回重评 (creeperHoldInPocket)。只有 'bunker' (顶还开着) 才去封顶。
+                        if (_cResp === 'hold') {
+                            execute(this, agent, async () => { await this.creeperHoldInPocket(agent); });
+                        } else {
+                            execute(this, agent, async () => { await this.bunkerDown(agent); });
+                        }
                         return;
                     }
                 }

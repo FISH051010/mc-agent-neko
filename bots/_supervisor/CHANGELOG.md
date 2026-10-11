@@ -12,7 +12,14 @@
 
 ---
 
-## C405. ★被近战怪群围: 无甲 ≥3 只不开打/打着就退; 先垫柱 3 格; 卡在坑里垫不了挡不了就就地还手; 地表 1 宽阶梯也能堵路（modes.js/combat_gates.js/skills.js 需重启; shieldFight.js 热加载,T-0242 death #51,worker-death,⏳待重启）
+## C406. ★封闭坑里苦力怕在外 → 真·原地不动 (T-0127 'hold' 不再走 bunkerDown) + bunkerDown 每个移动子分支写 progress（modes.js 需重启,T-0248 death #52,worker-death,⏳待重启）
+
+**证据**: death #52 03:16:04 拂晓 hp1 (food12 回不了血), 夜坑 @109,74,172。03:15:53.5 `creeper 5.7m but pocket has no horizontal exit → hold (no backoff, T-0127)` —— 但代码里 'hold' 与 'bunker' 都执行 bunkerDown, 而 bunkerDown 只在 sealedNightBox 时驻留; 那一拍不成立 (mobility 54.4 → FREE) → bunkerDown 挖 dirt (y74→72) → path=1 → 03:16:01 挖到地表 y76 暴露 → 苦力怕 2.1b 炸死。整段 bunkerDown 无一行 progress (监工: 看不出哪个分支在驱动)。
+**改动**: ① 新 self_preservation.creeperHoldInPocket: 清键/清寻路, 原地等 ≤2s, 挨打或苦力怕 ≤3b 提前返回重评; 不挖不放不走不按键。T-0127 分支 'hold' → 它, 只有 'bunker' (顶还开着) 才 bunkerDown。② bunkerDown 入口与 relocate / no-filler roof-niche dig+walk / cap failed → pillar-up / seal failed → run from swarm 各写一行 `[self_preservation] bunkerDown <step> @x,y,z hp hostiles (T-0248)` (同步骤 3s 限频)。
+**可证伪预测**: 封闭坑里苦力怕靠近时 progress 只见 `→ hold (… T-0127)`, 之后无 bunkerDown 挖/走; 任何 bunkerDown 移动都有对应 step 行。
+**回滚**: revert, 重启。回归 seal_cap_geometry 'T-0248 death #52'。
+
+## C405. ★被近战怪群围: 无甲 ≥3 只不开打/打着就退; 先垫柱 3 格; 卡在坑里垫不了挡不了就就地还手; 地表 1 宽阶梯也能堵路（modes.js/combat_gates.js/skills.js 需重启; shieldFight.js 热加载,T-0242 death #51,worker-death,✅已上线 02:46:05Z 65378fd）
 
 **证据**: death #51 02:38:59 白天 tod2879 满血, 无甲, 铁剑+盾, mineDown 刚挖第一段阶梯 (325,67,-39, coveredAbove=1)。02:38:50.8 self_defense 见 1 只僵尸开打, 其余陆续围上 (6 只, 3 只 ≤1.4b), defendSelf 循环不复核 → 53.6 hp17 … 57.1 hp5 (0.3s −9)。56.8 self_preservation 'Hit (6 mob) — sprinting away' 接手但在 1 宽阶梯坑里一步没动 (act=sp ctrl 全空 54.8–57.9 → UNOWNED DANGER 是"名义持身、实际不动")。58.09 T-0233 interpose 'point-blank placed=0' — 僵尸 0.9b < losCoverCells 1.5b 下限 (与材料无关); 垫柱 0 — 头顶有遮挡跳不起来。手握铁剑却站桩到死。另: 52.9 kernel 派 mineDown 当场 'hostile within 4' 中止 (dig=0, 无害; self_defense 两次 execute 间隙身体无主)。
 **改动**: ① combat_gates.meleeSwarmOutmatched({meleeNear, armored}) (无甲 ≥3 / 有甲 ≥4, 6b 内同层非射手非苦力怕) + countMeleeNear/wearingArmor。self_defense 成立时不开打 (`outmatched … leaving it to self_preservation`), 开打则 defendSelf / shieldFight 带 abortIf 每轮复核, 成立即 pvp.stop 退出。② sprintFlee: 被围且头顶 +2..+4 净空、有封顶料 → 原地 placeBlockUnderFeet ×3 垫柱, ≥2 格即止跑 (每次逃跑试一次)。③ T-0233 卡住看门狗: 垫块/垫柱都不成且怪 ≤3b、有剑/斧 → 就地还手 (有盾 shieldFight 否则 defendSelf), 不站桩。④ 隧道堵路 (T-0223) 去掉 y<50/enclosed 门 — tunnelWallOffWanted 自查两侧实心, 地表阶梯同样适用。
