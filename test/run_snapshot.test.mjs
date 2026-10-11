@@ -17,3 +17,13 @@ test('run.mjs executes tests from a source snapshot, never from the live shared 
     const rel = path.relative(path.resolve(live), here);
     assert.ok(rel.startsWith('..') || path.isAbsolute(rel), `test file ${here} is inside the live tree ${live}`);
 });
+
+test('run.mjs: a test that never settles fails instead of hanging the suite (per-test timeout + force-exit)', async () => {
+    // worker-tests 10-11: an unbounded wait (mutated settleForDig) hung `node --test` with no exit — merge gates and the deploy-lock
+    // test gate would block forever. With --test-timeout + --test-force-exit it is reported 'cancelled' and the run exits 1.
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(new URL('./run.mjs', import.meta.url), 'utf8');
+    assert.match(src, /'--test-timeout=\d+'/);
+    assert.match(src, /'--test-force-exit'/);
+    assert.match(src, /spawnSync\(process\.execPath, \[\.\.\.TEST_ARGS, \.\.\.files\]/);
+});

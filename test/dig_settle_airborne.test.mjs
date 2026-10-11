@@ -22,7 +22,8 @@ test('T-0283: settleForDig waits for the body to land (bounded) before a dig sta
     assert.ok(r.waited >= 100 && r.waited < 600, `waited ${r.waited}ms`);
 });
 
-test('T-0283: grounded → no wait; never lands → gives up at maxMs; floating/climbing → no wait', async () => {
+// worker-tests 10-11: timeout so an unbounded wait fails here instead of hanging the whole suite (and merge.sh)
+test('T-0283: grounded → no wait; never lands → gives up at maxMs; floating/climbing → no wait', { timeout: 5000 }, async () => {
     assert.deepEqual(await settleForDig({ entity: { onGround: true } }), { waited: 0, grounded: true });
     const t0 = Date.now();
     const r = await settleForDig({ entity: { onGround: false } }, { maxMs: 150, pollMs: 20 });
@@ -44,4 +45,12 @@ test('T-0283: every dig path lands first — branchMine digBlock, safeDig, break
     assert.ok(sd.indexOf('await settleForDig(bot)') < sd.indexOf('gazeHold(bot, cur, bot.dig(cur))'));
     const bb = sk.slice(sk.indexOf('export async function breakBlockAt'));
     assert.ok(bb.indexOf('await settleForDig(bot)') > 0 && bb.indexOf('await settleForDig(bot)') < bb.indexOf('bot.dig(block, true)'));
+});
+
+test('T-0283: onGround unknown (no physics data) → no wait — never stall every dig by DIG_SETTLE_MS', { timeout: 5000 }, async () => {
+    // worker-tests mutation 10-11: `e.onGround !== false` → `=== true` kept the tests above green, yet every dig on an entity
+    // without an onGround field would then wait the full 1.2s before starting.
+    const t0 = Date.now();
+    assert.deepEqual(await settleForDig({ entity: {} }), { waited: 0, grounded: true });
+    assert.ok(Date.now() - t0 < 100);
 });

@@ -78,7 +78,10 @@ const files = process.argv.slice(2).length
 const home = mkdtempSync(path.join(tmpdir(), 'neko-test-home-'));
 mkdirSync(path.join(home, 'bots', '_supervisor'), { recursive: true });
 
-const r = spawnSync(process.execPath, ['--test', ...files], {
+// A test that never settles (an unbounded wait, a leaked interval) must FAIL, not hang npm test / merge gates / deploy-lock
+// forever: per-test timeout + force-exit (10-11: a mutated settleForDig loop hung the suite; with these it is 'cancelled', exit 1).
+const TEST_ARGS = ['--test', '--test-timeout=120000', '--test-force-exit'];
+const r = spawnSync(process.execPath, [...TEST_ARGS, ...files], {
   cwd: home,
   env: { ...process.env, MC_AGENT_HOME: home, NEKO_TEST_HOME: home, NEKO_TEST_LIVE_ROOT: liveRoot },
   stdio: 'inherit',
