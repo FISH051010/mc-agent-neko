@@ -428,6 +428,8 @@ const modes_list = [
                 const feet = bot.blockAt(p) || { name: 'air' };
                 const head = bot.blockAt(p.offset(0, 1, 0)) || { name: 'air' };
                 if (/water|lava|fire/.test(feet.name || '') || /water|lava|fire/.test(head.name || '')) return status;
+                // ★T-0282: an owned night descent (commitment + live dispatcher + descent gate) is not ours to hold against.
+                if (decisionOwnsNightMining(bot, { hostilesNear: this.nearbyHostiles(bot).length })) return status;
                 status.covered = this.hasOverheadCover(bot, 2, 6);   // loose telemetry: a roof somewhere 2-6 above
                 // ★T-0067: the HOLD decision must use the REAL seal (close roof + 4 walls), NOT the
                 // loose overhead. A roof-but-open-sided ledge made the bot report "covered → staying
@@ -1631,6 +1633,12 @@ const modes_list = [
             try { bot.interrupt_code = false; } catch (e) {}
             for (let w = 0; w < 110 && !this.isDay(bot); w++) {
                 if (bot.interrupt_code || bot.health <= 0) break;   // real stop / death — return promptly, never refuse
+                // ★T-0282: the decision layer committed a night descent and the descent gate passes → digging down is the
+                //   shelter; hand the body to mineDown instead of holding it against it all night (06:46-06:52 zero descent).
+                if (decisionOwnsNightMining(bot, { hostilesNear: this.nearbyHostiles(bot).length })) {
+                    try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] sealed night hold → yield to night descent ${(bot._commitment && bot._commitment.kind) || '?'} (w=${w}, T-0282)\n`); } catch (e) {}
+                    break;
+                }
                 const food = bot.inventory.items().find(i => /cooked_|_bread|^bread$|^apple$|carrot|potato|^beef$|porkchop|^chicken$|^mutton$|baked_|_stew/.test(i.name));
                 if (food && bot.food < 20) { try { await skills.consume(bot, food.name); } catch (e) {} }
                 if (w % 10 === 0) {

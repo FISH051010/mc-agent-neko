@@ -12,6 +12,14 @@
 
 ---
 
+## C416. ★夜挖承诺 vs 封坑 hold 互顶整夜: kernelDriver 等子技能时心跳不刷新 + hold 不看下挖门（kernelDriver/modes.js/night_owner.js 需重启,T-0282,worker-death,⏳待重启）
+- **证据**: 10-11 06:46-06:52Z @-171,58,-195，夜里 hp20 food20。kernel 承诺 DUSK_MINE_NIGHT，每分钟派一次 mineDown(targetY 12)。06:47:26 mineDown 已经下挖 29 格，bunkerDown 抢身 (`Digging aborted [by owner=mode:self_preservation]`)，之后 `sealed night hold: w=20..90` 整夜持身。T-0231 闸拒掉 mineDown 的前进和寻路，mineDown 每次都判 wedge honest fail；夜计划属于 NOOP_EXEMPT，不进冷却，整夜零下挖。
+- **假设**: ① kernelDriver 只在循环顶部写 bot._kernelDriverActive，等子技能期间不刷新。mineDown 跑了 10 秒以后，decisionOwnsNightMining 判"派发器不在线"，shouldNightShelter 转 true，bunkerDown 抢身。② 封好以后的 sealed hold 等待循环和 coveredNightHoldStatus 都不看 decisionOwnsNightMining，一旦封上就持身到天亮。③ 让位判据没有包含决策层的下挖门，两边口径不一致。
+- **改动**: kernelDriver 的 _watch 每秒刷新心跳。night_owner 新增 descentGateOpen(bot)，复用 descentBlocked 和 hostileRawNear(DESCENT_HOSTILE_R)，与 world_model 的下挖门是同一组函数。decisionOwnsNightMining 增加这个门。sealed hold 循环 (每拍检查，让位时写日志 `sealed night hold → yield to night descent`) 和 coveredNightHoldStatus 都在 decisionOwnsNightMining 为真时让位。worker-tier 在提案侧调用 descentGateOpen，门关时不提夜间下矿。测试 test/night_mining_hold_yield.test.mjs。
+- **可证伪预测**: 夜里承诺 DUSK_MINE_NIGHT 且下挖门通过时，mineDown 不再被 bunkerDown 半路抢身，sealed hold 出现 yield 日志后 mineDown 继续下挖。下挖门关闭时 (hp 低、饿且无食物、4 格内有敌对) 照常封坑持身。
+- **回滚法**: git revert 本提交。
+
+---
 ## C415. 观测: 游泳 get-out 触发时记录 [B] "随寻路过水" 让路各门的值（modes.js 需重启,T-0277,worker-death,⏳待重启）
 - **证据**: 10-11 06:37-06:38 白天 0 敌对，quickMeal 侦察连续 6 次在同一片湖边被 `[swim] enter i=0 stall=0` 的 surface get-out 拽回岸，body-gate 拒绝 39/52 次，FOOD_FLOOR 差一次就进冷却。
 - **假设**: [B] 分支（寻路在驱动、没淹血、jump 有效、确在前进时只按 jump 随寻路走）有某个门没过。我最初怀疑过水进度阀的锚点不复位，但 update 开头陆上已经清零 bot._swimYield，所以排除。剩下 gotoActive（侦察腿多为瞬间 unreachable，寻路器可能没在走）、miningActive、_jumpFutile 等，现有日志分不出是哪个。

@@ -1,4 +1,6 @@
 import { purposefulDigActive } from './mobility_signals.js';
+import { descentBlocked } from './food_floor.js';
+import { hostileRawNear, DESCENT_HOSTILE_R } from './hostile_reach.js';
 
 // ★T-0136 决策层夜挖 vs 反射预防性封箱 — 契约必须一致。
 // 实录 10-10 18:47:23Z: 决策层 computeNightPlan 选 MINE_THROUGH_NIGHT → kernel 派 mineDown(DUSK_MINE_NIGHT);
@@ -21,12 +23,29 @@ export function nightMiningReceiverActive(bot, now = Date.now()) {
     return Number.isFinite(c.since) && now - c.since < DISPATCHER_FRESH_MS;
 }
 
+// ★T-0282: the reflex must yield to a night descent only when the decision layer would still propose it — the SAME
+//   descent gate world_model applies before any descent (T-0237 descentBlocked hp/starving, T-0243 raw hostile ≤4b).
+//   Gate open → digging down is the shelter (with progress); gate closed → the hold keeps the body, and the decision
+//   layer has no business proposing a night descent either.
+function invCountsOf(bot) {
+    const c = {};
+    try { for (const it of (bot.inventory && bot.inventory.items ? bot.inventory.items() : [])) if (it && it.name) c[it.name] = (c[it.name] || 0) + (it.count || 0); } catch (e) {}
+    return c;
+}
+export function descentGateOpen(bot) {
+    try {
+        if (descentBlocked({ food: bot.food, counts: invCountsOf(bot), hp: bot.health })) return false;
+        return hostileRawNear(bot, DESCENT_HOSTILE_R) === 0;
+    } catch (e) { return false; }
+}
+
 export function decisionOwnsNightMining(bot, { hostilesNear = 0, now = Date.now() } = {}) {
     try {
         const c = bot && bot._commitment;
         if (!c || !NIGHT_MINE_KIND_RE.test(String(c.kind || ''))) return false;
         if (!bot._kernelDriverActive || now - bot._kernelDriverActive > DISPATCHER_FRESH_MS) return false;
         if (!nightMiningReceiverActive(bot, now)) return false;
+        if (!descentGateOpen(bot)) return false;
         return hostilesNear === 0;
     } catch (e) { return false; }
 }

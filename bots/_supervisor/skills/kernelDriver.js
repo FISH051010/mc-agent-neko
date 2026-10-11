@@ -315,6 +315,10 @@ export default async function kernelDriver(bot, ctx) {
             // and running the wrong task into the night. The loop-top consumes the interrupt.
             let flipped = false, firstFlipAt = 0, forcedHalt = false;
             const _watch = setInterval(() => {
+                // ★T-0282: we are alive and supervising this child — keep the dispatcher heartbeat fresh. It was stamped only
+                //   at the loop top, so 10s into any child decisionOwnsNightMining read "no dispatcher" and bunkerDown grabbed
+                //   the body from a running night mineDown (06:47:26, 29 blocks dug) → sealed hold vs mineDown all night.
+                bot._kernelDriverActive = Date.now();
                 try {
                     const nc = bot._commitment;
                     if (!nc) return;
