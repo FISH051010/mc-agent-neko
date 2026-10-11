@@ -3236,6 +3236,8 @@
 
 - **★C423-S edge_unstick 楔死升级按地点累加 + 后退期间短时持身(T-0239, 监工加急)**（2026-10-11，worker-stuck，T-0239）: live 10-11 01:58-01:59Z @104.3,80,-2.3 云杉树冠下 (hp1 food4 白天 quickMeal 侦察) — 'wedged ~2450ms (jump-fail, replan #1)' ×16 / 2min 从未到 #2, 侦察 14 腿 13 被 modes.js:6150 stop 打断, 90s 只走 3b。根因: ① resetStreak 在 !moving (pathfinder 停→下一条腿之间 isMoving 短暂 false) 与 ≥0.05b 微晃分支清零 → resetStreak≥2 的后退+侧移永远走不到; ② 即便走到, edge_unstick 是 always 模式不持身, 600ms 后退期间技能链 setGoal 当拍覆盖按键。修: 新 framework/wedge_streak.js bumpWedgeStreak (同一处 ≤3b 且 30s 窗内累加, 走开/隔久才重计), 去掉三处清零; 停寻路改 setGoal(null); 后退侧移前 holdBodyForReflex(bot,'edge_unstick',700) — reflex_body_gate.reflexHolds 认 _reflexHold, T-0231 闸在这 700ms 拒技能链寻路/按键。test/edge_unstick_streak.test.mjs (T-0239 ×4)。全套 721/721。
 
+- **★C424-S mineDown 洞顶悬空: 浅洞下到洞底, 深洞垫块继续下挖 (T-0139 重开, 监工指派, tier 主卡点)**（2026-10-11，worker-stuck，T-0139）: live 10-11 02:25-02:27Z @278..284,58,-41..-44 满血满饱、有盾和铁镐、要去 y14 拿铁 — 一格厚洞顶下面是大空洞, 三个朝向都报 'no floor support under x,56,z (air)', void hop 找不到实心列, 换址失败, 7 次派发后冷却, 包里 414 圆石。新纯函数 planVoidBridge(bn,cx,cy,cz,sx,sz): 支撑格是空气时 ① 3 格内有实心落点 (路径纯空气、落点非岩浆块/重力块) → {kind:'drop'} 直接下到洞底 (≤3 格无摔伤); ② 否则 {kind:'bridge'}: newFeet 是实心 (洞顶) → 贴它底面在支撑格放一块; newFeet 也是空 → 先贴脚下地板侧面补 newFeet, 再在它下面补支撑 (下一步照常挖开 newFeet) = 挖三填一。mineDown void 分支在 void hop / relocate / abort 之前先试它 (每派发 ≤48 次, 填料只用圆石/深板岩圆石/泥土/安山岩等, placeBlock dontCheat + positioning:false)。流体与 T-0158 重力塌陷支撑保持原分支。test/minedown_void_bridge.test.mjs (T-0139 ×7, 含三向悬空复现); minedown_void_heading 钉子随条件括号同步。全套 730/730。
+
 ---
 
 ---
