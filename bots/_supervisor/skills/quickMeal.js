@@ -377,6 +377,7 @@ export default async function quickMeal(bot, ctx, opts = {}) {
                     haltPath(bot);
                     const dAfter = target.position.distanceTo(bot.entity.position);
                     stale = dBefore - dAfter < 0.5 ? stale + 1 : 0;
+                    if (stale === 1) setSafeMovements(bot, { dig: true });   // ★T-0238 补2: 一段没拉近 → 允许挖 (隔着方块的猎物)
                     if (stale >= 2) break;
                 }
                 // ★T-0238 补 (02:05:51-02:06:07Z 实录: 分段追踪后仍停在 5.1b, attackEntity >4 格放弃): 剩 3.5-8 格 → 动态跟随
@@ -409,7 +410,12 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             }
             prog(`approached ${target.name} → ${target.position.distanceTo(bot.entity.position).toFixed(1)}b`);
         }
+        // ★T-0238 补2 (02:16:37-02:17:10Z 实录: 猪在 3.3b/3.1b, attackEntity 14-20s 零伤害 "no meat" — bot 在 MAROONED/Entombed 坑里,
+        //   猪隔着方块; mineflayer-pvp 追打用当前寻路配置, 安全配置不许挖 → 永远够不着): 出手前换允许挖的配置 (挖掘代价 ×4, 能走就不挖,
+        //   不搭柱/不跑酷/最多落 2 格), 让 pvp 能挖开一格去打; 打完恢复安全配置。
+        setSafeMovements(bot, { dig: true });
         await raceI(bot, skills.attackEntity(bot, target, true), Math.min(left(), 25000));
+        setSafeMovements(bot);
         stopBody();
         if (skills.pickupNearbyItems) await raceI(bot, skills.pickupNearbyItems(bot, 6), Math.min(left(), 8000));
         gotMeat = rawHeld() > r0;

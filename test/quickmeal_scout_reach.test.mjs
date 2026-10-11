@@ -215,3 +215,16 @@ test('T-0238 补 (02:06:07Z 分段追踪后仍 5.1b → attackEntity 放弃): �
     assert.equal(followed, true, 'dynamic GoalFollow used');
     assert.ok(attackedAt != null && attackedAt <= 2.5, `attacked at ${attackedAt}`);
 });
+
+test('T-0238 补2 (02:16:37-02:17:10Z 猪 3.3b 隔着方块, pvp 不挖打不到): 出手时寻路允许挖, 打完恢复不挖', async () => {
+    const registry = (await import('node:module')).createRequire(import.meta.url)('minecraft-data')('1.21.4');
+    let canDig = false; let digAtAttack = null;
+    const pig = { name: 'pig', position: V(3, 70, 0), isValid: true };
+    const bot = { food: 0, health: 1, registry, entity: { position: V(0, 70, 0) }, entities: { 1: pig }, blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {}, setGoal() {}, setMovements(mv) { canDig = !!mv.canDig; }, goto: async () => {} }, clearControlStates() {} };
+    const ctx = { world: { getInventoryCounts: () => ({}) },
+        skills: { customSkill: async () => {}, consume: async () => {}, pickupNearbyItems: async () => {}, attackEntity: async () => { digAtAttack = canDig; } } };
+    await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000 });
+    assert.equal(digAtAttack, true, 'pvp chase may dig to a pig behind a block');
+    assert.equal(canDig, false, 'safe (no-dig) movements restored afterwards');
+});
