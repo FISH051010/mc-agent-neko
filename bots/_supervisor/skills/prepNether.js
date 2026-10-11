@@ -7,6 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { hostileActionableNear } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0222 one gate predicate
+import { onSurfaceNow, shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const OAK_APPLE_BACKOFF = path.resolve(process.cwd(), 'bots', '_supervisor', 'oak_apple_backoff.json');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
@@ -1113,22 +1114,8 @@ async function prepNetherInner(bot, ctx) {
         if (adv) return { ...local, ...adv, localActionable: local.actionable, localRaw: local.raw };
         return { ...local, source: 'local' };
     };
-    const tableRecoveryUndergroundWorksite = () => {
-        try {
-            const p = bot.entity.position.floored();
-            let openSurface = Math.floor(bot.entity.position.y) >= 55;
-            if (openSurface) {
-                for (let dy = 1; dy <= 8; dy++) {
-                    const b = bot.blockAt(p.offset(0, dy, 0));
-                    if (b && /water|lava/.test(b.name || '')) { openSurface = false; break; }
-                    if (b && b.boundingBox === 'block') { openSurface = false; break; }
-                }
-            }
-            return !openSurface && (bot.entity.position.y < 62 || (bot._mobility && (bot._mobility.enclosed || bot._mobility.state === 'POCKET')));
-        } catch (e) {
-            return bot.entity.position.y < 62;
-        }
-    };
+    // ★T-0258 one surface criterion (was an 8-block scan counting leaves as a roof, then y<62 || enclosed)
+    const tableRecoveryUndergroundWorksite = () => !onSurfaceNow(bot) || !!(bot._mobility && bot._mobility.state === 'POCKET');
     const tableRecoveryVerticalPocket = () => {
         try {
             const p = bot.entity.position;
@@ -1690,16 +1677,7 @@ async function prepNetherInner(bot, ctx) {
         return Object.keys(c).filter(k => k.endsWith('_planks')).reduce((s, k) => s + c[k], 0)
             + Object.keys(c).filter(k => k.endsWith('_log')).reduce((s, k) => s + c[k], 0) * 4;
     };
-    const openSurfaceNow = () => {
-        if (Math.floor(bot.entity.position.y) < 55) return false;
-        const p = bot.entity.position.floored();
-        for (let dy = 1; dy <= 8; dy++) {
-            const b = bot.blockAt(p.offset(0, dy, 0));
-            if (b && /water|lava/.test(b.name || '')) return false;
-            if (b && b.boundingBox === 'block') return false;
-        }
-        return true;
-    };
+    const openSurfaceNow = () => onSurfaceNow(bot);   // ★T-0258 one surface criterion (was an 8-block scan counting leaves as a roof)
     const reachableWoodTarget = (maxDist = 12, maxDy = 3) => {
         const logTypes = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log'];
         let blocks = [];
@@ -1724,7 +1702,7 @@ async function prepNetherInner(bot, ctx) {
         // KIT 空转→TABLE gate→冷却永动。bootstrap-critical(无镐且 woodEq<4)时按 chopWood 真实
         // 能力放行: 树冠下算地表(y>=55 非封闭), 威胁用 12 格可交战判定, 树允许 16b/dy<=8。
         const critical = !hasAnyHeldPick() && woodEqNow() < 4;
-        if (!openSurfaceNow() && !(critical && bot.entity.position.y >= 55 && !(bot._mobility && bot._mobility.enclosed)))
+        if (!openSurfaceNow())   // ★T-0258: the critical relax (y>=55 && !enclosed) is subsumed — onSurfaceNow no longer counts canopy
             return { ok: false, reason: `not true surface y=${Math.floor(bot.entity.position.y)} enclosed=${!!(bot._mobility && bot._mobility.enclosed)}` };
         if (isNightNow()) return { ok: false, reason: 'night' };
         const hostileBlock = critical ? actionableThreats(12).actionable : hostilesNear(24);
@@ -2041,7 +2019,7 @@ async function prepNetherInner(bot, ctx) {
         const cnt = (n) => c()[n] || 0;
         const planksEq = () => Object.keys(c()).filter(k => k.endsWith('_planks')).reduce((s, k) => s + c()[k], 0)
             + Object.keys(c()).filter(k => k.endsWith('_log')).reduce((s, k) => s + c()[k], 0) * 4;
-        const onSurface = bot.entity.position.y >= 55;
+        const onSurface = onSurfaceNow(bot);   // ★T-0258 (was y>=55)
         // 1) spare picks (durability-aware). craftRecipe places our held table when needed.
         let guard = 0;
         while (effectivePicks() < 2 && cnt('cobblestone') >= 3 && (cnt('stick') >= 2 || planksEq() >= 2) && guard++ < 3) {
@@ -2264,7 +2242,7 @@ async function prepNetherInner(bot, ctx) {
             && planksEqHeld() < 4 && !isNightNow() && !isDuskNow()
             && (!_foodOn() || !famineBudget()) && !bot.interrupt_code) {
             woodFirstTried = true;
-            const underground = bot.entity.position.y < 55;
+            const underground = shouldClimbToSurface(bot);   // ★T-0258 (was y<55)
             prog(`prepNether: ★WOOD-FIRST before ${g.item} — planksEq=${planksEqHeld()}<4 (table floor), daytime → ${underground ? 'surfaceUp then ' : ''}chopWood before the iron segment`);
             try {
                 if (underground) {

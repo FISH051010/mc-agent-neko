@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { appendTelemetry } from '../../../src/utils/telemetry.js';
 import { acquireModeFreeze } from '../../../src/agent/framework/mode_freeze.js';
+import { onSurfaceNow } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] ${s}\n`); } catch (e) {} };
 // ★perf 2026-07-09: death_log.jsonl grows all session and was re-read+split twice per collect-loop
@@ -145,18 +146,8 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
     };
     const hostileWorkRisk = () => hostileNear(12);
     const woodEq = () => sumRe(/_planks$/) + sumRe(/_log$/) * 4;
-    const openSurfaceNow = () => {
-        try {
-            if (Math.floor(bot.entity.position.y) < 55) return false;
-            const p = bot.entity.position.floored();
-            for (let dy = 1; dy <= 8; dy++) {
-                const b = bot.blockAt(p.offset(0, dy, 0));
-                if (b && /water|lava/.test(b.name || '')) return false;
-                if (b && b.boundingBox === 'block') return false;
-            }
-            return true;
-        } catch (e) { return false; }
-    };
+    const openSurfaceNow = () => onSurfaceNow(bot);   // ★T-0258 one surface criterion (was an 8-block scan counting leaves as a roof)
+    const undergroundPocketNow = () => !onSurfaceNow(bot) || !!(bot._mobility && bot._mobility.state === 'POCKET');   // ★T-0258
     const cheapWoodTarget = () => {
         const logTypes = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log'];
         let blocks = [];
@@ -328,7 +319,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
             // an unreachable y79 hillside → blacklist/staircase thrash forever while sticks
             // were one 2x2 craft away). TIMEBOX the chop for the same reason: a tree-hunt
             // that can't succeed must not hold the whole achieve hostage.
-            const undergroundPocket = bot.entity.position.y < 62 || (bot._mobility && (bot._mobility.enclosed || bot._mobility.state === 'POCKET'));
+            const undergroundPocket = undergroundPocketNow();   // ★T-0258
             const woodGate = optionalWoodSafe();
             if (!woodGate.ok) {
                 prog(`> skip stock wood buffer — ${woodGate.reason}; optional tree route yields`);
@@ -526,7 +517,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
                 }
             }
         } catch (e) {}
-        const undergroundPocket = bot.entity.position.y < 62 || (bot._mobility && (bot._mobility.enclosed || bot._mobility.state === 'POCKET'));
+        const undergroundPocket = undergroundPocketNow();   // ★T-0258
         if (!have('crafting_table') && maxRe(/_planks$/) < 4 && sumRe(/_log$/) < 1 && undergroundPocket && !openSurfaceNow()) {
             try {
                 bot._prepTableRecoveryBlockedUntil = Date.now() + 60000;
@@ -632,7 +623,7 @@ export default async function achieve(bot, ctx, goal, depth = 0, _active = new S
                 prog(`${tag}LOW-FOOD planks gate — food=${bot.food}, hp=${Math.round(bot.health)}, no edible; refuse chop for planks until feedUp`);
                 return false;
             }
-            const undergroundPocket = bot.entity.position.y < 62 || (bot._mobility && (bot._mobility.enclosed || bot._mobility.state === 'POCKET'));
+            const undergroundPocket = undergroundPocketNow();   // ★T-0258
             if (undergroundPocket && !openSurfaceNow()) {
                 prog(`${tag}underground planks gate — need ${need}, have ${have()}, no logs at y=${Math.floor(bot.entity.position.y)} mob=${bot._mobility ? bot._mobility.state : '-'}; refuse chopWood/surface climb`);
                 return false;

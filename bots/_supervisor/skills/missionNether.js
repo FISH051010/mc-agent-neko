@@ -44,6 +44,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { onSurfaceNow } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const OAK_APPLE_BACKOFF = path.resolve(process.cwd(), 'bots', '_supervisor', 'oak_apple_backoff.json');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] [mission] ${s}\n`); } catch (e) {} };
@@ -120,22 +121,8 @@ export default async function missionNether(bot, ctx) {
             return n;
         } catch (e) { return hostilesNear(r); }
     };
-    const tableRecoveryUndergroundWorksite = () => {
-        try {
-            const p = bot.entity.position.floored();
-            let openSurface = Math.floor(bot.entity.position.y) >= 55;
-            if (openSurface) {
-                for (let dy = 1; dy <= 8; dy++) {
-                    const b = bot.blockAt(p.offset(0, dy, 0));
-                    if (b && /water|lava/.test(b.name || '')) { openSurface = false; break; }
-                    if (b && b.boundingBox === 'block') { openSurface = false; break; }
-                }
-            }
-            return !openSurface && (bot.entity.position.y < 62 || (bot._mobility && (bot._mobility.enclosed || bot._mobility.state === 'POCKET')));
-        } catch (e) {
-            return bot.entity.position.y < 62;
-        }
-    };
+    // ★T-0258 one surface criterion (was an 8-block scan counting leaves as a roof, then y<62 || enclosed)
+    const tableRecoveryUndergroundWorksite = () => !onSurfaceNow(bot) || !!(bot._mobility && bot._mobility.state === 'POCKET');
     const readProgressTail = () => {
         try {
             const stat = fs.statSync(PROG);

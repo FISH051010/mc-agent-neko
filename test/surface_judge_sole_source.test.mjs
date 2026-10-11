@@ -50,3 +50,20 @@ test('T-0258: migrated skills have no hand-written 36-block sky probe and import
     const wm = read(path.join(root, 'src', 'agent', 'framework', 'world_model.js'));
     assert.match(wm, /onSurface: onSurfaceNow\(bot\)/);
 });
+
+test('T-0258 第二期: achieve / prepNether / missionNether surface tests go through surface_judge', () => {
+    const ach = read(path.join(SKILLS, 'achieve.js'));
+    assert.match(ach, /const openSurfaceNow = \(\) => onSurfaceNow\(bot\);/);
+    assert.match(ach, /const undergroundPocketNow = \(\) => !onSurfaceNow\(bot\) \|\| /);
+    assert.doesNotMatch(ach, /const undergroundPocket = bot\.entity\.position\.y < 62/);
+    const pn = read(path.join(SKILLS, 'prepNether.js'));
+    assert.match(pn, /const openSurfaceNow = \(\) => onSurfaceNow\(bot\);/);
+    assert.match(pn, /const onSurface = onSurfaceNow\(bot\);/);
+    assert.match(pn, /const underground = shouldClimbToSurface\(bot\);/);
+    for (const f of ['prepNether.js', 'missionNether.js']) {
+        assert.match(read(path.join(SKILLS, f)), /const tableRecoveryUndergroundWorksite = \(\) => !onSurfaceNow\(bot\) \|\| /, f);
+    }
+    for (const f of ['achieve.js', 'prepNether.js', 'missionNether.js']) {
+        assert.match(read(path.join(SKILLS, f)), /from '\.\.\/\.\.\/\.\.\/src\/agent\/framework\/surface_judge\.js'/, f);
+    }
+});

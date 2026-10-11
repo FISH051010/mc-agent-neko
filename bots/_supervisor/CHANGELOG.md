@@ -3305,6 +3305,8 @@
 
 - **★C436-S 零台也能就地补石镐: 共享口袋台原语 ensureCarriedTable (T-0264, 监工加急, 镐耗尽风险)**（2026-10-11，worker-stuck，T-0264）: live 10-11 04:46:34/43Z y18 只剩 1 把木镐, mineDown 'fodder-recraft: stone_pickaxe → fail (保铁镐不碰石)' ×2 — 圆石 135/棍 8/桦木板 8/桦木原木 10 都在, 唯独没有工作台; craftRecipeLocal 只会放下并回收【背包里】的台, 背包无台则 3x3 配方直接失败 (04:41:51 那次成功是因为附近有台)。修: 新模块 src/agent/framework/ensure_table.js — plankForLog (log/wood/stem/hyphae, 含 stripped_) 与 ensureCarriedTable({counts,craftLocal,nearTable,log}): 有台或 4 格内有台直接 true; 木板≥4 造台; 不足先拿原木做 4 木板再造台; 都没有返回 false。mineDown fodder-recraft 造石镐前调用 (造后 craftRecipeLocal 照旧放台+回收); surfaceUp 紧急镐里私有的 ensureTable 改调同一原语 (删一份重复)。新模块首次被热加载技能导入即为最新代码, 无需重启。test/ensure_table.test.mjs (T-0264 ×5: 有板无台→造台; 只有原木→先板后台; 有台/近台不动/零木 false; 原木名映射; 两处调用钉子)。全套 831/831。
 
+- **★C437-S 地表判据统一第二期: achieve / prepNether / missionNether 遗留判据改调 surface_judge (T-0258)**（2026-10-11，worker-stuck，T-0258）: 第一期 (C435) 后剩下的 A 类"在不在地表"手写判据: achieve.openSurfaceNow (y≥55 + 头顶 8 格任何实心=顶, 树叶也算) 与 3 处 undergroundPocket (y<62 || enclosed || POCKET); prepNether.openSurfaceNow (同上)、tableRecoveryUndergroundWorksite (8 格扫描 + y<62/enclosed/POCKET)、keepKit onSurface (y≥55)、WOOD-FIRST underground (y<55)、TABLE gate 的 critical 放宽 (y≥55 && !enclosed — 正是为树冠打的补丁); missionNether.tableRecoveryUndergroundWorksite (同 prepNether)。全部改为 onSurfaceNow / shouldClimbToSurface / (!onSurfaceNow || POCKET), critical 放宽并入 (onSurfaceNow 已不把树冠当顶)。surface_judge_sole_source 追加第二期钉子 (×1)。热加载。全套 832/832。C 类 (夜间暴露: enclosed 即安全会把树冠当庇护) 语义不同, 另开单。
+
 ---
 
 ---
