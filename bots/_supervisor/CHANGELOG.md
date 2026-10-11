@@ -15,7 +15,7 @@
 ## C404. ★T-0235 death_log 归因沿用上一次死亡: 只信新鲜的 _deathLayers 快照（agent.js + 新 death_attribution.js 需重启,worker-tests,⏳待重启）
 - **证据**: worker-death 用 act_trace 核对: #4 实际 mineDown、#6 reclaimFurnace、#7 mineDown, death_log 记的都是上一条的值; 线上最近 12 条里 6/11 对相邻记录 skill+action 完全相同。
 - **机理**: mineflayer `death` 由 update_health(hp<=0) 触发; 原版服务端先广播死亡聊天消息、下一 tick 才同步血量 → 聊天触发的 death_log 写入早于 `death` 处理器刷新 `bot._deathLayers`, 读到上一次死亡的快照(从不清空、无时间戳)。
-- **改动**: 快照加 `at` 时间戳; 写入经 `pickDeathLayers` 只认 15s 内快照, 否则读实时层(此刻技能还在跑, 实时层就是死亡瞬间)。
+- **改动**: 快照加 `at` 时间戳; 写入经 `pickDeathLayers` 只认**晚于最近一次 spawn** 的快照(监工补: 固定 15s 窗在连死时会误认——T-0236 重生被拉回死亡点 10s 内又到 hp4), spawn 时同时清空快照; 否则读实时层(此刻技能还在跑, 实时层就是死亡瞬间)。
 - **预测**: 重启后 death_log 的 skill 与 act_trace 死亡时刻一致, 不再出现整串相邻记录相同。**钉子**: test/death_attribution.test.mjs(修复前 3/4 红)。提交 3cb5405。
 
 ## C403. 重生探针抓包: 死亡起到重生后 3s 的出站移动包与入站 position 包（respawn_probe.js 需重启,T-0236,worker-death,只观测,⏳待重启）

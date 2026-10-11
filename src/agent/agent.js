@@ -655,6 +655,9 @@ export class Agent {
         // ★respawn 诊断探针 (监工, death #17 异常重生到死亡点) — 只观测: respawn_probe.jsonl + progress '★UNEXPECTED respawn'。
         const respawnProbe = makeRespawnProbe(bot, { fs, supPath: SUP });
         bot.on('spawn', () => { if (isCurrentBot()) { try { respawnProbe.onSpawn(); } catch (e) {} } });
+        // ★T-0235: a death snapshot never outlives the life it was taken in — stamp the spawn and drop the snapshot,
+        // so a chain death (respawn → dead again within seconds) can't inherit the previous death's skill/action.
+        bot.on('spawn', () => { try { bot._lastSpawnAt = Date.now(); bot._deathLayers = null; } catch (e) {} });
         bot.on('death', () => { if (isCurrentBot()) { try { respawnProbe.onDeath(); } catch (e) {} } });
         // keepInventory 实测校正: 死后复活 3s, 背包为空 = 确实掉落; 数量没少 = 确实保留。
         bot.on('spawn', () => {
@@ -696,7 +699,7 @@ export class Agent {
                     skill: this.bot._currentSkill || null,
                     supervised: this.supervised_skill || null,
                     action: (this.actions && this.actions.currentActionLabel) || null,
-                    at: Date.now(),   // ★T-0235: the death_log writer only trusts a FRESH snapshot (death_attribution.js)
+                    at: Date.now(),   // ★T-0235: the death_log writer only trusts a snapshot newer than the last spawn (death_attribution.js)
                 };
             } catch (e) {}
             this.actions.cancelResume();
@@ -872,6 +875,7 @@ export class Agent {
                         // (at this moment the skill is still running — actions.stop() hasn't fired yet).
                         ...pickDeathLayers({
                             captured: b && b._deathLayers,
+                            lastSpawnAt: b && b._lastSpawnAt,
                             live: { action: (this.actions && this.actions.currentActionLabel) || null, skill: (b && b._currentSkill) || null, supervised: this.supervised_skill || null },
                         }),
                     };

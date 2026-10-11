@@ -5,12 +5,16 @@
 // live layers into bot._deathLayers (checkpoint #9: by the time the async snapshot writer ran, actions.stop() had
 // already nulled them). But the vanilla server broadcasts the death CHAT message first and syncs health a tick later,
 // so the chat-triggered death_log writer usually runs BEFORE that snapshot exists — and read the PREVIOUS death's
-// snapshot (never cleared, never time-stamped). Only a FRESH snapshot may override the live layers.
-export const DEATH_LAYERS_MAX_AGE_MS = 15000;
+// snapshot (never cleared, never time-stamped).
+//
+// A snapshot belongs to THIS death only if it was taken after the most recent (re)spawn — a fixed time window is
+// wrong for chain deaths (T-0236: respawned onto the death point and was at hp4 again within 10s). The spawn handler
+// also clears the snapshot, so a stale one can't survive a respawn either way.
 
-// captured = bot._deathLayers ({skill, supervised, action, at}); live = the layers read right now.
-export function pickDeathLayers({ captured, live, now = Date.now(), maxAgeMs = DEATH_LAYERS_MAX_AGE_MS }) {
-    const fresh = !!(captured && Number.isFinite(captured.at) && now - captured.at >= 0 && now - captured.at <= maxAgeMs);
+// captured = bot._deathLayers ({skill, supervised, action, at}); live = the layers read right now;
+// lastSpawnAt = time of the most recent spawn/respawn (bot._lastSpawnAt), 0/undefined if unknown.
+export function pickDeathLayers({ captured, live, lastSpawnAt = 0 }) {
+    const fresh = !!(captured && Number.isFinite(captured.at) && captured.at > (lastSpawnAt || 0));
     const src = fresh ? captured : {};
     return {
         action: src.action || live.action || null,
