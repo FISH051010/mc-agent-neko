@@ -70,3 +70,24 @@ test('T-0209 + T-0208: 没羊退避期间, 若之后又目击到羊 → 不退�
     const lm = {}; recordSightings(lm, { 1: ent('sheep', 60, 20) }, Date.now() - 10_000);
     assert.equal(proposeTasks(w, mk(lm)).find(p => p.kind === 'GET_BED').skill, 'bedErrand', 'fresh sighting → go');
 });
+
+test('T-0273: 亲眼看过空的近处目击删掉 (≤24b 没刷新到), 远处/本拍看到的保留 — 侦察不再在吃空的出生点打转', async () => {
+    const { recordSightings: rec, nearestSighting: near, SIGHTING_CLEAR_R } = await import('../src/agent/framework/animal_sightings.js');
+    const now = Date.now(), old = now - 4 * 3600 * 1000;
+    const lm = {
+        'sighting:chicken@0,-1': { kind: 'sighting', type: 'chicken', x: 10, y: 64, z: -2, ts: old, count: 1 },   // 早被吃掉
+        'sighting:chicken@2,-2': { kind: 'sighting', type: 'chicken', x: 45, y: 64, z: -30, ts: old, count: 1 },  // 离 bot 远, 没看过
+        'sighting:pig@-3,-2': { kind: 'sighting', type: 'pig', x: -47, y: 64, z: -26, ts: old, count: 1 },
+    };
+    const sheep = { 1: { name: 'sheep', position: { x: 4, y: 64, z: 3 } } };
+    assert.equal(rec(lm, sheep, now, { x: 8, y: 64, z: -4 }), true);
+    assert.equal(lm['sighting:chicken@0,-1'], undefined, 'stood next to it, nothing there → dropped');
+    assert.ok(lm['sighting:chicken@2,-2'] && lm['sighting:pig@-3,-2'], 'far records kept');
+    assert.ok(lm['sighting:sheep@0,0'], 'what is visible now is recorded');
+    assert.equal(SIGHTING_CLEAR_R, 24);
+    // 下一轮侦察指向下一个真没看过的点, 不再是那只被吃掉的鸡
+    assert.equal(near(lm, /^(chicken|pig)$/, { x: 8, y: 64, z: -4 }).x, 45);
+    // 不传 observer (旧调用) 行为不变
+    const lm2 = { 'sighting:chicken@0,-1': { kind: 'sighting', type: 'chicken', x: 10, y: 64, z: -2, ts: old, count: 1 } };
+    rec(lm2, {}, now); assert.ok(lm2['sighting:chicken@0,-1']);
+});

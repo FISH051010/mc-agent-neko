@@ -7,7 +7,11 @@ export const SIGHTING_MAX_AGE_MS = 24 * 3600 * 1000;
 export const SIGHTING_TARGET_MAX_DIST = 200;
 
 /** 扫一遍实体登记目击 (同种类同区块去重, count=本次该区块该种类头数), 顺带清掉 >24h 的旧记录。返回是否有改动。 */
-export function recordSightings(lm, entities, now = Date.now()) {
+export const SIGHTING_CLEAR_R = 24;
+/** ★T-0273 补 (06:02-06:05Z 实录: 出生点一带 581 条目击, 最近的全是 3.5-5h 前的单只鸡 (早被 bot 吃掉), 侦察每轮挑最近的旧点
+ *  扑空 → 下一轮再挑旁边的旧点, 两轮 600+ 格零动物): observer 在目击点 SIGHTING_CLEAR_R 内而这一拍没刷新到 (该区块已无此种类)
+ *  → 亲眼看过是空的, 删掉; 杀掉/吃掉的动物同理。侦察就会往外推, 不在吃空的区域打转。 */
+export function recordSightings(lm, entities, now = Date.now(), observer = null) {
     if (!lm) return false;
     let dirty = false;
     const seen = new Map();
@@ -26,7 +30,9 @@ export function recordSightings(lm, entities, now = Date.now()) {
     }
     for (const key of Object.keys(lm)) {
         const n = lm[key];
-        if (n && n.kind === 'sighting' && now - (n.ts || 0) > SIGHTING_MAX_AGE_MS) { delete lm[key]; dirty = true; }
+        if (!n || n.kind !== 'sighting') continue;
+        if (now - (n.ts || 0) > SIGHTING_MAX_AGE_MS) { delete lm[key]; dirty = true; continue; }
+        if (observer && Number.isFinite(observer.x) && !seen.has(key) && Math.hypot(n.x - observer.x, n.z - observer.z) <= SIGHTING_CLEAR_R) { delete lm[key]; dirty = true; }
     }
     return dirty;
 }
