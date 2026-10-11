@@ -12,7 +12,7 @@
 
 import { collectExposedOresDuringDescent } from './descentOreSweep.js';
 import { kernelYieldRequested } from './surfaceUp.js';
-import { hostileActionable } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0225 shooter-in-view check (T-0222 predicate)   // ★T-0190 kernel commitment-flip stamp (T-0181)
+import { hostileActionable, hostileRawNear, DESCENT_HOSTILE_R } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0225 shooter-in-view check (T-0222 predicate)   // ★T-0190 kernel commitment-flip stamp (T-0181)
 import fs from 'fs';
 import path from 'path';
 // ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
@@ -951,7 +951,8 @@ export default async function mineDown(bot, ctx, opts = {}) {
         }
         // bail to survival if an actionable hostile got close (shouldn't in a sealed stair, but guard)
         try {
-            const close = Object.values(bot.entities || {}).some(e => e && e !== bot.entity && e.position && ctx.mc.isHostile(e) && e.position.distanceTo(cur) < 4);
+            // ★T-0243 (T-0242): 与决策层同一谓词 (hostile_reach.hostileRawNear, 4 格内原始敌对不看可达) — 决策层也据此不派/释放下挖, 不再 1.5s 派发↔让位
+            const close = hostileRawNear(bot, DESCENT_HOSTILE_R) > 0;
             if (close) { abort = 'hostile within 4 — yield to survival'; break; }
         } catch (e) {}
         // ★C248b: stop before the only pick snaps with no replacement → don't strand deeper.

@@ -28,7 +28,7 @@ import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch,
 import { pickAutoEatFood } from './healing_reflex.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
-import { hostileActionableNear } from './hostile_reach.js';
+import { hostileActionableNear, hostileRawNear, DESCENT_HOSTILE_R } from './hostile_reach.js';
 import { equippedArmorNames, diamondArmorReady, nextProtectionPiece, cavitySealAlways, hasShield, protectionHaveNames, SHIELD_PLANKS } from './armor_gate.js';
 // 派发下矿技能的 kind (isGoalDone 只拿得到 kind; 提案端按技能名 DESCENT_SKILL_RE 判, 两边同一组)
 const DESCENT_KINDS = new Set(['GO_UNDERGROUND', 'GET_DIAMOND', 'GET_IRON_TOOLS', 'GET_IRON_ARMOR_SET', 'DUSK_MINE_NIGHT', 'MINE_THROUGH_NIGHT', 'NIGHT_STONE_BOOTSTRAP']);   // ★T-0175 木镐夜就地下挖也受饥饿下潜门约束
@@ -1597,6 +1597,9 @@ export function proposeTasks(world, bot) {
     // ★监工加急#6 (18:22:30Z 实录: food 到 12 就翻 GET_DIAMOND, hp=1 带全套铁装下矿): hp<10 同样关门。
     if (descentBlocked({ food: vitals.food, counts: invCounts(bot), hp: vitals.hp }))
         _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));   // ★T-0237: 叠加在养伤过滤之上 (原为 out.filter 会冲掉前面的过滤)
+    // ★T-0243 (T-0242): 4 格内有原始敌对 (不看可达) → 不派任何下挖技能 (与 mineDown 让位同一谓词 hostile_reach.hostileRawNear)
+    if (bot && hostileRawNear(bot, DESCENT_HOSTILE_R) > 0)
+        _final = _final.filter(p => !DESCENT_SKILL_RE.test(p.skill || ''));
     _final.sort((a, b) => b.priority - a.priority);
     return _final;
 }
@@ -1633,6 +1636,8 @@ export function isGoalDone(kind, world, bot) {
     const w = world || EMPTY_WORLD;
     // ★T-0237: 养伤期间已承诺的出门/迁移/远行类视为结束 → 释放 (kernel 打断子技能); HEAL 本身: 回血放手或吃不饱 (交给 FOOD_FLOOR) 即结束
     if (bot && bot._healLatch && HEAL_RISKY_KINDS.has(kind)) return true;
+    // ★T-0243 (T-0242): 4 格内有原始敌对 → 已承诺的下挖类释放 (否则 kernel 1.5s 后重派 mineDown, 它又立刻让位)
+    if (DESCENT_KINDS.has(kind) && bot && hostileRawNear(bot, DESCENT_HOSTILE_R) > 0) return true;
     if (kind === PROPOSAL_KIND.HEAL) return !(bot && bot._healLatch) || !healFeasible(w, bot);
     // ★饥饿禁下矿 (T-0069 跟进): 下矿类承诺在 food≤3 且零可吃时视为结束 → 释放 → kernelDriver 见 kind 翻转打断矿里的子技能。
     if (DESCENT_KINDS.has(kind)) {

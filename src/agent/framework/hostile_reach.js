@@ -71,3 +71,23 @@ export function hostileActionableNear(bot, r = 16) {
     } catch (e) {}
     return n;
 }
+
+// ★T-0243 (挂 T-0242, 监工拍板, 10-11 02:38:59Z 死亡: GET_IRON_ARMOR_SET 按 threat.actionable (可达/视线) 放行, 刚下挖 3 格时地面僵尸被判不可达;
+//   mineDown 却按原始距离 "hostile within 4" 让位 → 1.5s 一轮 派发↔让位, 6 只僵尸围死)。下挖本身在 4 格内有怪时就危险, 不看可达性:
+//   决策层下挖类提案与 mineDown 的让位判据统一用这一个谓词。
+export const DESCENT_HOSTILE_R = 4;
+/** r 内 (3D 距离) 原始敌对数 — 不看视线/可达。 */
+export function hostileRawNear(bot, r = DESCENT_HOSTILE_R) {
+    let n = 0;
+    try {
+        const me = bot && bot.entity && bot.entity.position;
+        if (!me) return 0;
+        for (const id in (bot.entities || {})) {
+            const e = bot.entities[id];
+            if (!e || e === bot.entity || !e.position || !isHostileEntity(e)) continue;
+            const d = e.position.distanceTo ? e.position.distanceTo(me) : Math.hypot(e.position.x - me.x, e.position.y - me.y, e.position.z - me.z);
+            if (d < r) n++;
+        }
+    } catch (e) {}
+    return n;
+}
