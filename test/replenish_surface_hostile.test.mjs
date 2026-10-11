@@ -26,6 +26,6 @@ test('T-0212: no hostiles → climb immediately', async () => {
 test('T-0212: replenishKit ① no longer gates the climb on night', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/replenishKit.js', import.meta.url), 'utf8');
     assert.match(src, /const _upGate = await surfaceUpHostileGate\(/);
-    assert.match(src, /if \(!onSurface\(\) && _upClear\) \{/);
+    assert.match(src, /if \(!onSurface\(\) && _upClear( && !_craftHere)?\) \{/);   // (T-0247 adds the craft-here skip)
     assert.doesNotMatch(src, /if \(!onSurface\(\) && !\(isNight\(\) && hostilesNear\(16\) > 0\)\) \{/);
 });

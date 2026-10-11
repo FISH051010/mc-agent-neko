@@ -66,6 +66,32 @@ export async function reclaimTable(bot, { skills, world }, { maxMs = 6000 } = {}
 /** ★T-0212 (death #18 02:37:32: 'night=false hostiles16=2' → ① surfaceUp anyway → zombies 1.7/2.4b mid-climb at dawn):
  *  never climb a shaft into nearby hostiles, day or night. Wait ≤maxWaitMs (re-check each stepMs) for them to clear;
  *  still there → don't climb (the underground steps — planks/sticks/pick — still run). Mirrors quickMeal (T-0211). */
+// ★T-0247 (live 02:59:52→03:03:26Z, worker-tier 核): REPLENISH_KIT was proposed for the iron-tier pick stock (1 ingot + 3 raw
+//   + fuel = one more pick; world_model pickPlanHasMat true), but ① climbed first whatever was short (wood only lacked the
+//   wide 64 top-up), the climb gained 0 ×3 → cooled; ④-pre wanted raw ≥3 alone and ④ broke silently. Craft it where you
+//   stand; the surface is for wood. Mirrors world_model REPLENISH_PLANKS_TRIGGER (=4) and pickPlanHasMat (ingot+raw ≥3 & fuel).
+export const REPLENISH_WOOD_FLOOR = 4;
+const _n = (c, k) => (c && c[k]) || 0;
+const _planksOf = (c) => Object.keys(c || {}).filter(k => k.endsWith('_planks')).reduce((s, k) => s + c[k], 0);
+const _hasFuel = (c) => _n(c, 'coal') > 0 || _n(c, 'charcoal') > 0;
+/** ④-pre: ingots short of one iron pick but ingot+raw ≥3 with fuel → { n: raw to smelt }; else null. */
+export function ironSmeltNeeded(c) {
+    const ing = _n(c, 'iron_ingot'), raw = _n(c, 'raw_iron');
+    if (ing >= 3 || ing + raw < 3 || !_hasFuel(c)) return null;
+    return { n: 3 - ing };
+}
+/** Is a pick of the current tier short AND craftable right here (material + table/planks + sticks/planks)? */
+export function tierPickCraftableHere(c, { bt, effIron, effDia, ironTarget = 4 }) {
+    let mat = false;
+    if (bt >= 4) mat = effDia < 3 && _n(c, 'diamond') >= 3;
+    else if (bt === 3) mat = effIron < ironTarget && (_n(c, 'iron_ingot') >= 3 || !!ironSmeltNeeded(c));
+    if (!mat) return false;
+    const planks = _planksOf(c);
+    const tableOk = _n(c, 'crafting_table') > 0 || planks >= 4;
+    const stickOk = _n(c, 'stick') >= 2 || planks >= 2 + (_n(c, 'crafting_table') > 0 ? 0 : 4);
+    return tableOk && stickOk;
+}
+
 export async function surfaceUpHostileGate({ hostilesNear, wait, maxWaitMs = 15000, stepMs = 1000, stop = () => false }) {
     let n = hostilesNear();
     let waited = 0;
@@ -220,7 +246,11 @@ export default async function replenishKit(bot, ctx, opts = {}) {
         _upClear = _upGate.ok;
         if (!_upClear) prog(`replenishKit: ① SKIP surfaceUp — hostiles16=${_upGate.hostiles} still near after ${_upGate.waitedMs}ms (T-0212; 别往怪堆里爬, 地下补镐即可)`);
     }
-    if (!onSurface() && _upClear) {
+    // ★T-0247: the tier pick is what's short and it can be crafted here, wood isn't below its trigger → no climb.
+    const _craftHere = !tierPickGoalMet() && picks() >= 3 && planksEq() >= REPLENISH_WOOD_FLOOR
+        && tierPickCraftableHere(inv(), { bt: bestPickTier(), effIron: effIronPicksN(), effDia: effDiaPicksN() });
+    if (!onSurface() && _craftHere) prog(`replenishKit: ① SKIP surfaceUp — tier pick craftable here (ingot=${cnt('iron_ingot')} raw=${cnt('raw_iron')} diamond=${cnt('diamond')} table=${cnt('crafting_table')} stick=${cnt('stick')} planksEq=${planksEq()}), surface is for wood (T-0247)`);
+    if (!onSurface() && _upClear && !_craftHere) {
         if (stop() || overBudget()) return settle('stopped-before-surface');
         const yb = bot.entity.position.y;
         prog(`replenishKit: ① underground (y=${Math.round(yb)}) → surfaceUp target 63, budget 90s (skill-side deadline)`);
@@ -358,10 +388,10 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     // ── ④-pre ★tier 囤镐备料 (2026-07-06): 铁阶段缺铁镐(<4)且有 raw_iron 无锭 → 先冶炼补锭再造铁镐
     //    (与 ⑧ 烤肉同 smeltSafe 惯用法; 需煤/炭)。钻镐用钻石(终态资源, 由 mineDiamonds 滚雪球供给,
     //    此处不冶炼)。──
-    if (!stop() && !overBudget() && bestPickTier() === 3 && effIronPicksN() < 4
-        && cnt('iron_ingot') < 3 && cnt('raw_iron') >= 3 && (cnt('coal') > 0 || cnt('charcoal') > 0)) {
+    const _sm = ironSmeltNeeded(inv());   // ★T-0247 same measure as world_model pickPlanHasMat (ingot+raw ≥3 & fuel)
+    if (!stop() && !overBudget() && bestPickTier() === 3 && effIronPicksN() < 4 && _sm) {
         const rb = cnt('iron_ingot');
-        try { await skills.customSkill(bot, 'smeltSafe', 'raw_iron', Math.min(cnt('raw_iron'), 6)); } catch (e) { prog(`replenishKit: ④-pre 冶铁 err ${e.message}`); }
+        try { await skills.customSkill(bot, 'smeltSafe', 'raw_iron', Math.min(cnt('raw_iron'), Math.max(_sm.n, 6))); } catch (e) { prog(`replenishKit: ④-pre 冶铁 err ${e.message}`); }
         prog(`replenishKit: ④-pre 冶铁补锭 ${rb}→${cnt('iron_ingot')} (为囤铁镐)`);
     }
 
@@ -374,7 +404,11 @@ export default async function replenishKit(bot, ctx, opts = {}) {
         const needFodder = picks() < 3;                                              // 数量底线(够本下矿, raw 总镐 — 与 isGoalDone totalPicks 同口径)
         const needIron = bt === 3 && effIronPicksN() < 4 && cnt('iron_ingot') >= 3;   // ★review: 有效铁镐<4(与提案端同口径)且有锭
         const needDia = bt >= 4 && effDiaPicksN() < 3 && cnt('diamond') >= 3;         // ★review: 有效钻镐<3 且有钻
-        if (!needFodder && !needIron && !needDia) break;
+        if (!needFodder && !needIron && !needDia) {
+            // ★T-0247: was a silent break — say when the tier stock is short but the material isn't here
+            if (!tierPickGoalMet() && guard === 1) prog(`replenishKit: ④ skip — tier pick short but no material here (tier=${bt} 铁镐eff=${effIronPicksN()} 钻镐eff=${effDiaPicksN()} ingot=${cnt('iron_ingot')} raw=${cnt('raw_iron')} fuel=${cnt('coal') + cnt('charcoal')} diamond=${cnt('diamond')})`);
+            break;
+        }
 
         // 原料自愈: 板不够先折 log; 棍不够先折板 (镐柄 2 棍); 都没有 → 老实 break (不空转)
         if (cnt('stick') < 2 || planksHeld() < 3) {

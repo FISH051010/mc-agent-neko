@@ -3251,6 +3251,8 @@
 
 - **★C427-S 短时反射持身期间技能寻路改为"等到持身结束再生效", 不再抛错 (T-0239 续)**（2026-10-11，worker-stuck，T-0239）: 实机 03:04:35 / 03:05:38Z 饥饿中 (hp→1): T-0239 的 edge_unstick 后退持身 700ms 生效 ('[body-gate] … reflex:edge_unstick holds the body'), 但闸在这 700ms 内对 quickMeal 侦察腿的 setGoal 一律抛错 — 17× / 33× 被拒, 侦察腿全烧光 ('without moving') 觅食整单放弃 (T-0241 已按 deferred 不计 strike, 但饭没吃上)。修: reflex_body_gate 对**短时持身** (_reflexHold, 无 mode 持身者) 的技能链 setGoal 改为延迟到持身结束 +20ms 再下发 (goto 已先挂好监听, 同一 goal 对象不触发 GoalChanged), 不抛错、不计拒绝; 期间任何直接 setGoal 作废待下发目标; mode 持身 (T-0231) 照旧拒绝。progress 行区分 'deferred to hold end' 与 'refused'。test/reflex_hold_defers_setgoal.test.mjs (T-0239 ×3)。src → 需重启。全套 751/751。
 
+- **★C428-S replenishKit 只缺可就地合成的 tier 镐时不上浮, 就地冶炼合成; ④-pre 冶铁门与决策层同口径 (T-0247, 监工指派, worker-tier 核)**（2026-10-11，worker-stuck，T-0247）: live 02:59:52→03:03:26Z — REPLENISH_KIT 因铁阶段囤镐 (_tierShort, iron镐=1/4; 1 锭+3 粗铁+燃料够再造一把, world_model pickPlanHasMat=true) 被正确提出, 但 replenishKit 不论缺什么一律先 ① surfaceUp (木料只差宽迟滞的 64 目标), 上浮 0 增益 ×3 → 冷却; ④-pre 冶铁门要求粗铁单独 ≥3 (决策层是锭+粗铁 ≥3), ④ 静默 break。修: 新导出 ironSmeltNeeded (锭+粗铁 ≥3 且有煤/木炭, 只熔差额) 与 tierPickCraftableHere (本 tier 镐短缺且材料+台/板+棍/板齐, ironTarget 参数默认 4 供 worker-tier IRON_PICK_TARGET 传入); _craftHere = tier 未达标 && picks≥3 && planksEq ≥ REPLENISH_WOOD_FLOOR(=4, 镜像 world_model REPLENISH_PLANKS_TRIGGER) && 可就地合成 → ① 跳过上浮 ('① SKIP surfaceUp — tier pick craftable here … (T-0247)'), 直接 ③/④-pre/④; ④-pre 改用 ironSmeltNeeded; ④ 缺 tier 镐又无材料时打 '④ skip — tier pick short but no material here' 不再静默。test/replenish_craft_in_place.test.mjs (T-0247 ×6); T-0212 钉子随条件同步。热加载。全套 759/759。
+
 ---
 
 ---
