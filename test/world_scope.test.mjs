@@ -131,3 +131,22 @@ test('2026-10-09: keepInventory-off world — naked respawn far from a death 5mi
     assert.equal(s.has('death_log.jsonl'), true);
     assert.equal(s.has('landmarks.json'), true);
 });
+
+test('T-0228: seed recorded but current seed missing (reconnect path forgot the login hook) → never archive', async () => {
+    // 10-10 20:37Z 实录: 断线重连路径没挂 login 钩子 → _worldId=null → 退回裸装推断 (0 镐 + 背包里未穿的铁护腿)
+    // → 把当前世界 44 条死亡 + 站点 + 地标全归档了。已记过种子时, 拿不到当前种子不是换世界的证据。
+    const s = makeSup([{ ts: minsAgo(38), x: 500, y: 64, z: 500 }]);
+    fs.writeFileSync(path.join(s.dir, 'world_id.json'), JSON.stringify({ id: '-2106165159:911269029' }));
+    const r = await archiveStaleWorldStateOnSwitch(bot(makeInv()), { sup: s.sup, delayMs: 0, now: () => NOW, worldId: null });
+    assert.equal(r, null);
+    assert.equal(s.has('death_log.jsonl'), true);
+    assert.equal(s.has('landmarks.json'), true);
+});
+
+test('T-0228: every bot-creating path in agent.js hooks the world-id login capture', () => {
+    const src = fs.readFileSync(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
+    const creates = (src.match(/this\.bot = initBot\(this\.name\);/g) || []).length;
+    const hooks = (src.match(/this\.bot = initBot\(this\.name\);\s*\n\s*this\._hookWorldId\(this\.bot\);/g) || []).length;
+    assert.ok(creates >= 2, 'expected initial + reconnect creation sites');
+    assert.equal(hooks, creates, 'each initBot() site must be immediately followed by _hookWorldId');
+});

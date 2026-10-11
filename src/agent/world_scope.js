@@ -80,7 +80,11 @@ function archiveFiles(sup, now) {
 }
 
 export async function archiveStaleWorldStateOnSwitch(b, { sup, delayMs = 5000, now = () => Date.now(), worldId = null } = {}) {
-    const bySeed = decideBySeed(readStoredWorldId(sup), worldId);
+    const storedId = readStoredWorldId(sup);
+    // ★T-0228: 记过种子却拿不到当前种子 = 本地抓取漏了 (10-10 20:37Z 重连路径漏挂 login 钩子), 不是换世界的证据。
+    // 裸装推断只在"从没见过种子"时兜底; 已有种子记录时宁可不归档 (误归档会抹掉当前世界 44 条死亡/站点/地标)。
+    if (storedId && !worldId) return null;
+    const bySeed = decideBySeed(storedId, worldId);
     if (bySeed !== null) {
         writeWorldId(sup, worldId, now);
         if (!bySeed) return null;                               // same world (seed matches) → never reset

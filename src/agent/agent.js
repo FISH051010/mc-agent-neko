@@ -394,10 +394,15 @@ export class Agent {
         return archiveStaleWorldStateOnSwitch(this.bot, { sup: SUP, worldId: this.bot && this.bot._worldId });
     }
 
+    // T-0065: 世界身份 = 原始 login 包的 hashedSeed (mineflayer 不存它), 供换世界检测用。
+    // ★T-0228: 所有造 bot 的路径都必须挂 (10-10 20:37Z 断线重连路径漏挂 → _worldId=null → 退回裸装推断误归档)。
+    _hookWorldId(b) {
+        try { b._client.once('login', (p) => { b._worldId = worldIdFromLoginPacket(p); }); } catch (e) {}
+    }
+
     async initBot() {
         this.bot = initBot(this.name);
-        // T-0065: 世界身份 = 原始 login 包的 hashedSeed (mineflayer 不存它), 供换世界检测用。
-        try { const b = this.bot; b._client.once('login', (p) => { b._worldId = worldIdFromLoginPacket(p); }); } catch (e) {}
+        this._hookWorldId(this.bot);
         this._stampBotEpoch();
         this._disconnectHandled = false;
         
@@ -983,6 +988,7 @@ export class Agent {
                 resetForgeProbe();
                 await probeForge({ host: settings.host, port: settings.port });
                 this.bot = initBot(this.name);
+                this._hookWorldId(this.bot);
                 this._stampBotEpoch();
                 this.bot._reconnectAttempt = this.reconnectAttempts;
                 this._disconnectHandled = false;
