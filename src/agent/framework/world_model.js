@@ -1852,7 +1852,10 @@ export function commitGoal(bot, proposals, world) {
         // ★T-0230 护栏: 两个紧急互抢 (FOOD_FLOOR 饥饿 ↔ 零镐补镐 TOOL_UPKEEP@94.5) 会每拍来回翻 — 已承诺的也是紧急时, 只让更高优先级的抢。
         const _cEmerg = isEmergency({ kind: c.kind, priority: ((proposals || []).find(p => p.kind === c.kind) || {}).priority }, w);
         const _cPri = ((proposals || []).find(p => p.kind === c.kind) || {}).priority ?? 50;
-        const emergency = (proposals || []).find(p => p.kind !== c.kind && isEmergency(p, w, c.kind) && (!_cEmerg || (p.priority || 0) > _cPri));
+        const emergency = (proposals || []).find(p => p.kind !== c.kind && isEmergency(p, w, c.kind) && (!_cEmerg || (p.priority || 0) > _cPri)
+            // ★T-0240 (监工拍板): FOOD_FLOOR 正在烤肉 (quickMeal 置 bot._mealCooking) 且不危急 (food>FOOD_FLOOR) → HEAL 不抢, 等烤完再交接;
+            //   危急 (food≤FOOD_FLOOR, 正在或马上掉血) 照抢、立刻吃生肉。
+            && !(p.kind === PROPOSAL_KIND.HEAL && c.kind === PROPOSAL_KIND.FOOD_FLOOR && bot && bot._mealCooking && Number(w.vitals && w.vitals.food) > FOOD_FLOOR));
         // ★T-0081: DUSK/NIGHT plan must DETHRONE a stale NON-night commitment. A daytime task
         // committed before dusk (migrate/scout/bootstrap) holds until isGoalDone — e.g. MIGRATE
         // is "done" only on arriving at a livable biome, so a long march blocks straight through

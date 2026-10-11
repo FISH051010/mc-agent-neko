@@ -442,7 +442,9 @@ export default async function quickMeal(bot, ctx, opts = {}) {
             const n = inv()[raw] || 0;
             if (!n || left() < 12000) continue;
             prog(`cook ${n} ${raw} (fuel=${fuel})`);
-            await raceI(bot, skills.customSkill(bot, 'smeltSafe', raw, n), left() - 2000);
+            // ★T-0240 烤制中标记: 决策层 commitGoal 读它 — 不危急 (food>FOOD_FLOOR) 时 HEAL 不抢正在烤肉的 FOOD_FLOOR (等烤完再交接)
+            try { bot._mealCooking = true; await raceI(bot, skills.customSkill(bot, 'smeltSafe', raw, n), left() - 2000); }
+            finally { bot._mealCooking = false; }
         }
         stopBody();
     }

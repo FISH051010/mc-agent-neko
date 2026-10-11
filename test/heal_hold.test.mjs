@@ -79,3 +79,12 @@ test('T-0237: healHold — 吃到 18, 原地等到 hp≥16 返回 true; 包里�
     assert.equal(r2.failed, true);
     assert.equal(r2.reason, 'no-food');
 });
+
+test('T-0240 (监工拍板): FOOD_FLOOR 正在烤肉 + 不危急 (food>6) → HEAL 不抢, 等烤完; 危急 (food≤6) 或没在烤 → HEAL 照抢', () => {
+    const P = [{ kind: 'HEAL', priority: 80, skill: 'healHold' }, { kind: 'FOOD_FLOOR', priority: 70, skill: 'quickMeal', args: [{}] }];
+    const mk = (cooking) => { const b = mkBot({ beef: 3 }, { hp: 6, food: 10 }); b._commitment = { kind: 'FOOD_FLOOR', skill: 'quickMeal', args: [{}], since: 0 };
+        b._foodFloorLatch = { active: true, kills: 0, since: 0 }; b._healLatch = true; b._mealCooking = cooking; return b; };
+    assert.equal(commitGoal(mk(true), P, mkWorld({ hp: 6, food: 10 })).kind, 'FOOD_FLOOR', 'cooking + not critical → let it finish');
+    assert.equal(commitGoal(mk(true), P, mkWorld({ hp: 6, food: 5 })).kind, 'HEAL', 'critical (food≤6) → HEAL eats raw now');
+    assert.equal(commitGoal(mk(false), P, mkWorld({ hp: 6, food: 10 })).kind, 'HEAL', 'not cooking → HEAL takes over');
+});
