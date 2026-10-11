@@ -30,7 +30,7 @@ import { chooseHealingPotion, shouldAutoEat, pickAutoEatFood } from './framework
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { releaseExpiredLatches } from './mode_latch.js';
 import { classifySwim, mobilityBaseState, sealedWaterTrapYield } from './swim_progress.js';
-import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction } from './mobility_geom.js';
+import { detectSealedRoom, chooseFleeHeading, planPocketEscape, sealedEscapeStep, backtrackTarget, creeperCorridorAssess, pickCreeperRunDir, creeperBackoffPreempts, tunnelWallOffWanted, fleeCoverFirst, fleeStuckAction, shieldDuelInsteadOfFlee } from './mobility_geom.js';
 // ★T-0124: was MISSING — f25d080/bc3acf2 called these unimported; every mobility tick threw ReferenceError
 //   (pinned by test/modes_free_identifiers.test.mjs).
 import { hostileActionable } from './framework/hostile_reach.js';
@@ -830,7 +830,7 @@ const modes_list = [
                         this._fleePillarTried = true;
                         const _f = me.floored();
                         const _clear = [2, 3, 4].every(dy => { const b = bot.blockAt(_f.offset(0, dy, 0)); return !b || b.boundingBox !== 'block'; });
-                        const _fb = skills.resolveCapBlock(bot);
+                        const _fb = skills.resolveCapBlock(bot, { emergency: true });
                         if (_clear && _fb && !(bot.blockAt(_f) && /water|lava/.test(bot.blockAt(_f).name || ''))) {
                             try { bot.clearControlStates(); } catch (e) {}
                             let _up = 0;
@@ -854,7 +854,7 @@ const modes_list = [
                         try { _r = await skills.coverFromShooter(bot, _nm, { tag: 'flee-stuck' }); } catch (e) {}
                         let _pillar = 0;
                         if (!(_r && _r.covered) && _nd <= 2.5 && !/skeleton|stray|pillager|witch/i.test(_nm.name || '')) {
-                            const _fb = skills.resolveCapBlock(bot);
+                            const _fb = skills.resolveCapBlock(bot, { emergency: true });
                             for (let k = 0; k < 2 && _fb; k++) { try { if (await skills.placeBlockUnderFeet(bot, _fb, { retries: 1, settleMs: 160 })) _pillar++; } catch (e) {} }
                         }
                         // ★T-0233 补 (death 02:38:59 10-11): 1 宽阶梯坑 + 头顶有遮挡 → 跳不起来垫不了柱, 僵尸 0.9b 中间也垫不下 → 原地站着挨打,
@@ -889,6 +889,15 @@ const modes_list = [
                             try { _cv = await skills.coverFromShooter(bot, _sh, { tag: 'flee-cover' }); } catch (e) {}
                             try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] shot while fleeing by ${_sh.name} ${_sd.toFixed(1)}b hp=${Math.round(bot.health)} → cover first: ${_cv ? `${_cv.why} placed=${_cv.placed}` : 'error'} (T-0226)\n`); } catch (e) {}
                             if (_cv && _cv.covered) break;   // behind cover — stop being a moving target
+                            // ★T-0226 续 (04:25 实录): no cover + a shield in hand → stop turning our back to the archer (the shield
+                            //   only blocks the front and sprinting cancels the block); face it with the shield up and close in.
+                            const _hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
+                            if (shieldDuelInsteadOfFlee({ coverFailed: !(_cv && _cv.covered), hasShield: _hasShield, meleeNear: false })) {
+                                try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [self_preservation] no cover vs ${_sh.name} ${_sd.toFixed(1)}b, shield in hand → face it shield-up (shieldFight) instead of fleeing back-turned (T-0226)\n`); } catch (e) {}
+                                try { bot.clearControlStates(); } catch (e) {}
+                                try { await skills.customSkill(bot, 'shieldFight', 16, 14000); } catch (e) {}
+                                break;
+                            }
                         }
                     }
                 } catch (e) {}

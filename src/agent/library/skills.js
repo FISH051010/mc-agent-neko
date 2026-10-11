@@ -6366,14 +6366,16 @@ export function woodAboveReserve(bot) { return woodPlankEq(bot) - 4 >= WOOD_RESE
 export function isWoodBlockName(name) { return CAP_WOOD_RE.test(name || ''); }
 
 /** 按【当前】背包解析封顶料 (每次放置前重解析 —— 挖下来的泥土立刻可用)。泥土 > 石系 > 其它整方块; 原木仅盈余时。 */
-export function resolveCapBlock(bot) {
+export function resolveCapBlock(bot, { emergency = false } = {}) {
     const reg = bot && bot.registry;
     let items = [];
     try { items = bot.inventory.items(); } catch (e) { return null; }
     const has = new Set(items.filter(it => it && it.count > 0).map(it => it.name));
     const pref = CAP_PREFS.find(n => has.has(n) && isCapBlockName(n, reg));
     if (pref) return pref;
-    const woodOk = woodAboveReserve(bot);
+    // ★T-0226 实录 04:25:08–25 (骷髅连射 16→12, 背包只有 spruce_log×9 ≈36 板 < 64 储备): 挡箭/堵路 'no-material' ×4。
+    //   储备线保的是工具链, 不该比命贵 —— emergency (挡箭/堵路/被围) 时原木也可用 (一两根的事)。
+    const woodOk = emergency || woodAboveReserve(bot);
     const nonWood = items.find(it => it && it.count > 0 && !CAP_WOOD_RE.test(it.name) && isCapBlockName(it.name, reg));
     if (nonWood) return nonWood.name;
     const wood = woodOk ? items.find(it => it && it.count > 0 && CAP_WOOD_RE.test(it.name) && isCapBlockName(it.name, reg)) : null;
@@ -6575,7 +6577,7 @@ export async function coverFromShooter(bot, shooter, { tag = 'cover' } = {}) {
     const plan = losCoverCells((q) => bot.blockAt(q), bot.entity.position, shooter.position);
     if (!plan) return { covered: false, placed: 0, mat: null, why: 'point-blank' };
     if (!plan.cells.length) return { covered: true, placed: 0, mat: null, why: 'already-blocked' };
-    const mat = resolveCapBlock(bot);
+    const mat = resolveCapBlock(bot, { emergency: true });   // ★T-0226: a log spent on cover beats an arrow in the back
     if (!mat) return { covered: false, placed: 0, mat: null, why: 'no-material' };
     let placed = 0;
     for (const c of plan.cells) {

@@ -136,3 +136,14 @@ test('T-0233: 逃跑零位移 ≥0.9s 且 4b 内有怪 → 先垫块挡在中间
     assert.match(loop, /this\._fleeMovePos = null; this\._fleeMoveAt = Date\.now\(\);/, 'baseline reset per flee');
     assert.match(loop, /fleeStuckAction\([\s\S]*skills\.coverFromShooter\(bot, _nm[\s\S]*skills\.placeBlockUnderFeet\(/);
 });
+test('T-0226 续 (04:25 实录): 挡箭没材料 + 手里有盾 → 面向射手举盾逼近 (shieldFight), 不背身逃跑; 近战怪在追时照旧跑', async () => {
+    const { shieldDuelInsteadOfFlee } = await import('../src/agent/mobility_geom.js');
+    assert.equal(shieldDuelInsteadOfFlee({ coverFailed: true, hasShield: true, meleeNear: false }), true);
+    assert.equal(shieldDuelInsteadOfFlee({ coverFailed: true, hasShield: false, meleeNear: false }), false, 'no shield: keep the old flee');
+    assert.equal(shieldDuelInsteadOfFlee({ coverFailed: false, hasShield: true, meleeNear: false }), false, 'covered: hide behind it');
+    assert.equal(shieldDuelInsteadOfFlee({ coverFailed: true, hasShield: true, meleeNear: true }), false);
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const s0 = m.indexOf('sprintFlee: async function');
+    const loop = m.slice(s0, m.indexOf('// 有目标且已接近', s0));
+    assert.match(loop, /if \(_cv && _cv\.covered\) break;[\s\S]{0,600}shieldDuelInsteadOfFlee\([\s\S]{0,700}customSkill\(bot, 'shieldFight', 16, 14000\)/);
+});

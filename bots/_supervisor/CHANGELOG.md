@@ -12,7 +12,14 @@
 
 ---
 
-## C407. ★★身体所有权闸误拦反射自己的战斗: 两条链标记都在时反射优先（framework/reflex_body_gate.js 需重启,T-0231 回归修,worker-death,⏳待重启）
+## C408. 挡箭/垫柱应急取料放开原木储备 + 挡箭失败且有盾 → 面向射手举盾逼近, 不背身逃（skills.js/modes.js/mobility_geom.js 需重启,T-0226 续,worker-death,⏳待重启）
+
+**证据**: 04:25:08/09/23/25 `shot while fleeing by skeleton 9.2/7.6/7.9/6.9b → cover first: no-material placed=0` ×4, hp20→16→12; 背包只有 spruce_log×9 (≈36 板 < 64 储备, resolveCapBlock 拒用原木)。worker-tier 转报: 同时 arrow_guard 'raised shield (offhand=true)' 却照样中箭 — 背对骷髅冲刺逃跑, 盾只挡正前方且冲刺取消格挡, flee 的转向与 arrow_guard 的 look 抢朝向。
+**改动**: ① resolveCapBlock(bot, {emergency}) — emergency 时原木不受储备线限制; coverFromShooter 与 sprintFlee 两处垫柱 (被围/卡住) 用 emergency。② mobility_geom.shieldDuelInsteadOfFlee({coverFailed, hasShield, meleeNear}); sprintFlee 挡箭失败 + 有盾 → customSkill('shieldFight', 16, 14000) 面向射手举盾逼近, 结束背身逃跑。
+**可证伪预测**: 只有木料时挡箭出现 `cover first: placed placed=N` 而非 no-material; 有盾无料时出现 `no cover vs skeleton … face it shield-up (shieldFight)`。
+**回滚**: revert, 重启。回归 seal_cap_geometry 'T-0226 实录 04:25' + ranged_cover 'T-0226 续'。
+
+## C407. ★★身体所有权闸误拦反射自己的战斗: 两条链标记都在时反射优先（framework/reflex_body_gate.js 需重启,T-0231 回归修,worker-death,✅已上线 04:01:44Z f92cab0）
 
 **证据**: 03:58:34 `[body-gate] skill shieldFight setGoal(GoalNearXZ) refused — mode:self_defense holds the body (T-0231)` —— shieldFight 是 self_defense 自己调的 customSkill。反射 execute 可能从技能异步链里被触发 (两个 AsyncLocalStorage 标记都在), 旧判据 `reflexHolds && inSkill()` 只看技能标记 → 把反射自己的 PVP 寻路也拦了。随后 03:59:46 hp1 (饥饿) 被僵尸 1.9b 打死, 反射接战被闸卡住是帮凶。
 **改动**: gated = reflexHolds && inSkill() && !inReflex() —— execute() 总会设反射标记, 反射链里的一切 (含反射调用的 customSkill) 放行; 纯技能链照旧被拦。

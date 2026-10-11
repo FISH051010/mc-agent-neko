@@ -175,6 +175,15 @@ export function fleeStuckAction({ stuckMs, nearestMob }) {
     return 'interpose';
 }
 
+/**
+ * ★T-0226 续 (04:25:08–25 实录, worker-tier 转报): 挡箭没材料 → 背对骷髅冲刺逃跑, arrow_guard 举了盾却被逃跑的转向/冲刺抵消
+ * (盾只挡正前方, 冲刺取消格挡), 每次中箭 -4。有盾时与其背身跑, 不如面向射手举盾逼近 (shieldFight 的远程分支)。
+ * 条件: 挡箭失败 + 手里有盾 + 4b 内没有近战怪在追 (否则停下对峙会被近战怪贴身)。纯函数。
+ */
+export function shieldDuelInsteadOfFlee({ coverFailed, hasShield, meleeNear }) {
+    return !!(coverFailed && hasShield && !meleeNear);
+}
+
 /** 选逃跑方向: 先要零风险; 没有 → 无硬风险里投影最远的 (软风险只排序不否决)。cands: [{dir:[x,z], ok:bool(地形), assess}] */
 export function pickCreeperRunDir(cands) {
     const okTerrain = (cands || []).filter(c => c && c.ok);

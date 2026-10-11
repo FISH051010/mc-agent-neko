@@ -404,3 +404,16 @@ test('T-0248 death #52: 封闭坑里苦力怕在外 (T-0127 hold) → 真·原�
         assert.ok(bd.includes(tag), `bunkerDown logs: ${tag}`);
     }
 });
+test('T-0226 实录 04:25 (骷髅连射, 背包只有 spruce_log×9 < 储备): 挡箭/垫柱等应急取料放开原木储备; 普通封顶仍守储备', async () => {
+    const { resolveCapBlock } = await import('../src/agent/library/skills.js');
+    const registry = minecraftData('1.21.1');
+    const bot = { registry, inventory: { items: () => [{ name: 'spruce_log', count: 9 }, { name: 'stick', count: 4 }, { name: 'crafting_table', count: 1 }] } };
+    assert.equal(resolveCapBlock(bot), null, 'normal capping keeps the tool-chain wood reserve');
+    assert.equal(resolveCapBlock(bot, { emergency: true }), 'spruce_log', 'a log spent on cover beats an arrow in the back');
+    const fs = await import('node:fs');
+    const sk = fs.readFileSync(new URL('../src/agent/library/skills.js', import.meta.url), 'utf8');
+    const cov = sk.slice(sk.indexOf('export async function coverFromShooter'), sk.indexOf('export async function coverFromShooter') + 800);
+    assert.match(cov, /resolveCapBlock\(bot, \{ emergency: true \}\)/);
+    const m = fs.readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    assert.equal((m.match(/const _fb = skills\.resolveCapBlock\(bot, \{ emergency: true \}\);/g) || []).length, 2, 'swarm pillar + stuck pillar');
+});
