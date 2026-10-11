@@ -109,6 +109,27 @@ export function xrayTrunkSkip(dist, canSee) {
     return dist > 2.2 && !canSee;
 }
 
+// ★T-0256 (监工加急, 一阶停滞 — death #53 respawn, 04:03-04:07Z ~4min daylight for 1 log): the 'nearest' log was a trunk
+//   whose bottom had been chopped, hanging +6y over the bot (y66) — _trunkBase stops at its lowest log (still +6y),
+//   riskyTree's high-tree needs dy≥8, so it stayed the target pass after pass ('defer blacklist … climb first' while
+//   stale≤6), and the 16-log scan was mostly that one trunk. A human chops a tree whose trunk stands on the ground;
+//   a dangling trunk is the last resort; two failed climbs on one tree → next tree.
+export const HIGH_TREE_DEFER_MAX = 2;
+export const GROUNDED_PREFER_R = 48;
+const _GROUND_NOT = /(leaves|_log|_wood|_stem)$/;
+/** The trunk's lowest log stands on real ground (solid, not leaves/another log). blockAt({x,y,z}) → block. */
+export function trunkGrounded(blockAt, base) {
+    try {
+        const b = blockAt({ x: Math.floor(base.x), y: Math.floor(base.y) - 1, z: Math.floor(base.z) });
+        return !!(b && b.boundingBox === 'block' && !_GROUND_NOT.test(b.name || ''));
+    } catch (e) { return true; }   // unknown → don't demote
+}
+/** Nearest grounded tree unless only a dangling one is in reach (grounded farther than GROUNDED_PREFER_R). {d,…}|null */
+export function pickGroundedFirst(grounded, floating) {
+    if (grounded && (!floating || grounded.d <= GROUNDED_PREFER_R)) return grounded;
+    return floating || grounded || null;
+}
+
 export default async function chopWood(bot, ctx, count = 8, opts = {}) {
     const { skills, world, log, Vec3, mc } = ctx;
     // ★跨热加载持久化 (实锤: customSkill每次调用重新import本模块,模块级Map全清零 —
@@ -1823,7 +1844,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             if (logIds.length) {
                 const _stages = [128, Math.min(160, _scanR), _scanR].filter((v, i, a) => v > 0 && a.indexOf(v) === i);   // ★资源型(用户令0714): 128/160/192分级(旧32/64/128)
                 for (let _si = 0; _si < _stages.length; _si++) {
-                    try { cands = (await world.getNearestBlocksWhereAsync(bot, logIds, _stages[_si], 16)).map(b => b.position); } catch (e) { cands = []; }
+                    try { cands = (await world.getNearestBlocksWhereAsync(bot, logIds, _stages[_si], 48)).map(b => b.position); } catch (e) { cands = []; }   // ★T-0256 16→48: one big trunk filled the 16
                     if (cands.length) break;
                 }
             }
@@ -1831,8 +1852,12 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
                 for (const t of LOGS) { await new Promise(r => setImmediate(r)); const b = await world.getNearestBlockAsync(bot, t, _scanR); if (b) { cands = [b.position]; break; } }
             }
             let _yc = 0;
+            const _seenCols = new Set();   // ★T-0256 one evaluation per trunk column
+            let _nearG = null, _nearF = null;   // ★T-0256 nearest grounded / dangling trunk
             for (const p of cands) {
                 if ((_yc++ & 1) === 0) await new Promise(r => setImmediate(r));   // ★POP-B(ELOOP): 每隔一个候选让出, 封顶 per-candidate blockAt 扇出(_trunkBase 40 + riskyTree)
+                const _ck0 = `${Math.floor(p.x)},${Math.floor(p.z)}`;
+                if (_seenCols.has(_ck0)) continue; _seenCols.add(_ck0);
                 const base = _trunkBase(p);                    // ★C297 resolve to trunk base (ground), not the detected canopy log
                 const key = `${Math.floor(base.x)},${Math.floor(base.y)},${Math.floor(base.z)}`;
                 if (Math.hypot(base.x - _ax, base.z - _az) > _leashR) continue;   // 缰绳源头过滤(树荒时放宽)
@@ -1849,12 +1874,18 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
                     if (risk === 'water-edge' && d < _wetD) { _wetD = d; const bb = bot.blockAt(base); _wetNear = { b: bb, t: (bb && bb.name) || 'log', key, drop: Math.round(p.y - base.y) }; }
                     continue;
                 }
-                if (d < ndist) {
+                // ★T-0256: rank grounded trunks ahead of dangling ones (bottom chopped / resting on leaves)
+                const _gr = trunkGrounded((q) => bot.blockAt(new Vec3(q.x, q.y, q.z)), base);
+                const _cur = _gr ? _nearG : _nearF;
+                if (!_cur || d < _cur.d) {
                     const bb = bot.blockAt(base);
                     const t = (bb && bb.name) || 'log';        // ★合并扫描后从方块反推类型(原来靠外层 for t)
-                    ndist = d; nearest = { b: bb, t, key, drop: Math.round(p.y - base.y) };
-                }   // drop = how far the canopy log was lowered to its base (★C297 evidence)
+                    const c = { d, b: bb, t, key, drop: Math.round(p.y - base.y), floating: !_gr };   // drop = how far the canopy log was lowered to its base (★C297 evidence)
+                    if (_gr) _nearG = c; else _nearF = c;
+                }
             }
+            const _picked = pickGroundedFirst(_nearG, _nearF);
+            if (_picked) { ndist = _picked.d; nearest = { b: _picked.b, t: _picked.t, key: _picked.key, drop: _picked.drop, floating: _picked.floating }; }
         }
         // ★req (2026-07-08): 没有任何旱地树 → 把最近的 water-edge 树扶正为目标, 允许寻路跨水去够它。
         //   放在 nearest 选定之后, 保证"有旱地树时绝不因水边树分心"; 只有 nearest=null 才回退。
@@ -1865,7 +1896,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
         // ★方位化 (session#14): 给选中的树补罗盘方位, 给 riskySkip 补 water/hi 分桶+最近险树坐标
         const _tgtBrg = (nearest && nearest.key) ? ' ' + (() => { const c = nearest.key.split(',').map(Number); return _bearingTo(c[0], c[2]); })() : '';
         const _riskBrk = riskySkipped > 0 ? `[water:${_riskWater} hi:${_riskHigh}${_riskNear ? ' near=' + _riskNear : ''}]` : '';
-        _dbg(`iter${i} y=${Math.floor(bot.entity.position.y)} nearest=${nearest ? nearest.t + '@' + ndist.toFixed(1) + 'b' + _tgtBrg + (nearest.drop > 1 ? `↓${nearest.drop}(★C297base)` : '') : 'NONE'} total=${total()} stale=${stale} surfaced=${surfaced} blk=${_unreach.size} riskySkip=${riskySkipped}${_riskBrk}`);
+        _dbg(`iter${i} y=${Math.floor(bot.entity.position.y)} nearest=${nearest ? nearest.t + '@' + ndist.toFixed(1) + 'b' + _tgtBrg + (nearest.drop > 1 ? `↓${nearest.drop}(★C297base)` : '') + (nearest.floating ? '(dangling,T-0256)' : '') : 'NONE'} total=${total()} stale=${stale} surfaced=${surfaced} blk=${_unreach.size} riskySkip=${riskySkipped}${_riskBrk}`);
         // ★C342 (T-0055, composes with C339): a CLOSE trunk we can't SEE is leaf-occluded — C339 now
         // (rightly) refuses to x-ray-chop it, but the HUMAN fix is to CLEAR the intervening leaves, not
         // give up → blacklist. Dig the nearest reachable occluding leaf (leaves are NOT gated by C339)
@@ -2325,13 +2356,18 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
             // Blacklist this exact tree: it didn't yield a log this pass (unreachable across
             // water / on a ledge, or a mob kept interrupting). Next iter skips it and picks the
             // next-nearest reachable tree instead of handing us back the same trap. Expires in 2min.
-            const _deferHighTreeBlacklist = nearest && nearest.b && nearest.b.position
-                && (nearest.b.position.y - bot.entity.position.y) >= 6 && stale <= 6;
+            // ★T-0256: per tree, not per stale count — two failed climb-first passes on one tree → blacklist, next tree
+            const _highDefer = (bot._chopHighDefer = bot._chopHighDefer || new Map());
+            const _deferHighTreeBlacklist = nearest && nearest.b && nearest.b.position && nearest.key
+                && (nearest.b.position.y - bot.entity.position.y) >= 6 && stale <= 6
+                && (_highDefer.get(_colKey(nearest.key)) || 0) < HIGH_TREE_DEFER_MAX;
             let _blacklistedThisPass = false;
             if (nearest && nearest.key) {
                 if (_deferHighTreeBlacklist) {
-                    _dbg(`defer blacklist ${nearest.t}@${nearest.key} (high tree +${Math.round(nearest.b.position.y - bot.entity.position.y)}y; climb first)`);
+                    _highDefer.set(_colKey(nearest.key), (_highDefer.get(_colKey(nearest.key)) || 0) + 1);
+                    _dbg(`defer blacklist ${nearest.t}@${nearest.key} (high tree +${Math.round(nearest.b.position.y - bot.entity.position.y)}y; climb first, ${_highDefer.get(_colKey(nearest.key))}/${HIGH_TREE_DEFER_MAX})`);
                 } else {
+                    _highDefer.delete(_colKey(nearest.key));
                     const _ttl = _ttlFor(nearest.key);
                     _unreach.set(nearest.key, Date.now() + _ttl);
                     _dbg(`blacklist ${nearest.t}@${nearest.key} (unreachable, ttl ${_ttl / 1000}s, 树柱fails=${_colFails.get(_colKey(nearest.key))})`);

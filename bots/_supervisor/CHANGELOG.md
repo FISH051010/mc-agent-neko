@@ -3271,6 +3271,8 @@
 
 - **★C430-S nightShelter 黎明/黄昏不再秒退空转: hold 循环白天判据与 world_model phase 同线 (T-0254)**（2026-10-11，worker-stuck，T-0254）: live 10-11 03:55:49→03:56:36Z @61,16,58 y16 黎明 (tod≈23300→24000) — kernel 每 1.5s 派 nightShelter('seal') ×29: 'digOneCapOne: y=16 too low — downgrade to seal' → '封箱禁用 … 原地裸 hold' → hold 循环直判白天 isDayDirect = t<12800||t>23000 已说 day → 立即 return true → 成功不计 strike → 重派。world_model phase (modes.js) 是 day<12000 ≤ dusk<13000 ≤ night<23000 ≤ dawn, 决策层黎明/黄昏仍提夜计划, 技能 hold 却在 dawn 与 dusk 前段 (12000-12800) 都当白天 = 同一空转两个窗口。修: 导出纯函数 shelterDayAt(tod) = 0≤tod<12000 (与 phase 'day' 同线), isDayDirect 改用它 (仍直读 bot.time, 不依赖可能被饿死的 _world 刷新) → 黄昏/黎明照常守到 phase day。test/shelter_dawn_spin.test.mjs (T-0254 ×2)。热加载。全套 778/778。
 
+- **★C431-S chopWood 落地树优先 + 高树最多延后 2 次就换树 (T-0256, 监工加急, 一阶停滞)**（2026-10-11，worker-stuck，T-0256）: death #53 后重生在高云杉林 (spawn 3,-6), 04:03-04:07Z 白天约 4 分钟只砍到 1 根原木。'nearest' 是 bot (y66) 正头顶 +6y 的 spruce_log@19,72,-10 — 那棵树下半截早被砍掉, 剩的树干悬空; _trunkBase 只沿原木往下找到 +6y 的最低一根, riskyTree 高树要 dy≥8, 于是它每轮都是目标: 'near-high-tree … surface/climb (try 1..4)' → 'defer blacklist … (high tree +6y; climb first)' (stale≤6 一直延后) → 'pinned-stair-climb blocked … no-step' 换向循环; 16 候选扫描大半是这一棵树的原木。修: ① 候选 16→48 并按树干列去重; ② 新导出 trunkGrounded (最低一根原木下方是实心地面, 非树叶/原木) 与 pickGroundedFirst — 落地树最近者优先, 只有 48 格内没有落地树时才选悬空树干 (iter 行标 '(dangling,T-0256)'); ③ 高树延后拉黑按单棵树计数 (bot._chopHighDefer), 同一棵 ≤HIGH_TREE_DEFER_MAX=2 次后直接拉黑换下一棵 ('climb first, n/2')。test/chop_reachable_first.test.mjs (T-0256 ×4)。热加载。全套 785/785。
+
 ---
 
 ---
