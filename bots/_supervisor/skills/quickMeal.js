@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
+import Vec3 from 'vec3';
 import { HUNTABLE_RE, FOOD_FLOOR, cannotRegen, rottenFleshTargetOk, STARVING_FOOD } from '../../../src/agent/framework/food_floor.js';
 import { shouldClimbToSurface } from '../../../src/agent/framework/surface_judge.js';   // ★T-0258 one surface criterion
 import { hostileActionableNear, isHostileEntity } from '../../../src/agent/framework/hostile_reach.js';
@@ -168,6 +169,37 @@ async function hostileDecision(bot) {
     return { action: 'away', h: h2 || h1 };
 }
 
+// ★T-0279 航点干地化: (x,z) 列顶是水 → 螺旋找 ≤8 格内列顶是实心非液体的点; 都是水 → null; 区块未加载 / 无数据 → 原样返回 (不判)。
+const LIQUID_RE = /^(water|lava|bubble_column|kelp|kelp_plant|seagrass|tall_seagrass)$/;
+function columnTop(bot, x, z, yRef) {
+    for (let y = Math.floor(yRef) + 12; y >= Math.floor(yRef) - 16; y--) {
+        let b = null; try { b = bot.blockAt(new Vec3(x, y, z)); } catch (e) { return undefined; }
+        if (b === null || b === undefined) return undefined;   // 未加载
+        if (b.name === 'air' || b.name === 'cave_air' || b.boundingBox === 'empty' && !LIQUID_RE.test(b.name)) continue;
+        return b;
+    }
+    return undefined;
+}
+export function dryWaypoint(bot, wp) {
+    try {
+        const yRef = bot.entity.position.y;
+        const x0 = Math.round(wp.x), z0 = Math.round(wp.z);
+        const top = columnTop(bot, x0, z0, yRef);
+        if (!top || !LIQUID_RE.test(top.name)) return wp;
+        for (let r = 1; r <= 8; r++) {
+            for (let dx = -r; dx <= r; dx++) for (const dz of [-r, r]) {
+                const t = columnTop(bot, x0 + dx, z0 + dz, yRef);
+                if (t && !LIQUID_RE.test(t.name)) return { x: x0 + dx, z: z0 + dz };
+            }
+            for (let dz = -r + 1; dz <= r - 1; dz++) for (const dx of [-r, r]) {
+                const t = columnTop(bot, x0 + dx, z0 + dz, yRef);
+                if (t && !LIQUID_RE.test(t.name)) return { x: x0 + dx, z: z0 + dz };
+            }
+        }
+        return null;
+    } catch (e) { return wp; }
+}
+
 // ★T-0278 腐肉兜底目标: 判据见 food_floor.rottenFleshTargetOk (food≤3、不在养伤锁存、石剑以上、单只僵尸类、16 格内无其它敌对)。返回实体或 null。
 export function zombieFoodTarget(bot) {
     try {
@@ -244,6 +276,11 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
         }
         const found = pickHuntTarget(bot, radius, maxDy, targetRe);
         if (found) return found;
+        // ★T-0279 (06:37-06:38Z 实录: scoutToward (-77,-85) 紧挨湖 (-81,-87), 航点落湖面 → 寻路只能进水 → SWIM → self_preservation
+        //   游泳本能抢身拽回岸 → 重派再进水, 循环): 航点落在水面就挪到 ≤8 格内的干地; 找不到干地跳过这个点。
+        const dry = dryWaypoint(bot, wp);
+        if (!dry) { prog(`scout: waypoint (${Math.round(wp.x)},${Math.round(wp.z)}) is open water, no dry land ≤8b — skip`); continue; }
+        if (dry !== wp) wp = dry;
         const legMs = Math.min(20000, scoutMs - (Date.now() - t0));
         // ★T-0189 (23:21:15-17Z 实录: "bounded scout" 0.15-0.4s 就 "found nothing"; 上线以来只成功过一次): 旧 GoalNear 把目标高度钉在
         //   起点 y — 24-96 格外地形高低不一, 目标点不可达, pathfinder 立即拒绝, 33 个航点 0.2s 全败。改 GoalNearXZ (不限高度);
