@@ -72,7 +72,7 @@ async function testObservedFurnaceWinsOverPlacementTimeout() {
     const ctx = {
         world: {
             getNearestBlock: () => (++furnaceLookups === 1 ? null : furnace),
-            getInventoryCounts: () => ({ furnace: 1, raw_iron: 3 }),
+            getInventoryCounts: () => ({ furnace: 1, raw_iron: 3, coal: 1 }),   // ★T-0266 smeltSafe 按燃料预算封顶 (0 燃料 = 一块不熔)
         },
         skills: {
             craftRecipeLocal: async () => { throw new Error('already has furnace'); },

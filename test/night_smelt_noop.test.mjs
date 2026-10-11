@@ -73,3 +73,24 @@ test('T-0266 (监工): craftArmor 下一件锭不够 → 非失败 {ok, saving, 
     assert.ok(!calls.some(c => /craftChain/.test(c)), 'no helmet crafted: ' + calls);
     assert.match(fs.readFileSync(path.join(home, 'bots', '_supervisor', 'progress.txt'), 'utf8'), /saving iron for iron_chestplate \(5\/8\)/);
 });
+
+test('T-0266 补 (监工): smeltSafe 烧木当燃料时留拍台+折棍的原木 (与提案侧 smeltableUnits 同一函数); 煤够照熔; 煮肉不扣', async () => {
+    const { smeltableUnits } = await import('../src/agent/framework/kit_gate.js');
+    const FURNACE = { name: 'furnace', position: { x: 0, y: 64, z: 0 } };
+    const run = async (inv, item = 'raw_iron', n = 5) => {
+        const asked = [];
+        const bot = { entity: { position: { x: 1, y: 64, z: 0, offset() { return this; } } }, blockAt: () => FURNACE };
+        const ctx = { log: () => {}, world: { getNearestBlock: () => FURNACE, getInventoryCounts: () => ({ ...inv }) },
+            skills: { smeltItem: async (_b, it, k) => { asked.push(k); inv[it] -= k; return true; },
+                      clearNearestFurnace: async () => true, collectBlock: async () => true, goToPosition: async () => {} } };
+        const r = await smeltSafe(bot, ctx, item, n);
+        return { asked, r, proposalSide: smeltableUnits(inv) };
+    };
+    // 3 原木 0 煤 5 粗铁: 烧 1 根 (1 块), 留 2 根 = 拍台 4 板 + 折棍
+    assert.deepEqual((await run({ spruce_log: 3, raw_iron: 5 })).asked, [1]);
+    // 2 原木 0 煤: 一块不熔 (提案侧 smeltableUnits 同为 0, 不会提)
+    const z = await run({ spruce_log: 2, raw_iron: 5 });
+    assert.deepEqual(z.asked, []); assert.equal(z.r, false); assert.equal(smeltableUnits({ spruce_log: 2 }), 0, 'same budget on the proposal side');
+    assert.deepEqual((await run({ coal: 1, spruce_log: 2, raw_iron: 5 })).asked, [5], 'coal covers it');
+    assert.deepEqual((await run({ spruce_log: 2, beef: 3 }, 'beef', 3)).asked, [3], 'cooking food keeps the old behaviour');
+});

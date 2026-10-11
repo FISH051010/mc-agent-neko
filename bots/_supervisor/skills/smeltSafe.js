@@ -6,6 +6,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { smeltableUnits, WOOD_FUEL_RESERVE_LOGS } from '../../../src/agent/framework/kit_gate.js';
 const STATIONS_F = path.resolve(process.cwd(), 'bots', '_supervisor', 'stations.json');
 // 状态池登记 (满地台炉根治的一环): 任何用到/放置的熔炉都进 stations.json
 const stRegister = (type, p) => {
@@ -195,6 +196,13 @@ export default async function smeltSafe(bot, ctx, item, num = 1) {
     //   按实际持有截断 (至少熔手上有的)。
     const _have = (before[item] || 0);
     if (_have < num) { log(bot, `smeltSafe: have ${_have} ${item} < requested ${num} — smelting ${_have}`); num = _have; }
+    // ★T-0266 补 (监工; 04:50-04:54Z 实录: 夜里连熔 3 趟把木料烧到 1 板 0 原木 0 台 → craftArmor 无台必败):
+    //   烧木当燃料时给拍台+折棍留底 (WOOD_FUEL_RESERVE_LOGS 原木) — 与提案侧 smeltableUnits 同一个函数, 两边一个口径。
+    //   只管矿/粗金属; 煮食物不扣 (饿肚子优先于留台)。
+    if (/^raw_|_ore$/.test(item)) {
+        const _cap = smeltableUnits(before);
+        if (num > _cap) { log(bot, `smeltSafe: fuel budget ${_cap} (keeping ${WOOD_FUEL_RESERVE_LOGS} logs for table+sticks) < ${num} ${item} — smelting ${Math.max(0, _cap)}`); num = Math.max(0, _cap); }
+    }
     const ok = num > 0 ? await skills.smeltItem(bot, item, num) : false;
     let L = smeltLedger(item, before, world.getInventoryCounts(bot) || {});
     // ★T-0164 (监工②): 没被打断就在炉边收尾 — 有滞留先清炉 (锭+残料回包), 自己放的随身炉挖回背包。
