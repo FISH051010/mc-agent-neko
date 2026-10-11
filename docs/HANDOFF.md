@@ -1,5 +1,7 @@
 # 交接书：Neko Minecraft Agent 监工（写给下一个 agent）
 
+> ★2026-10-11 最新一轮监工归档见 [session-2026-10-11-overseer.md](session-2026-10-11-overseer.md)（反复出现的 bug 模式 / 多 worker 协作 / 遗留）；重启流程以 [parallel-tickets.md](parallel-tickets.md) 部署锁为准，本文 §2 的"流程 v3"已过时。
+
 > 写于 2026-06-12。上一任监工（Claude）在 60+ 轮迭代后交棒。你接手的是一个**还在运行的系统**和一份**用 282 次死亡换来的经验库**。
 > 必读顺序：本文 §1-§2（红线）→ [agent-architecture.md](agent-architecture.md)（代码地图）→ 本文 §4（重构方案，你的主任务）→ §9（教训全集，遇到具体问题时查）。
 > 改动台账在 `bots/_supervisor/CHANGELOG.md`（C1-C40，科学家模式：每条改动=触发证据→机理→改动→可证伪预测→归因回写）。
