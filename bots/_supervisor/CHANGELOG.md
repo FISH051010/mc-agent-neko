@@ -3188,6 +3188,8 @@
 
 - **★C420-S 干竖井改为沿楼梯斜线检查 + 隧道后沿隧道方向下挖(T-0184 续)**（2026-10-10，worker-stuck，T-0184）: 实机 04:45:37 'tunnelled 15b 1,0 to dry rock (dry shaft)' 后 y51→44 采矿 5 无立刻 abort ✅, 但下挖朝向沿用旧向 -1,0 (朝回含水层) → 2 次 fluid turn; 且干燥检查只看终点竖列, 楼梯每下一层前进一格会偏离。修: planDryTunnel 的 stairDry 检查第 k 层 (x+dx·k, z+dz·k) 半径 2 的脚/头格 (记忆化, ≤32 层封顶 — 去 y-59 最坏 ~1.7k blockAt/1ms); 循环内隧道成功后朝向取 _tun 方向; START 换址 clean2 优先隧道方向。测试 test/minedown_dry_shaft.test.mjs 新增"水在楼梯斜线上、终点竖列干"场景 + 朝向钉。
 
+- **★C421-S mineDown 遇有视线的射手先挡视线, 挡不住就让位(T-0225, death #22 mineDown 部分, 监工指派)**（2026-10-10，worker-stuck，T-0225）: death #22 10-10 04:51:25 黄昏 y14 — 04:50:38-42 'hostile-steer: skeleton @9.0b/@8.0b — 拐向背离怪' 只调转楼梯方向不停挖, 到层 branch-mining, 骷髅跟下 04:51:13 4.6b 中箭。修: shooterToCover(bot,10) = 10 格内有视线的最近远程怪 (T-0222 hostileActionable); mineDown 每步若命中 → skills.coverFromShooter 就地补块挡视线, 挡住续挖; 挡不住 → abort + r.deferred=true (kernel 不计 strike), 身体交 self_defense/self_preservation。测试 test/minedown_shooter_cover.test.mjs (有视线骷髅/墙后/远处/近战 + 接线), 更新 T-0203 钉子。
+
 ---
 
 ---
