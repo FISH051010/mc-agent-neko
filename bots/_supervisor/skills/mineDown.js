@@ -11,7 +11,8 @@
 // opts: { steps=40, heading=null (auto), targetY=45 }
 
 import { collectExposedOresDuringDescent } from './descentOreSweep.js';
-import { kernelYieldRequested } from './surfaceUp.js';   // ★T-0190 kernel commitment-flip stamp (T-0181)
+import { kernelYieldRequested } from './surfaceUp.js';
+import { hostileActionable } from '../../../src/agent/framework/hostile_reach.js';   // ★T-0225 shooter-in-view check (T-0222 predicate)   // ★T-0190 kernel commitment-flip stamp (T-0181)
 import fs from 'fs';
 import path from 'path';
 // ★T-0137 (监工: 18:43/18:49 mineDown 3 连败冷却, progress.txt 零行 mineDown 日志): log_ 只进 bot 内部输出,
@@ -256,6 +257,25 @@ export function dispatchProgressed({ wedgeFinal, entryY, endY, oreGain, cobbleGa
     return (wedgeFinal ? down >= 3 : down >= 1) || oreGain > 0 || cobbleGain >= 3;
 }
 
+// ★T-0225 (death #22 04:51:25: 'hostile-steer: skeleton @9.0b' turned the stair but kept digging; the skeleton followed
+//   and shot it at 4.6b). Turning away is useless against a shooter that can SEE you. Nearest ranged hostile within r
+//   that is actionable (line of sight — T-0222 hostileActionable); null when none.
+const MD_RANGED_RE = /^(skeleton|stray|bogged|pillager|witch|blaze|ghast|evoker|breeze)$/;
+export function shooterToCover(bot, r = 10) {
+    let best = null, bd = Infinity;
+    try {
+        const p = bot.entity.position;
+        for (const id in (bot.entities || {})) {
+            const e = bot.entities[id];
+            if (!e || !e.position || !MD_RANGED_RE.test(e.name || '')) continue;
+            if (!hostileActionable(bot, e, r)) continue;
+            const d = e.position.distanceTo(p);
+            if (d < bd) { bd = d; best = e; }
+        }
+    } catch (e) {}
+    return best;
+}
+
 export function planVoidHop(bn, cx, cy, cz, sx, sz, avoid = [], R = 4) {
     const nm = (b) => (b && b.name) || 'air';
     const solid = (b) => !!(b && b.boundingBox === 'block' && !FLUID.test(nm(b)));
@@ -460,7 +480,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     log_(`START pos=${Math.round(bot.entity.position.x)},${Math.round(bot.entity.position.y)},${Math.round(bot.entity.position.z)} hp=${Math.round(bot.health)} food=${bot.food} heading=${sx},${sz} targetY=${targetY}`);
     let dug = 0, ore = 0, abort = null, noProg = 0;
     let voidHops = 0;   // ★T-0137② in-dispatch void hops (≤3)
-    let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0;   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1); ★T-0203 cavity re-heading (≤3)
+    let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0, deferredByShooter = false;   // ★T-0225 deferredByShooter   // ★T-0162 in-dispatch fluid re-heading (≤4) + tunnel relocate (≤1); ★T-0203 cavity re-heading (≤3)
     // walk the planned hop line cell by cell (break feet/head blocks like wedgeSidestep), true if we arrived
     const walkVoidHop = (path) => walkDugPath(bot, skills, Vec3, bn, path);
 
@@ -878,6 +898,19 @@ export default async function mineDown(bot, ctx, opts = {}) {
         }
         // ★以怪为基准: 先尝试把这一步的 heading 拐离近怪 (10b 内且正朝怪挖) — 提前避, 别等贴脸。
         steerFromHostile();
+        // ★T-0225: a shooter that sees us — wall off its line of sight here, then keep digging; can't → stop and hand the
+        //   body to self_defense / self_preservation (deferred, not a strike).
+        const _shooter = shooterToCover(bot, 10);
+        if (_shooter) {
+            let _cv = null;
+            if (typeof skills.coverFromShooter === 'function') { try { _cv = await skills.coverFromShooter(bot, _shooter, { tag: 'mineDown' }); } catch (e) {} }
+            if (_cv && _cv.covered) log_(`shooter ${_shooter.name} in view — covered its line of sight (placed ${_cv.placed}), continuing (T-0225)`);
+            else {
+                deferredByShooter = true;
+                abort = `${_shooter.name} in view ≤10b, line of sight not covered (${_cv ? (_cv.why || 'still exposed') : 'no cover primitive'}) — yield to self_defense (T-0225)`;
+                break;
+            }
+        }
         // bail to survival if an actionable hostile got close (shouldn't in a sealed stair, but guard)
         try {
             const close = Object.values(bot.entities || {}).some(e => e && e !== bot.entity && e.position && ctx.mc.isHostile(e) && e.position.distanceTo(cur) < 4);
@@ -1102,6 +1135,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
 
     let inv = {}; try { for (const it of bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count; } catch (e) {}
     const r = { endY: Math.round(bot.entity.position.y), dug, oreVeins: ore, hp: Math.round(bot.health), food: bot.food, abort, raw_iron: inv.raw_iron || 0, iron_ore: 0, wedgeRecoveries, wedgeFinal };
+    if (deferredByShooter) r.deferred = true;   // ★T-0225 kernel: deferred ≠ failure
     // ★KERNEL-CONTRACT FIX (return-contract audit 2026-07-02): this is the file's ONLY return and
     // it was always truthy with no failed key, so every ZERO-PROGRESS exit reset the kernel's
     // dispatch-failure counter (kernel.js failed-sniff = threw / ===false / ok===false /
@@ -1117,7 +1151,7 @@ export default async function mineDown(bot, ctx, opts = {}) {
     // (moveAway 顺坡至多白得 1-2 格; 真挖降 3+ 格再楔死的派发不该被一票否决白吃 strike),
     // 否则 moveAway 下坡 1 格就把三连楔死洗成 truthy = 新活锁口.
     const progressed = dispatchProgressed({ wedgeFinal, entryY, endY: r.endY, oreGain: oreUnits() - oreUnitsAtEntry, cobbleGain: cobbleUnits() - cobbleAtEntry });
-    if (!progressed) r.failed = true;
+    if (!progressed && !r.deferred) r.failed = true;
     log_(`DONE ${JSON.stringify(r)}`);
     return r;
 }

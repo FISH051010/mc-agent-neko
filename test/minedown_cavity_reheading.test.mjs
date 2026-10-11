@@ -7,7 +7,7 @@ import test from 'node:test';
 // (T-0183): keep the T-0180 seal/not-entering, but re-head inside this dispatch and relocate once if all four breach.
 test('T-0203: after a T-0180 seal mineDown re-heads in-dispatch (≤3) and relocates once when every heading breaches', () => {
     const src = fs.readFileSync(new URL('../bots/_supervisor/skills/mineDown.js', import.meta.url), 'utf8');
-    assert.match(src, /let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0;/);
+    assert.match(src, /let fluidTurns = 0, loopRelocates = 0, cavityTurns = 0[,;]/);   // (T-0225 appends deferredByShooter)
     const i = src.indexOf('★T-0203 (live 01:18:47-56');
     const j = src.indexOf("abort = `cavity breach + hostile ≤16b toward", i);
     assert.ok(i > 0 && j > i);
