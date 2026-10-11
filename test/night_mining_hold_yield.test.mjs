@@ -52,3 +52,11 @@ test('T-0282: both sealed-night holds yield to an owned night descent', () => {
     const cov = src.slice(src.indexOf('coveredNightHoldStatus: function (bot) {'), src.indexOf('status.coverReal = this.sealedNightBox(bot);'));
     assert.match(cov, /decisionOwnsNightMining\(bot/, 'covered night hold must not claim the body from an owned night descent');
 });
+
+test('T-0282: the descent gate fails CLOSED — if checking it throws, the sealed hold keeps the body', async () => {
+    // worker-tests mutation 10-11: `catch (e) { return false; }` → `return true` kept every test above green; a broken read
+    // (entity table mid-respawn, inventory not ready) would then open the gate and pull the bot out of a sealed pit at night.
+    const { descentGateOpen } = await import('../src/agent/framework/night_owner.js');
+    const bot = { get food() { throw new Error('not ready'); }, health: 20, inventory: { items: () => [] }, entities: {} };
+    assert.equal(descentGateOpen(bot), false);
+});
