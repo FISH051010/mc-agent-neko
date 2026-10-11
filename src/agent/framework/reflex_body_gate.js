@@ -23,6 +23,8 @@ export function holdBodyForReflex(bot, name, ms, now = Date.now()) {
 }
 export const reflexHolds = (bot, now = Date.now()) => !!(bot && ((bot._bodyOwner && bot._bodyOwner.kind === 'mode')
     || (bot._reflexHold && bot._reflexHold.until > now)));
+/** ★T-0241 monotonic count of skill-chain calls the gate refused on this bot (snapshot before/after a dispatch). */
+export const reflexGateRefusals = (bot) => (bot && bot._reflexGateBlocks) || 0;
 export const holderName = (bot) => (bot && bot._bodyOwner && bot._bodyOwner.kind === 'mode' && bot._bodyOwner.name)
     || (bot && bot._reflexHold && bot._reflexHold.name) || '?';
 
@@ -32,7 +34,8 @@ export function installReflexBodyGate(bot, { onBlock } = {}) {
     // per-part idempotent: initModes may run before the pathfinder plugin is loaded — execute() re-calls this cheaply.
     const parts = bot._reflexGateParts || (bot._reflexGateParts = {});
     if (onBlock) parts.onBlock = onBlock;
-    const blocked = (kind, detail) => { try { if (parts.onBlock) parts.onBlock(kind, detail); } catch (e) {} };
+    // ★T-0241: count every refusal on the bot so the dispatcher can tell "the reflex borrowed the body" from a real failure
+    const blocked = (kind, detail) => { bot._reflexGateBlocks = (bot._reflexGateBlocks || 0) + 1; try { if (parts.onBlock) parts.onBlock(kind, detail); } catch (e) {} };
     const gated = () => reflexHolds(bot) && inSkill();
     const pf = bot.pathfinder;
     if (!parts.pf && pf && typeof pf.setGoal === 'function') {

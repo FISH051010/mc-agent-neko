@@ -22,6 +22,7 @@
 // ctx = { skills, world, mc, Vec3, log }
 import fs from 'fs';
 import path from 'path';
+import { reflexGateRefusals } from '../../../src/agent/framework/reflex_body_gate.js';   // ★T-0241
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 const prog = (s) => { try { fs.appendFileSync(PROG, `[${new Date().toISOString()}] [kernel] ${s}\n`); } catch (e) {} };
 
@@ -162,12 +163,26 @@ const SUPERVISOR_CANCEL_WINDOW_MS = 30000;
 export function isDispatchFailure(res, threw) {
     return !!threw || res === false || !!(res && typeof res === 'object' && (res.ok === false || res.failed === true));
 }
-export function settleDispatch(bot, kind, res, { threw = false, interrupted = false, now = Date.now() } = {}) {
+// ★T-0241 (live 10-11 02:25-02:27Z): self_preservation held the body in bursts, the T-0231 gate refused mineDown's walk/path,
+//   relocate failed → 3 "failures" → DUSK_MINE_NIGHT cooled. A child whose body a reflex borrowed did not fail at its job:
+//   no strike (streak kept). Bounded (监工): ≥GATE_DEFER_LIMIT such defers of one kind in GATE_DEFER_WINDOW_MS (a reflex
+//   holding the body all night) → failures strike again, so it can't become a strike-free re-dispatch spin.
+export const GATE_DEFER_LIMIT = 6;
+export const GATE_DEFER_WINDOW_MS = 600000;
+export function settleDispatch(bot, kind, res, { threw = false, interrupted = false, gateRefused = false, now = Date.now() } = {}) {
     if (!bot || !kind) return { failed: false, cooled: false, strikes: 0 };
     const fails = bot._kdDispatchFails || (bot._kdDispatchFails = {});
     if (!isDispatchFailure(res, threw)) { fails[kind] = 0; return { failed: false, cooled: false, strikes: 0 }; }
     const cancelUnwind = !!bot._supervisorCancelAt && now - bot._supervisorCancelAt < SUPERVISOR_CANCEL_WINDOW_MS;
     if (cancelUnwind || interrupted) return { failed: true, cooled: false, strikes: fails[kind] || 0, unwind: true };
+    if (gateRefused) {
+        const gd = bot._kdGateDefers || (bot._kdGateDefers = {});
+        gd[kind] = (gd[kind] || []).filter(at => now - at < GATE_DEFER_WINDOW_MS);
+        if (gd[kind].length < GATE_DEFER_LIMIT) {
+            gd[kind].push(now);
+            return { failed: true, cooled: false, strikes: fails[kind] || 0, deferred: true, gateDefers: gd[kind].length };
+        }
+    }
     fails[kind] = (fails[kind] || 0) + 1;
     if (fails[kind] < DISPATCH_FAIL_LIMIT) return { failed: true, cooled: false, strikes: fails[kind] };
     fails[kind] = 0;
@@ -335,6 +350,7 @@ export default async function kernelDriver(bot, ctx) {
                 } catch (e) {}
             }, 1000);
             let childRes, childThrew = false;
+            const _gateBefore = reflexGateRefusals(bot);   // ★T-0241
             try {
                 childRes = await skills.customSkill(bot, c.skill, ...args);
             } catch (e) {
@@ -345,7 +361,8 @@ export default async function kernelDriver(bot, ctx) {
             }
             // ★T-0115: honor the child's verdict — 3 consecutive failures of this kind → 5-min cooldown + release.
             try {
-                const st = settleDispatch(bot, startKind, childRes, { threw: childThrew, interrupted: flipped || !!bot.interrupt_code });
+                const st = settleDispatch(bot, startKind, childRes, { threw: childThrew, interrupted: flipped || !!bot.interrupt_code, gateRefused: reflexGateRefusals(bot) > _gateBefore });
+                if (st.deferred) prog(`${c.skill} failed while a reflex held the body (gate refused ${reflexGateRefusals(bot) - _gateBefore}×) — deferred, no strike (${st.gateDefers}/${GATE_DEFER_LIMIT} in ${GATE_DEFER_WINDOW_MS / 60000}min, T-0241)`);
                 if (st.cooled) prog(`★dispatch-cooldown ${startKind} via ${c.skill}: failed ${DISPATCH_FAIL_LIMIT}x consecutively — suppressing ${startKind} proposals ${DISPATCH_COOLDOWN_MS / 60000}min + releasing commitment`);
             } catch (e) {}
             // Child returned (done / cancelled / errored) — reset so the same commitment

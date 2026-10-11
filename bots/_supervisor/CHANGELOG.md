@@ -3238,6 +3238,8 @@
 
 - **★C424-S mineDown 洞顶悬空: 浅洞下到洞底, 深洞垫块继续下挖 (T-0139 重开, 监工指派, tier 主卡点)**（2026-10-11，worker-stuck，T-0139）: live 10-11 02:25-02:27Z @278..284,58,-41..-44 满血满饱、有盾和铁镐、要去 y14 拿铁 — 一格厚洞顶下面是大空洞, 三个朝向都报 'no floor support under x,56,z (air)', void hop 找不到实心列, 换址失败, 7 次派发后冷却, 包里 414 圆石。新纯函数 planVoidBridge(bn,cx,cy,cz,sx,sz): 支撑格是空气时 ① 3 格内有实心落点 (路径纯空气、落点非岩浆块/重力块) → {kind:'drop'} 直接下到洞底 (≤3 格无摔伤); ② 否则 {kind:'bridge'}: newFeet 是实心 (洞顶) → 贴它底面在支撑格放一块; newFeet 也是空 → 先贴脚下地板侧面补 newFeet, 再在它下面补支撑 (下一步照常挖开 newFeet) = 挖三填一。mineDown void 分支在 void hop / relocate / abort 之前先试它 (每派发 ≤48 次, 填料只用圆石/深板岩圆石/泥土/安山岩等, placeBlock dontCheat + positioning:false)。流体与 T-0158 重力塌陷支撑保持原分支。test/minedown_void_bridge.test.mjs (T-0139 ×7, 含三向悬空复现); minedown_void_heading 钉子随条件括号同步。全套 730/730。
 
+- **★C425-S 身体闸拒绝不再算子技能 strike, 有上限 (T-0241)**（2026-10-11，worker-stuck，T-0241）: live 10-11 02:25:21-02:27:53Z self_preservation (苦力怕 8.2m bunker / sealed night hold) 反复短促持身, T-0231 闸拒 mineDown 的走路/寻路 ('[body-gate] skill mineDown setControlState(forward) refused'), 换址每候选 ~1.6s 失败 → DONE failed ×3 → ★dispatch-cooldown DUSK_MINE_NIGHT 5min。被反射借走身体≠技能做不到。修: reflex_body_gate 每次拒绝 bot._reflexGateBlocks++ (导出 reflexGateRefusals); kernelDriver 派发前后快照, 子技能期间被拒过且结果失败 → settleDispatch(gateRefused) 按 deferred 结算 (不计 strike, 不清零, 进度行 'deferred, no strike (n/6 in 10min, T-0241)')。上限 (监工): 同一 kind 10min 内 ≥GATE_DEFER_LIMIT=6 次被拒式 deferred 后恢复正常计 strike → 反射整夜持身也会照常冷却, 不成无 strike 重派空转。test/gate_refusal_no_strike.test.mjs (T-0241 ×5, 含整夜持身用例)。kernelDriver(顶层 sticky)+src 闸 → 需重启。全套 738/738。
+
 ---
 
 ---
