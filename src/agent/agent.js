@@ -30,6 +30,7 @@ import fs from 'fs';
 import { dataPath, expandUserPath } from '../utils/paths.js';
 import { archiveStaleWorldStateOnSwitch, worldIdFromLoginPacket, classifyKeepInvReply } from './world_scope.js';
 import { readJsonFileSync } from '../utils/json_io.js';
+import { pickDeathLayers } from './death_attribution.js';
 import { deathAlertText, observeKeepInventory, countItems } from './keepinv_report.js';
 import { makeRespawnProbe } from './respawn_probe.js';
 
@@ -695,6 +696,7 @@ export class Agent {
                     skill: this.bot._currentSkill || null,
                     supervised: this.supervised_skill || null,
                     action: (this.actions && this.actions.currentActionLabel) || null,
+                    at: Date.now(),   // ★T-0235: the death_log writer only trusts a FRESH snapshot (death_attribution.js)
                 };
             } catch (e) {}
             this.actions.cancelResume();
@@ -864,9 +866,14 @@ export class Agent {
                         // currentActionLabel only covers the actions pipeline, not kernel-dispatched
                         // skills or mode executions. 'action:null = never fought' misled a whole
                         // death-class diagnosis for hours). Record the other live layers too.
-                        action: (b && b._deathLayers && b._deathLayers.action) || (this.actions && this.actions.currentActionLabel) || null,
-                        skill: (b && b._deathLayers && b._deathLayers.skill) || (b && b._currentSkill) || null,
-                        supervised: (b && b._deathLayers && b._deathLayers.supervised) || this.supervised_skill || null,
+                        // ★T-0235: the death CHAT message usually arrives BEFORE mineflayer's 'death' event (health
+                        // syncs a tick later), so b._deathLayers here was often the PREVIOUS death's snapshot — #4/#6/#7
+                        // all logged the prior record's skill. Trust the snapshot only when fresh; else read live layers
+                        // (at this moment the skill is still running — actions.stop() hasn't fired yet).
+                        ...pickDeathLayers({
+                            captured: b && b._deathLayers,
+                            live: { action: (this.actions && this.actions.currentActionLabel) || null, skill: (b && b._currentSkill) || null, supervised: this.supervised_skill || null },
+                        }),
                     };
                     fs.appendFileSync(SUP('death_log.jsonl'), JSON.stringify(rec) + '\n');
                     console.log('💀 death snapshot recorded:', cause, `y=${y}`, `mobs=${hostiles.length}`, `gear=${rec.gear.sword ? 'sword' : 'no-sword'}/${shield ? 'shield' : 'no-shield'}`);
