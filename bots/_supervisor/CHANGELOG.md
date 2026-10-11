@@ -12,6 +12,12 @@
 
 ---
 
+## C404. ★T-0235 death_log 归因沿用上一次死亡: 只信新鲜的 _deathLayers 快照（agent.js + 新 death_attribution.js 需重启,worker-tests,⏳待重启）
+- **证据**: worker-death 用 act_trace 核对: #4 实际 mineDown、#6 reclaimFurnace、#7 mineDown, death_log 记的都是上一条的值; 线上最近 12 条里 6/11 对相邻记录 skill+action 完全相同。
+- **机理**: mineflayer `death` 由 update_health(hp<=0) 触发; 原版服务端先广播死亡聊天消息、下一 tick 才同步血量 → 聊天触发的 death_log 写入早于 `death` 处理器刷新 `bot._deathLayers`, 读到上一次死亡的快照(从不清空、无时间戳)。
+- **改动**: 快照加 `at` 时间戳; 写入经 `pickDeathLayers` 只认 15s 内快照, 否则读实时层(此刻技能还在跑, 实时层就是死亡瞬间)。
+- **预测**: 重启后 death_log 的 skill 与 act_trace 死亡时刻一致, 不再出现整串相邻记录相同。**钉子**: test/death_attribution.test.mjs(修复前 3/4 红)。提交 3cb5405。
+
 ## C403. 重生探针抓包: 死亡起到重生后 3s 的出站移动包与入站 position 包（respawn_probe.js 需重启,T-0236,worker-death,只观测,⏳待重启）
 
 **证据**: respawn_probe 5 条 unexpected; 21:59:21 seq: spawn(-4.5,68,-1.5) → 1467ms forcedMove (同点) → 1468ms forcedMove 到死亡点 (-0.3,60,-10.6)。所有重生都有 ~1450ms 的 forcedMove = mineflayer 4.37.1 physics.js:424 上游逻辑 "死后 2s 内第一个服务器 position 包, 延迟 1.5s 才回 position_look 并 emit forcedMove", delayedPos 取收包当刻坐标。候选机理 (待抓包证实): ①监工: 重生后 teleport_confirm 前出站了带死前坐标的移动包; ②死后 2s 内先到的 position 包若是"死者位置"(死亡点), 1.5s 后延迟回应就把死亡点坐标 position_look 发回服务器; 1468ms 那个紧随的 forcedMove (本地回环 1ms) 像是服务器对该包的回应。
@@ -40,12 +46,6 @@
 **改动**: ① swim_progress.entombedRescueLive: ENTOMBED 是 5s 内新鲜分类 (每 2s 一评)、mobility 开着、且无技能在挖 (purposefulDigActive) 才算接收方在接; sealedWaterTrapYield 改用它, 否则 self_preservation 自己上浮。② surfaceUpDangerYield 加 headInWater && O2<12 → 危险, 当场解冻反射放弃上浮 (头部判据用眼高 +1.62)。
 **可证伪预测**: 水下 ENTOMBED + 技能挖掘时 self_preservation 照常 'heading for air'; surfaceUp 水中出现 `★danger mid-climb`; 不再出现技能持身水下挖到溺死。
 **回滚**: revert, 重启。回归 submerged_trap 'T-0232' + surfaceup_danger 'T-0232'。
-
-## C400. ★T-0235 death_log 归因沿用上一次死亡: 只信新鲜的 _deathLayers 快照（agent.js + 新 death_attribution.js 需重启,worker-tests,⏳待重启）
-- **证据**: worker-death 用 act_trace 核对: #4 实际 mineDown、#6 reclaimFurnace、#7 mineDown, death_log 记的都是上一条的值; 线上最近 12 条里 6/11 对相邻记录 skill+action 完全相同。
-- **机理**: mineflayer `death` 由 update_health(hp<=0) 触发; 原版服务端先广播死亡聊天消息、下一 tick 才同步血量 → 聊天触发的 death_log 写入早于 `death` 处理器刷新 `bot._deathLayers`, 读到上一次死亡的快照(从不清空、无时间戳)。
-- **改动**: 快照加 `at` 时间戳; 写入经 `pickDeathLayers` 只认 15s 内快照, 否则读实时层(此刻技能还在跑, 实时层就是死亡瞬间)。
-- **预测**: 重启后 death_log 的 skill 与 act_trace 死亡时刻一致, 不再出现整串相邻记录相同。**钉子**: test/death_attribution.test.mjs(修复前 3/4 红)。提交 3cb5405。
 
 ## C399. ★★身体所有权闸: 反射 mode 持身期间, 技能调用链的寻路目标/移动键/清键一律拒绝（modes.js/skills.js/framework/reflex_body_gate.js 需重启,T-0231,worker-death,✅已上线 01:23:28Z 86034a5）
 
