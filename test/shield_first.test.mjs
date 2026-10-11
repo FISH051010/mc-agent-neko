@@ -118,3 +118,14 @@ test('T-0229 (监工验收): 包里已有盾但副手空 → craftArmor 补装�
     const ws = fs.readFileSync(new URL('../src/websocket/ws_server.js', import.meta.url), 'utf8');
     assert.match(ws, /offhand: \(bot\.inventory/, 'vitals exposes the off-hand item');
 });
+
+test('T-0286: keepInv 关 (严格防护序) — 盾在 + 铁镐 + 4 锭: 胸甲要 8 = 攒锭, GET_ARMOR 不提、已承诺的释放 (07:06:32Z craftArmor saving ×3 空转)', () => {
+    const inv = { iron_ingot: 4, iron_pickaxe: 1, stone_pickaxe: 2, spruce_log: 6, crafting_table: 1, coal: 4, cobblestone: 40 };
+    const w = day(); w.kit = { ...w.kit, pickTier: 'iron' };
+    const bot = fakeBot(inv, { offhand: 'shield' });
+    assert.equal(proposeTasks(w, bot).find(x => x.kind === 'GET_ARMOR'), undefined, 'saving → not proposed');
+    assert.equal(isGoalDone('GET_ARMOR', w, bot), true, 'committed GET_ARMOR released while saving');
+    const rich = fakeBot({ ...inv, iron_ingot: 8 }, { offhand: 'shield' });
+    const p = proposeTasks(w, rich).find(x => x.kind === 'GET_ARMOR');
+    assert.ok(p && p.skill === 'craftArmor', 'chestplate affordable → proposed');
+});

@@ -307,6 +307,9 @@ export function ironSmeltFuelBlocked(bot) {
 }
 function ironArmorGoalDone(world, bot) {
     if (!hasShield(bot) && ironForArmor(bot) >= 1) return false;   // ★T-0229 第一块铁先造盾 (不吃铁镐预留额)
+    // ★T-0286 (07:06:32-35Z 实录: 盾刚造好, 4 铁; GET_ARMOR→craftArmor 连派 ×3 全是 "saving iron for iron_chestplate (4/8)"):
+    //   keepInv 关 = craftArmor 走严格防护序 (T-0266) — 完成判据必须同口径, 否则旧 cheapest-first (靴 4 铁) 判"造得起"每 1.5s 提一次。
+    if (keepInventoryOff() === true) return !nextArmorPiece(world, bot);
     const pieces = Math.min(4, (world.vitals && world.vitals.armor) || 0);
     if (pieces >= 4) return true;
     return ironArmorBudget(bot) < ARMOR_PIECE_COST[pieces];
