@@ -11,8 +11,9 @@
 //   unarmored             (vitals.armor < 4 pieces, bot has been dying)            → /item replace armor
 //   keepInventory always re-asserted.
 //
-// Launch detached (survives logout/session-end), mirroring watchdog.ps1:
-//   Start-Process node -ArgumentList 'bots/_supervisor/bot-medic.mjs' -WorkingDirectory <proj> -WindowStyle Hidden
+// Launch detached (survives session-end) — ★T-0270: through WMI, NOT Start-Process from a Claude tool shell (that child
+// sits under the shell's process tree / Job Object, and Claude cleans tool shells with `taskkill /T /F`):
+//   Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'node bots/_supervisor/bot-medic.mjs'; CurrentDirectory = '<proj>' }
 import fs from 'fs';
 import path from 'path';
 
