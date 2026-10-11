@@ -3319,6 +3319,8 @@
 
 - **★C439-S 'Digging aborted' 探针 v2: 每次中止自己写一行 [dig-abort] (T-0260)**（2026-10-11，worker-stuck，T-0260）: 10-11 05:30:41/44Z mobility 'dig retry … (MAROONED/ENTOMBED) …: Digging aborted' — v1 探针只记 bot._lastDigAbort, 只有 mineDown DONE 读回, 别的技能/反射的中止不留调用者。v2: DIG_ABORT_PROBE_V=2 版本化 (热加载新版替换自己存的监听器; v1 匿名只记录, 原样保留; 绝不 removeAllListeners — mineflayer-pathfinder 也监听 diggingAborted), 每次中止 2s 限频写 '[dig-abort] <block> by=<调用帧> holder=<持身者> skill=<技能> (T-0260)' 进 progress (_digAbortSink 可注入供测试)。test/dig_abort_probe.test.mjs 追加 v2 ×1。热加载。
 
+- **★C440-S 窒息救援绝对优先: 连续挖头格直到为空, 期间重力门豁免、其它挖掘让路 (T-0268, 监工加急, death #55)**（2026-10-11，worker-stuck，T-0268）: death #55 10-11 05:30:43Z y-8 @113,-8,169 窒息, 丢 24 铁/1 钻/2 铁镐。05:30:16-32 MAROONED-climb 挖 tuff@115,-5,170 被 T-0172 dig-gate 拒十余次 (tuff 本身非重力块, 拒因是其上的砂砾柱, 日志措辞 'tuff above own head' 误导); 05:30:39 'tuff@112,-5,169: UNSETTLED column still collapsing' — MAROONED 爬升在砂砾盖住的区域挖柱, 砂砾落到头上 (具体哪一挖未逐块记录); 05:30:35 起 reflex_watchdog 'SUFFOCATION self-rescue: head=gravel … dig out NOW' 每 1.5s 才挖一次头 (砂砾柱补位), 同时 mobility(ENTOMBED) 在挖别的格子 ('dig retry … Digging aborted' 两个挖掘者互相取消), hp≤4 后 T-0131 '低血拒挖重力块' 把唯一出路也拒了 → 8s 16→0。修: skills.js 新导出 headSuffocating / suffocationRescueActive / digOutOfSuffocation (先停掉进行中的挖掘, 循环挖头格, 每挖一块等下一块落进来再挖, 直到头格为空, ≤8s, 期间 bot._suffocationRescueUntil 续期); reflex_watchdog 原地挖头改调它 (横移出柱 suffocationEscapeDir 仍优先) 并记 '★SUFFOCATION dig-out: head clear/NOT clear after N digs (T-0268)'; mobility guardedDig 在救援期间除头格外一律让路; T-0131 低血拒挖的窒息豁免由 worker-death C410 (a723947) 承担, 本条不重复; bot.dig 总闸 T-0172 overhead-gravity 在救援期间豁免。test/suffocation_rescue.test.mjs (T-0268 ×4, 复刻 头格砂砾+其上 2 格砂砾+四周砂砾无横移+hp4 → 挖 3 次头格清空); gravity_column 钉子取 C410 版本。src → 需重启。全套 846/846。
+
 ---
 
 ---
