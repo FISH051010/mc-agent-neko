@@ -103,11 +103,15 @@ export const PRE_DUSK_TOD_LO = 9000, PRE_DUSK_TOD_HI = 12000, PRE_DUSK_FOOD = 14
 //   FOOD_FLOOR=6 对'包里零可吃'太晚): 包里零可吃且 food≤STOCK_FOOD 且附近已看见动物 (animalInRange, 不侦察漫游) → 开会话顺路猎,
 //   目标吃到 18 并攒 ≥STOCK_COOKED 份熟食 (释放判据同既有锁存)。看不见动物不触发 — 不为存粮侦察。
 export const STOCK_FOOD = 12;
+export const FORAGE_FOOD = 10;   // ★T-0252 零可吃时有界侦察的出发线
 export function latchTrigger({ food, hp, tod, bedPending, counts, animalNear }) {
     if (food <= FOOD_FLOOR) return 'starving';
     if (cannotRegen(hp, food)) return 'regen';
     if (Number.isFinite(tod) && tod >= PRE_DUSK_TOD_LO && tod < PRE_DUSK_TOD_HI && food < PRE_DUSK_FOOD) return 'dusk';
     if (bedPending && food < BED_PENDING_FOOD) return 'bed';
+    // ★T-0252 (监工拍板 C 收敛版): 包里零可吃且 food≤FORAGE_FOOD → 白天允许一次有界侦察 (复用 FOOD_FLOOR 96b/90s, 机制/边界不变,
+    //   只把出发线从 6 提前到 10 — 上浮+侦察约耗 4 格饱食, food 6 出发包里零食物会饿到 0)。看得见动物时仍按 'stock' 顺路猎。
+    if (food <= FORAGE_FOOD && !animalNear && counts && countMatching(counts, EDIBLE_RE) === 0) return 'forage';
     if (food <= STOCK_FOOD && animalNear && counts && countMatching(counts, EDIBLE_RE) === 0) return 'stock';
     return null;
 }
@@ -144,7 +148,8 @@ export function foodFloorProposal({ foodInstincts, overworld, phase, food, actio
     // ★T-0188 补: "回不了血" (hp≤12 且 food<18) 且包里零可吃 也要侦察/先上浮 — 这是为回血不是存粮 (07:15 hp11 food11 地下零动物 → 不提 → 带 11 血下矿)。
     // ★T-0210: 入夜前补餐 / 床待做补餐 两种会话也侦察 (目标吃到 18, 复用目击记忆的定向侦察) — 包里有吃的就不必去猎
     const plannedMeal = !!(latch && latch.active && (latch.reason === 'dusk' || latch.reason === 'bed')) && countMatching(counts, EDIBLE_RE) === 0;
-    const huntNeed = food <= FOOD_FLOOR || (cannotRegen(hp, food) && countMatching(counts, EDIBLE_RE) === 0) || plannedMeal;
+    const huntNeed = food <= FOOD_FLOOR || (cannotRegen(hp, food) && countMatching(counts, EDIBLE_RE) === 0) || plannedMeal
+        || (food <= FORAGE_FOOD && countMatching(counts, EDIBLE_RE) === 0);   // ★T-0252 零可吃 food≤10 即可有界侦察
     const needScout = huntNeed && !animalOk && rawMeat === 0;
     const surfaceFirst = underground && (starving || needScout);
     const scout = huntNeed && !surfaceFirst && !animalOk && rawMeat === 0;

@@ -18,7 +18,8 @@ test('T-0188: 三处判据同源 — FOOD_FLOOR 会话 / eatFloor / 应急挑食
     for (let hp = 1; hp <= 20; hp++) for (let food = 0; food <= 20; food++) {
         const want = food <= FOOD_FLOOR || (hp <= REGEN_HP_MAX && food < 18);
         assert.equal(food <= FOOD_FLOOR || cannotRegen(hp, food), want);
-        assert.equal(updateFoodFloorLatch(null, { food, counts: {}, animalNear: false, hp }).active, want, `latch hp${hp} food${food}`);
+        // ★T-0252: 零可吃 (counts {}) 且 food≤10 → 锁存也开 (有界侦察提前出发); eatFloor / 挑食口径不变
+        assert.equal(updateFoodFloorLatch(null, { food, counts: {}, animalNear: false, hp }).active, want || food <= 10, `latch hp${hp} food${food}`);
         assert.equal(eatFloor({ health: hp, food }, WS, EAT), want, `eatFloor hp${hp} food${food}`);
         assert.equal(!!pickAutoEatFood([{ name: 'rotten_flesh' }], { health: hp, food }), want, `pickAutoEatFood hp${hp} food${food}`);
     }

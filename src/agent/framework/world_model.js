@@ -24,7 +24,7 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen, FOOD_RELEASE, healLatchNext, HEAL_RISKY_KINDS } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen, FOOD_RELEASE, healLatchNext, HEAL_RISKY_KINDS, FORAGE_FOOD } from './food_floor.js';
 import { pickAutoEatFood } from './healing_reflex.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
@@ -47,6 +47,8 @@ export function ironTierRecipe(bot) {
     if (planks < need && log) out.unshift([log.replace(/_(log|stem)$/, '_planks'), Math.ceil((need - planks) / 4)]);
     return out;
 }
+// ★T-0252 夜里也能做的活 (封闭坑里熔铁/合成/造甲/下挖) — 白天饥饿时让位给觅食, 留到夜里做。
+export const NIGHT_DOABLE_KINDS = new Set(['GET_ARMOR', 'GET_IRON_TOOLS', 'TOOL_UPKEEP', 'RECLAIM_FURNACE', 'GET_IRON_ARMOR_SET', 'GO_UNDERGROUND', 'GET_DIAMOND']);
 export const HEAL_PRIORITY = 80;   // ★T-0237 养伤: FOOD_FLOOR 70 之上 (二者互斥: 有吃的才 HEAL), 夜链 91-94 / HOLD 95 之下
 /** ★T-0237 能就地养伤: food 已 ≥18, 或包里有 auto_eat 会挑的食物 (同 pickAutoEatFood 口径: 饿时放开生肉/腐肉/生鸡)。 */
 export function healFeasible(world, bot) {
@@ -1831,6 +1833,10 @@ function isEmergency(p, world, liveKind) {
     if (p.kind === PROPOSAL_KIND.HEAL && world.time && world.time.phase === 'day') return true;   // ★T-0237 白天养伤抢下出门承诺
     if (p.kind === PROPOSAL_KIND.FOOD_FLOOR && world.time && world.time.phase === 'day' && world.vitals
         && (Number(world.vitals.food) <= STARVING_FOOD || cannotRegen(world.vitals.hp, world.vitals.food))) return true;
+    // ★T-0252 (监工拍板, 03:38-03:45Z 白天熔铁造甲把 food 吃到 2, 黄昏才去找吃的): 打猎只能白天做, 熔铁/合成/造甲/下挖夜里封闭坑里也能做
+    //   (NIGHT_SMELT_IRON / 整夜下矿就是为此存在) → 白天 food≤FORAGE_FOOD 时, FOOD_FLOOR (提案存在即零可吃/锁存成立) 抢下这类'夜里也能做的活'。
+    if (p.kind === PROPOSAL_KIND.FOOD_FLOOR && liveKind && NIGHT_DOABLE_KINDS.has(liveKind) && world.time && world.time.phase === 'day'
+        && world.vitals && Number(world.vitals.food) <= FORAGE_FOOD) return true;
     // ★T-0149: 零镐原地造镐 (craft-only, 几秒, 不移动) — 必须能抢下已粘住的夜链承诺, 否则夜里徒手挖石到天亮
     if (p.kind === PROPOSAL_KIND.TOOL_UPKEEP && (p.priority || 0) >= PICKLESS_UPKEEP_PRIORITY) return true;
     if (p.kind === PROPOSAL_KIND.MIGRATE && world.migration.inDeathZone) {
