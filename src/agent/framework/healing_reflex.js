@@ -3,7 +3,7 @@
  * carried by the bot. These helpers are pure so the retirement boundary can be
  * regression-tested without a live Minecraft client.
  */
-import { FOOD_FLOOR, cannotRegen } from './food_floor.js';   // ★T-0188 "回不了血" 判据与 FOOD_FLOOR/eatFloor 同源
+import { FOOD_FLOOR, cannotRegen, STARVING_FOOD } from './food_floor.js';   // ★T-0188 "回不了血" 判据与 FOOD_FLOOR/eatFloor 同源
 
 // ★T-0155: 生鸡肉 (30% 饥饿 debuff, 饿到掉血时反而更快掉) 两档都排除 — 旧正则 /chicken/ 把生鸡肉当正常食物。
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|carrot|potato|^beef$|^porkchop$|^mutton$|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -15,6 +15,9 @@ export function pickAutoEatFood(items, { health = 20, food = 20 } = {}) {
     let pick = list.find(i => NORMAL_FOOD_RE.test(i.name) && !RAW_RE.test(i.name))
         || list.find(i => NORMAL_FOOD_RE.test(i.name));
     if (!pick && (food <= FOOD_FLOOR || cannotRegen(health, food))) pick = list.find(i => EMERGENCY_FOOD_RE.test(i.name));
+    // ★T-0230 (10-11 00:23-00:36Z: hp1 food0, 包里只剩 1 生鸡肉、0 煤 → 不烤不吃, 空转 1h+): food≤STARVING_FOOD 且别无可吃 → 吃生鸡。
+    //   30% 饥饿效果只是加快掉饱食; food 已见底时 +2 饱食是纯收益 (Normal 饥饿不致死)。
+    if (!pick && food <= STARVING_FOOD) pick = (items || []).find(i => i && i.name === 'chicken') || null;
     return pick || null;
 }
 

@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import mfp from 'mineflayer-pathfinder';
-import { HUNTABLE_RE, skyOpenAt } from '../../../src/agent/framework/food_floor.js';
+import { HUNTABLE_RE, skyOpenAt, STARVING_FOOD } from '../../../src/agent/framework/food_floor.js';
 import { hostileActionableNear, isHostileEntity } from '../../../src/agent/framework/hostile_reach.js';
 const { goals, Movements } = mfp;
 const HOSTILE_RE = /zombie|skeleton|creeper|spider|witch|enderman|drowned|husk|stray|phantom|slime|piglin|silverfish|cave_spider|pillager|vindicator/i;
@@ -111,10 +111,13 @@ export async function exitPitIfSealed(bot, { legMs = 8000, force = false } = {})
 }
 
 /** hp=1 安全寻路: 最多下落 2 格 (3 格内无摔伤)、不跑酷、不挖、水极贵。 */
-function setSafeMovements(bot) {
+// ★T-0230 补 (10-11 01:21-01:22Z: 地表 80,63,-4 hp1 food0, 不许挖的侦察 6 航点 0.3s 全 "No path" → 原地循环; 同一处允许挖的
+//   出坑每次都能横移 5 格 — 周围是要挖开才过得去的地形): dig=true → 允许挖 (挖掘代价 ×4, 能走就不挖), 仍不搭柱、不跑酷、最多落 2 格。
+function setSafeMovements(bot, { dig = false } = {}) {
     try {
         const mv = new Movements(bot);
-        mv.maxDropDown = 2; mv.allowParkour = false; mv.canDig = false; mv.allow1by1towers = false; mv.liquidCost = 1000;
+        mv.maxDropDown = 2; mv.allowParkour = false; mv.canDig = !!dig; mv.allow1by1towers = false; mv.liquidCost = 1000;
+        if (dig) mv.digCost = 4;
         bot.pathfinder.setMovements(mv);
     } catch (e) {}
 }
@@ -204,7 +207,7 @@ export async function scoutForAnimal(bot, opts) {   // ★T-0202 导出: bedErra
 
 async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, scoutToward, targetRe }) {
     const t0 = Date.now(), origin = bot.entity.position.clone ? bot.entity.position.clone() : { ...bot.entity.position };
-    let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, stuckRun = 0, moved = 0, firstErr = null;
+    let legs = 0, legsFailed = 0, legsStopped = 0, stoppedRun = 0, stuckRun = 0, moved = 0, firstErr = null, digMode = false;
     setSafeMovements(bot);
     const wps = scoutWaypoints(origin, scoutRadius, scoutToward);
     for (let wi = 0; wi < wps.length; wi++) {
@@ -251,6 +254,12 @@ async function scoutForAnimalInner(bot, { radius, maxDy, scoutRadius, scoutMs, s
         // ★T-0214 (02:56:37-02:57:55Z 实录: 拂晓还封在夜坑里, 两轮各 42 段 moved 0b, 白跑 25s): 连续 6 段几乎没动 → 提前结束
         const legMoved = Math.hypot(bot.entity.position.x - x0, bot.entity.position.z - z0);
         stuckRun = legMoved < 0.5 ? stuckRun + 1 : 0;
+        if (stuckRun >= 6 && !digMode && !bot.interrupt_code) {   // ★T-0230 补: 不挖走不动 → 换允许挖的寻路, 从头再试一轮航点
+            digMode = true; stuckRun = 0; wi = -1;
+            setSafeMovements(bot, { dig: true });
+            prog('scout: 6 legs without moving on no-dig paths — retry waypoints with digging allowed');
+            continue;
+        }
         if (stuckRun >= 6) { prog(`scout: ${stuckRun} legs in a row without moving (sealed pit / no path) — stop early`); break; }
     }
     const last = pickHuntTarget(bot, radius, maxDy, targetRe);
@@ -413,7 +422,9 @@ export default async function quickMeal(bot, ctx, opts = {}) {
     // ③ 吃 (熟食优先, 无熟食吃生肉, 生鸡肉不吃)
     for (let i = 0; i < 4 && left() > 0 && bot.food < 18; i++) {
         const c = inv();
-        const pick = COOKED.find(n => c[n] > 0) || ['beef', 'porkchop', 'mutton', 'rabbit'].find(n => c[n] > 0);
+        // ★T-0230: food≤STARVING_FOOD 且只剩生鸡 (烤不了) → 吃生鸡 (food 见底时饥饿效果是纯收益); 否则照旧不吃生鸡
+        const pick = COOKED.find(n => c[n] > 0) || ['beef', 'porkchop', 'mutton', 'rabbit'].find(n => c[n] > 0)
+            || (bot.food <= STARVING_FOOD && c.chicken > 0 ? 'chicken' : null);
         if (!pick) break;
         try { await raceI(bot, skills.consume(bot, pick), Math.min(left(), 5000)); ate++; } catch (e) { break; }
     }

@@ -41,7 +41,9 @@ test('T-0155: 不饿 (hp18 food15) 不走进食地板; holder 是 mode 时也不
 test('T-0155: 挑食 — food0 只有腐肉+生鸡肉 → 吃腐肉; 绝不挑生鸡肉; 熟食先于生肉', () => {
     const inv = [{ name: 'chicken', count: 3 }, { name: 'rotten_flesh', count: 2 }, { name: 'spruce_log', count: 11 }];
     assert.equal(pickAutoEatFood(inv, { health: 1, food: 0 }).name, 'rotten_flesh');
-    assert.equal(pickAutoEatFood([{ name: 'chicken', count: 3 }], { health: 1, food: 0 }), null);
+    // ★T-0230: 别无可吃且 food≤3 → 生鸡是最后手段 (10-11 hp1 food0 只剩生鸡空转 1h+); 有腐肉仍先腐肉, 不饿仍不吃生鸡
+    assert.equal(pickAutoEatFood([{ name: 'chicken', count: 3 }], { health: 1, food: 0 }).name, 'chicken');
+    assert.equal(pickAutoEatFood([{ name: 'chicken', count: 3 }], { health: 20, food: 8 }), null);
     assert.equal(pickAutoEatFood(inv, { health: 18, food: 15 }), null, '不饿不吃腐肉');
     assert.equal(pickAutoEatFood([{ name: 'beef' }, { name: 'cooked_beef' }], { health: 10, food: 10 }).name, 'cooked_beef');
     assert.equal(pickAutoEatFood([{ name: 'cooked_chicken' }], { health: 10, food: 10 }).name, 'cooked_chicken');

@@ -24,7 +24,7 @@ import * as triggers from './triggers.js';
 import { llmGate, llmGateEnabled } from './llm_gate.js';
 import { dataPath } from '../../utils/paths.js';
 import { toolUpkeepPlan, needsToolUpkeep, armorCraftFeasible, smeltableUnits, swordMissing, starvingUpkeepTrim } from './kit_gate.js';
-import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR } from './food_floor.js';
+import { foodFloorProposal, foodFloorDone, descentBlocked, updateFoodFloorLatch, animalInRange, DESCENT_SKILL_RE, skyOpenAt, HUNTABLE_RE, FOOD_FLOOR, STARVING_FOOD, cannotRegen } from './food_floor.js';
 import { nearestSighting, scoutPlanToward } from './animal_sightings.js';
 import { bedWoolReady } from './bed_wool.js';
 import { hostileActionableNear } from './hostile_reach.js';
@@ -1774,6 +1774,11 @@ function isEmergency(p, world, liveKind) {
     //   When a village is in reach, harvesting it IS the food path; don't let feedUp steal the body.
     const villageClose = world.landmarks && world.landmarks.village && Number(world.landmarks.village.dist) <= 28;
     if (p.kind === PROPOSAL_KIND.GET_FOOD && world.vitals.food <= 4 && !villageClose) return true; // about to starve, no village
+    // ★T-0230 (10-11 01:00-01:06Z: 白天 food 6→0、hp 20→1, REPLENISH_KIT@67 的粘性承诺握着身体 surfaceUp 零升高, FOOD_FLOOR@70 抢不下;
+    //   食物本能关 (用户令) 时 GET_FOOD 整条不提, 紧急只认它 → 饥饿永远不是紧急): 白天 FOOD_FLOOR 在 food≤STARVING_FOOD 或回不了血时是紧急。
+    //   夜里不算 (夜里饿着的最优解是庇护等天亮, 不是摸黑出去猎)。
+    if (p.kind === PROPOSAL_KIND.FOOD_FLOOR && world.time && world.time.phase === 'day' && world.vitals
+        && (Number(world.vitals.food) <= STARVING_FOOD || cannotRegen(world.vitals.hp, world.vitals.food))) return true;
     // ★T-0149: 零镐原地造镐 (craft-only, 几秒, 不移动) — 必须能抢下已粘住的夜链承诺, 否则夜里徒手挖石到天亮
     if (p.kind === PROPOSAL_KIND.TOOL_UPKEEP && (p.priority || 0) >= PICKLESS_UPKEEP_PRIORITY) return true;
     if (p.kind === PROPOSAL_KIND.MIGRATE && world.migration.inDeathZone) {
@@ -1807,7 +1812,10 @@ export function commitGoal(bot, proposals, world) {
     // Scan ALL proposals for an emergency (a critical one need not be top-ranked —
     // e.g. food=4 GET_FOOD@88 sits under BOOTSTRAP_KIT@90 but must still preempt).
     if (c && !isGoalDone(c.kind, w, bot)) {
-        const emergency = (proposals || []).find(p => p.kind !== c.kind && isEmergency(p, w, c.kind));
+        // ★T-0230 护栏: 两个紧急互抢 (FOOD_FLOOR 饥饿 ↔ 零镐补镐 TOOL_UPKEEP@94.5) 会每拍来回翻 — 已承诺的也是紧急时, 只让更高优先级的抢。
+        const _cEmerg = isEmergency({ kind: c.kind, priority: ((proposals || []).find(p => p.kind === c.kind) || {}).priority }, w);
+        const _cPri = ((proposals || []).find(p => p.kind === c.kind) || {}).priority ?? 50;
+        const emergency = (proposals || []).find(p => p.kind !== c.kind && isEmergency(p, w, c.kind) && (!_cEmerg || (p.priority || 0) > _cPri));
         // ★T-0081: DUSK/NIGHT plan must DETHRONE a stale NON-night commitment. A daytime task
         // committed before dusk (migrate/scout/bootstrap) holds until isGoalDone — e.g. MIGRATE
         // is "done" only on arriving at a livable biome, so a long march blocks straight through

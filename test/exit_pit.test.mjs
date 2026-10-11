@@ -32,7 +32,8 @@ function rig({ mobility, inv = {}, digWorks = true, walkable = false, wallX = nu
                 legs.push({ canDig, goal: g.constructor.name });
                 if (canDig && !digWorks) return;
                 if (canDig && dropOnDig && g.x !== undefined) { bot.entity.position = V(g.x, 36, g.z); return; }   // 横移中掉进下方洞穴
-                if (canDig && Math.hypot(bot.entity.position.x, bot.entity.position.z) < 1 && bot.entity.position.y < 41) { bot.entity.position = g.x !== undefined ? V(g.x, 41, g.z) : V(0, g.y, 0); return; }
+                // 允许挖时只有出坑那种近距离/往上的目标挖得通 (远处侦察航点挖也到不了 — T-0230 侦察挖掘重试之后仍走强制出坑这条路)
+                if (canDig && Math.hypot(bot.entity.position.x, bot.entity.position.z) < 1 && bot.entity.position.y < 41 && (g.x === undefined || Math.hypot(g.x, g.z) <= 7)) { bot.entity.position = g.x !== undefined ? V(g.x, 41, g.z) : V(0, g.y, 0); return; }
                 if (walkable && !canDig && g.x !== undefined) { bot.entity.position = V(g.x, 41, g.z); return; }
                 // 坑外 (或仍在坑里不许挖): 侦察段无处可去, 原地不动
             } },
@@ -57,7 +58,7 @@ test('T-0215: quickMeal 封在坑里 → 先挖路出坑再侦察; 侦察没找�
     assert.equal(r.legs[0].canDig, true, `first leg is a dig-allowed exit (legs=${JSON.stringify(r.legs.slice(0, 3))})`);
     assert.ok(r.bot.entity.position.y >= 41, 'climbed out of the pit (underground → rise first)');
     assert.equal(r.legs[0].goal, 'GoalRiseBy', 'underground (no sky) → first exit leg digs upward');
-    assert.ok(r.legs.slice(1).every(l => !l.canDig), 'scout legs use safe (no-dig) movements');
+    assert.ok(r.legs.slice(1, 7).every(l => !l.canDig), 'scout legs start on safe (no-dig) movements (T-0230: dig retry only after 6 motionless legs)');
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(res.exitedPit, true);
     const log = fs.readFileSync(path.join(home, 'bots', '_supervisor', 'progress.txt'), 'utf8');

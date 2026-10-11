@@ -162,5 +162,22 @@ test('T-0214: 封在坑里 (每段寻路都瞬间返回、一格不动) → 连�
     await quickMeal(bot, { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => {}, consume: async () => {} } },
         { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 90000 });
     // T-0215: 零位移后再强制出坑一次 (地表 4 个水平方向); 侦察本身仍 ≤7 段即止
-    assert.ok(gotos <= 7 + 4, `stopped early after ${gotos} motionless legs (incl. ≤4 forced pit-exit legs)`);
+    // T-0230 补: 不挖 6 段不动 → 允许挖再试 6 段; T-0215: 再强制出坑 ≤4 段
+    assert.ok(gotos <= 6 + 6 + 4, `stopped early after ${gotos} motionless legs (incl. dig retry + ≤4 forced pit-exit legs)`);
+});
+
+test('T-0230 补 (01:21Z 地表 hp1 food0): 不许挖的侦察 6 段原地不动 → 换允许挖的寻路从头再试, 走得动就继续侦察找到牛', async () => {
+    let canDig = false; const legs = [];
+    const cow = { name: 'cow', position: V(60, 70, 0), isValid: true };
+    const registry = (await import('node:module')).createRequire(import.meta.url)('minecraft-data')('1.21.4');   // 真 Movements 需要 registry
+    const bot = { food: 0, health: 1, registry, entity: { position: V(0, 70, 0) }, entities: {}, blockAt: () => ({ name: 'air', skyLight: 15 }),
+        pathfinder: { stop() {}, setGoal() {}, setMovements(mv) { canDig = !!mv.canDig; },
+            goto: async (g) => { legs.push(canDig); if (!canDig) return; bot.entity.position = V(30, 70, 0); bot.entities = { 1: cow }; } },
+        clearControlStates() {} };
+    const ctx = { world: { getInventoryCounts: () => ({}) }, skills: { customSkill: async () => {}, attackEntity: async () => { legs.push('attack'); }, consume: async () => {}, pickupNearbyItems: async () => {} } };
+    await quickMeal(bot, ctx, { radius: 48, maxDy: 12, maxMs: 60000, scout: true, scoutRadius: 96, scoutMs: 90000 });
+    assert.deepEqual(legs.slice(0, 6), [false, false, false, false, false, false], 'tried no-dig first');
+    assert.equal(legs[6], true, 'then retried with digging allowed');
+    assert.ok(legs.includes('attack'), `found and hunted the cow (${JSON.stringify(legs)})`);
+    assert.match(fs.readFileSync(path.join(home, 'bots', '_supervisor', 'progress.txt'), 'utf8'), /retry waypoints with digging allowed/, 'scout itself retried with digging (not just the forced pit exit)');
 });
