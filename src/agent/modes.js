@@ -13,6 +13,7 @@ import fs from 'fs';
 import Vec3 from 'vec3';
 import { appendTelemetry } from '../utils/telemetry.js';
 import { installReflexBodyGate, reflexCtx, holdBodyForReflex, holderName } from './framework/reflex_body_gate.js';
+import { goSleepInstinctEligible, abortWalkOnHurt } from './framework/sleep_instinct.js';
 import { installDigAbortProbe } from './framework/dig_abort_probe.js';   // ★T-0260
 import { bumpWedgeStreak } from './framework/wedge_streak.js';
 // Framework v2 lava_guard — pure read predicate (no lane, no flag), safe to call
@@ -7162,31 +7163,19 @@ const modes_list = [
                     if (this._fw && this._fw.instinct && this._fw.instinct.runInstinct) {
                         if (!this._goSleepInstinct) this._goSleepInstinct = {
                             name: 'go_to_bed_sleep', priority: 60,
-                            test: (w, b) => { try {
-                                const t = w && w.time; if (!t || (t.phase !== 'dusk' && t.phase !== 'night')) return false;
-                                if (w.threat && (w.threat.actionable | 0) > 0) return false;
-                                // ★yield to a committed night plan (live 2026-07-02 07:12: this instinct
-                                // dragged the bot back to the bed the moment mineDown dug 3 blocks down —
-                                // GoalNear(bed) right after every descent — so DUSK_MINE_NIGHT 3-struck
-                                // into cooldown SEVEN times in one night and the diamond band was never
-                                // reached. computeNightPlan already chose MINE_THROUGH_NIGHT / a shelter
-                                // over sleeping; a priority-60 instinct must not overrule the plan.)
-                                if (b && b._commitment && /^(DUSK_MINE_NIGHT|DUSK_GO_BED|NIGHT_DIG_ONE|NIGHT_SEAL)$/.test(b._commitment.kind || '')) return false; // DUSK_GO_BED added 2026-07-02: goBedSleep is the kernel-driven executor now — never double-handle the same bed
-                                // ★bed-failure memo: a failed sleep (bed occupied/obstructed) within 3min
-                                // means walking back will fail again — don't ping-pong to it all night.
-                                if (b && b._bedSleepFailAt && Date.now() - b._bedSleepFailAt < 180000) return false;
-                                const lm = w.landmarks || {};
-                                const tgt = lm.bed || lm.village;
-                                if (!tgt) return false;
-                                // ★用户令 2026-07-08: 近床(≤15格)整夜都可睡本能触发; 远床(>15)仅【黄昏】才去 (与 computeNightPlan 近/远语义一致 — 深夜不奔远床).
-                                const _d = Number.isFinite(tgt.dist) ? tgt.dist : Infinity;
-                                if (_d > 15 && t.phase !== 'dusk') return false;
-                                return true;
-                            } catch (e) { return false; } },
+                            // ★T-0284 (death #56): yields to ANY live kernel commitment (was only DUSK_MINE_NIGHT/DUSK_GO_BED/NIGHT_DIG_ONE/
+                            //   NIGHT_SEAL — NIGHT_SMELT_IRON slipped through and the instinct ran a 272b goto over smeltSafe), never when
+                            //   hurt/healing, never >64b; the 07-02 yield-to-night-plan and 07-08 near/far rules are kept (framework/sleep_instinct.js).
+                            test: (w, b) => goSleepInstinctEligible(w, b),
                             act: async (w, b, c) => {
                                 const lm = (w && w.landmarks) || {}; const tgt = lm.bed || lm.village; if (!tgt) return;
                                 const hp = b.entity.position;
-                                if (Math.hypot(hp.x - tgt.x, hp.z - tgt.z) > 2.5 && !b.interrupt_code) { try { await c.skills.goToPosition(b, tgt.x, tgt.y, tgt.z, 2); } catch (e) {} }
+                                if (Math.hypot(hp.x - tgt.x, hp.z - tgt.z) > 2.5 && !b.interrupt_code) {
+                                    // ★T-0284: hurt on the way (fall/hit) → halt the walk now, hand the body to reflexes/HEAL, no re-fire for 3min
+                                    const _hurt = abortWalkOnHurt(b, { onAbort: (h0, h1) => { try { b._bedSleepFailAt = Date.now(); fs.appendFileSync('bots/_supervisor/instinct.log', `[${new Date().toISOString()}] [本能] go_to_bed_sleep 途中受伤 hp ${h0}→${h1} — 停止赶路 (T-0284)\n`); } catch (e) {} } });
+                                    try { await c.skills.goToPosition(b, tgt.x, tgt.y, tgt.z, 2); } catch (e) {} finally { _hurt.stop(); }
+                                    if (_hurt.fired()) return;
+                                }
                                 if (b.interrupt_code) return;
                                 const bed = b.findBlock({ matching: (bl) => bl && /_bed$/.test(bl.name || ''), maxDistance: 6 });
                                 if (bed && w.time && w.time.phase === 'night' && b.entity.position.distanceTo(bed.position) <= 2.6) {
