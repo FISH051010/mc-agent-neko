@@ -11,7 +11,8 @@ import convoManager from './conversation.js';
 import fs from 'fs';
 import Vec3 from 'vec3';
 import { appendTelemetry } from '../utils/telemetry.js';
-import { installReflexBodyGate, reflexCtx } from './framework/reflex_body_gate.js';
+import { installReflexBodyGate, reflexCtx, holdBodyForReflex, holderName } from './framework/reflex_body_gate.js';
+import { bumpWedgeStreak } from './framework/wedge_streak.js';
 // Framework v2 lava_guard — pure read predicate (no lane, no flag), safe to call
 // from a reflex. Wires the blueprint §E.2 "never clutch over lava" guard into the
 // live MLG reflex below (the inline floor-scan skipped lava: boundingBox 'empty'≠'block').
@@ -6009,7 +6010,7 @@ const modes_list = [
                 {
                     const _mvOwner = bot._bodyMoveLockOwner || '';
                     if (/^branchMine/.test(_mvOwner) && bot._bodyMoveLockUntil && now < bot._bodyMoveLockUntil) {
-                        this.wedgeStart = 0; this.lastPos = null; this.resetStreak = 0; this._chStuckSince = 0;
+                        this.wedgeStart = 0; this.lastPos = null; this._chStuckSince = 0;
                         releaseJump();
                         return;
                     }
@@ -6055,7 +6056,9 @@ const modes_list = [
                 let jumpPressed = false; try { jumpPressed = !!(bot.entity.controlState && bot.entity.controlState.jump); } catch (e) {}
                 let inWater = false; try { const _fb = bot.blockAt(bot.entity.position.floored()); inWater = /water/.test((_fb && _fb.name) || ''); } catch (e) {}
                 const moving = pfMoving || jumpPressed || inWater;
-                if (!moving) { this.wedgeStart = 0; this.lastPos = null; this.resetStreak = 0; releaseJump(); return; }
+                // ★T-0239: 不在此清 resetStreak — pathfinder 停→下一条腿之间 isMoving 短暂为 false, 清零使升级永远停在 #1
+                //   (live 01:58 ×16)。楔死计数按地点+30s 窗累加 (framework/wedge_streak.js), 走开 >3b 或隔久了才算新一处。
+                if (!moving) { this.wedgeStart = 0; this.lastPos = null; releaseJump(); return; }
                 // 别跟有意的静止打架: 正在挖块/游泳/被困(POCKET/ENTOMBED 有各自反射)
                 if (bot.targetDigBlock) { this.wedgeStart = 0; this.lastPos = null; releaseJump(); return; }
                 const mob = (bot._mobility && bot._mobility.state) || '';
@@ -6064,7 +6067,7 @@ const modes_list = [
                 if (this.lastPos) {
                     const d = Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.z);
                     if (d < 0.05) { if (!this.wedgeStart) this.wedgeStart = now; }
-                    else { this.wedgeStart = 0; this.resetStreak = 0; releaseJump(); }   // 在前进 → 清零
+                    else { this.wedgeStart = 0; releaseJump(); }   // 在前进 → 清 wedge 计时 (streak 由地点窗决定, T-0239)
                 }
                 this.lastPos = { x: p.x, y: p.y, z: p.z };
                 if (!this.wedgeStart) return;
@@ -6145,11 +6148,15 @@ const modes_list = [
                 // 后退方向=bot 来时的已知可通行地(它正朝前楔住),低风险;600ms 后清控制让寻路/march 接管。
                 if (stalled >= 2200 && now - this.lastReset > 2500) {
                     this.lastReset = now;
-                    this.resetStreak = (this.resetStreak || 0) + 1;
+                    this.resetStreak = bumpWedgeStreak(this, p, now);
                     releaseJump();
-                    try { bot.pathfinder.stop(); } catch (e) {}
+                    // ★T-0239: setGoal(null) 立停 (stop() 只置延迟标志, 见 T-0207)。
+                    try { bot.pathfinder.setGoal(null); } catch (e) {}
                     if (this.resetStreak >= 2) {
                         try {
+                            // ★T-0239: 本反射是 always 模式不持身 — 侦察下一条腿的 setGoal 当拍就把 back/侧移键覆盖掉。
+                            //   短时持身 700ms, T-0231 闸拒技能链寻路/按键, 后退侧移真正走完。
+                            holdBodyForReflex(bot, 'edge_unstick', 700, now);
                             bot.clearControlStates();
                             bot.setControlState('back', true);
                             bot.setControlState(this.resetStreak % 2 ? 'left' : 'right', true);
@@ -7730,7 +7737,7 @@ export function initModes(agent) {
             const b = agent.bot;
             if (Date.now() - (b._reflexGateLogAt || 0) < 5000) return;
             b._reflexGateLogAt = Date.now();
-            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [body-gate] skill ${b._currentSkill || '-'} ${kind}(${detail}) refused — ${b._bodyOwner && b._bodyOwner.name} holds the body (T-0231)\n`); } catch (e) {}
+            try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [body-gate] skill ${b._currentSkill || '-'} ${kind}(${detail}) refused — ${holderName(b)} holds the body (T-0231)\n`); } catch (e) {}
         } });
     } catch (e) {}
     if (agent.task) {

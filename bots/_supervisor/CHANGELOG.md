@@ -3234,6 +3234,8 @@
 
 - **★C422-S 干竖井隧道到达后直接取隧道方向(T-0184 回归修)**（2026-10-11，worker-stuck，T-0184）: C420 引入的回归 — 10-11 00:54:36-00:55:58 START 'relocate tunnel 1,0 ×6 (dry shaft) — arrived' 紧跟 'relocate failed (moved≈6b footingOk=true cleanHeading=false)' ×5 → DUSK_MINE_NIGHT 冷却。干竖井隧道最短 6b, 落点仍在旧点 8b 朝向记忆内, "首个未记忆基点"必空。修: _tun.dryShaft 时 START 的 clean2 与循环内 _r2 直接取隧道方向 (楼梯斜线已验干, 比旧点记忆更权威); 非干竖井路径照旧。测试 test/minedown_dry_shaft.test.mjs 新增钉。
 
+- **★C423-S edge_unstick 楔死升级按地点累加 + 后退期间短时持身(T-0239, 监工加急)**（2026-10-11，worker-stuck，T-0239）: live 10-11 01:58-01:59Z @104.3,80,-2.3 云杉树冠下 (hp1 food4 白天 quickMeal 侦察) — 'wedged ~2450ms (jump-fail, replan #1)' ×16 / 2min 从未到 #2, 侦察 14 腿 13 被 modes.js:6150 stop 打断, 90s 只走 3b。根因: ① resetStreak 在 !moving (pathfinder 停→下一条腿之间 isMoving 短暂 false) 与 ≥0.05b 微晃分支清零 → resetStreak≥2 的后退+侧移永远走不到; ② 即便走到, edge_unstick 是 always 模式不持身, 600ms 后退期间技能链 setGoal 当拍覆盖按键。修: 新 framework/wedge_streak.js bumpWedgeStreak (同一处 ≤3b 且 30s 窗内累加, 走开/隔久才重计), 去掉三处清零; 停寻路改 setGoal(null); 后退侧移前 holdBodyForReflex(bot,'edge_unstick',700) — reflex_body_gate.reflexHolds 认 _reflexHold, T-0231 闸在这 700ms 拒技能链寻路/按键。test/edge_unstick_streak.test.mjs (T-0239 ×4)。全套 721/721。
+
 ---
 
 ---

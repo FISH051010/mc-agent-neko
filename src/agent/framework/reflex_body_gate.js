@@ -16,7 +16,15 @@ export function runAsSkill(name, fn) {
     if (inReflex()) return fn();
     return skillCtx.run({ skill: name }, fn);
 }
-export const reflexHolds = (bot) => !!(bot && bot._bodyOwner && bot._bodyOwner.kind === 'mode');
+// ★T-0239: always-on reflexes (edge_unstick back-off) never go through execute() → no _bodyOwner. A short timed hold lets
+//   them own the body for a few hundred ms of raw keys, so the skill's next-leg setGoal cannot override the sidestep at once.
+export function holdBodyForReflex(bot, name, ms, now = Date.now()) {
+    if (bot) bot._reflexHold = { name: `reflex:${name}`, until: now + ms };
+}
+export const reflexHolds = (bot, now = Date.now()) => !!(bot && ((bot._bodyOwner && bot._bodyOwner.kind === 'mode')
+    || (bot._reflexHold && bot._reflexHold.until > now)));
+export const holderName = (bot) => (bot && bot._bodyOwner && bot._bodyOwner.kind === 'mode' && bot._bodyOwner.name)
+    || (bot && bot._reflexHold && bot._reflexHold.name) || '?';
 
 /** 包 bot.pathfinder.setGoal / bot.setControlState / bot.clearControlStates (幂等)。onBlock(kind, detail) 可选, 用于限频日志。 */
 export function installReflexBodyGate(bot, { onBlock } = {}) {
@@ -35,7 +43,7 @@ export function installReflexBodyGate(bot, { onBlock } = {}) {
                 blocked('setGoal', goal && goal.constructor ? goal.constructor.name : '?');
                 // throw (not no-op): pathfinder.goto() calls setGoal inside its promise executor — a no-op would hang it;
                 // a throw rejects goto → the skill sees an ordinary path failure and backs off.
-                throw new Error(`reflex holds the body (${bot._bodyOwner.name}) — skill pathing paused`);
+                throw new Error(`reflex holds the body (${holderName(bot)}) — skill pathing paused`);
             }
             return origSetGoal(goal, dynamic);
         };
